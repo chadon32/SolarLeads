@@ -10,6 +10,16 @@ type LeadBody = {
   phone?: string;
   address?: string;
   monthlyBill?: number;
+  panelCount?: number;
+  systemSizeKw?: number;
+  annualSavings?: number;
+  monthlySavings?: number;
+  annualEnergyKwh?: number;
+  roofAreaSqm?: number;
+  usableAreaSqm?: number;
+  roofPitchDegrees?: number;
+  lat?: number;
+  lng?: number;
 };
 
 const supabaseUrl = process.env.SUPABASE_URL;
@@ -52,9 +62,13 @@ export async function POST(request: Request) {
     const phone = body.phone?.trim();
     const address = body.address?.trim();
     const monthlyBill = Number(body.monthlyBill);
+    const annualSavingsOverride = Number(body.annualSavings);
     const report = Number.isFinite(monthlyBill)
       ? buildSolarReport(monthlyBill)
       : null;
+    const estimatedSavings = Number.isFinite(annualSavingsOverride)
+      ? Math.round(annualSavingsOverride)
+      : report?.annualSavings;
 
     if (
       !name ||
@@ -66,7 +80,7 @@ export async function POST(request: Request) {
       phone.replace(/\D/g, "").length > 15 ||
       !address ||
       address.length < 8 ||
-      !report
+      !estimatedSavings
     ) {
       return NextResponse.json(
         { message: "Missing required lead fields." },
@@ -81,18 +95,43 @@ export async function POST(request: Request) {
       },
     });
 
-    const { data, error } = await supabase
+    const baseInsert = {
+      name,
+      email,
+      phone,
+      address,
+      monthly_bill: monthlyBill,
+      estimated_savings: estimatedSavings,
+    };
+    const extendedInsert = {
+      ...baseInsert,
+      panel_count: toNullableInteger(body.panelCount),
+      system_size_kw: toNullableNumber(body.systemSizeKw),
+      annual_savings: toNullableNumber(body.annualSavings),
+      monthly_savings: toNullableNumber(body.monthlySavings),
+      annual_energy_kwh: toNullableNumber(body.annualEnergyKwh),
+      roof_area_m2: toNullableNumber(body.roofAreaSqm),
+      usable_area_m2: toNullableNumber(body.usableAreaSqm),
+      roof_pitch_deg: toNullableNumber(body.roofPitchDegrees),
+      lat: toNullableNumber(body.lat),
+      lng: toNullableNumber(body.lng),
+    };
+
+    let insertResult = await supabase
       .from("leads")
-      .insert({
-        name,
-        email,
-        phone,
-        address,
-        monthly_bill: monthlyBill,
-        estimated_savings: report.annualSavings,
-      })
+      .insert(extendedInsert)
       .select("id, name, email, address, monthly_bill, estimated_savings")
       .single();
+
+    if (insertResult.error && shouldRetryLegacyInsert(insertResult.error.message)) {
+      insertResult = await supabase
+        .from("leads")
+        .insert(baseInsert)
+        .select("id, name, email, address, monthly_bill, estimated_savings")
+        .single();
+    }
+
+    const { data, error } = insertResult;
 
     if (error) {
       if (error.code === "23505") {
@@ -128,4 +167,23 @@ export async function POST(request: Request) {
       { status: 500 }
     );
   }
+}
+
+function toNullableNumber(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function toNullableInteger(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.round(parsed) : null;
+}
+
+function shouldRetryLegacyInsert(message: string) {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("column") ||
+    normalized.includes("schema cache") ||
+    normalized.includes("could not find")
+  );
 }

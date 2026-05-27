@@ -1,3 +1,5 @@
+import type { RoofAnalysis } from "@/lib/roof-analysis";
+
 export type SolarReport = {
   annualSavings: number;
   estimatedRoiYears: number;
@@ -19,5 +21,30 @@ export function buildSolarReport(monthlyBill: number): SolarReport {
     annualImpactLbs,
     annualEnergyOffset,
     panelCount,
+  };
+}
+
+export function buildSolarReportFromAnalysis(
+  analysis: RoofAnalysis,
+  monthlyBill: number
+): SolarReport {
+  const annualSavings = analysis.estimatedAnnualSavings;
+  const estimatedSystemCost = analysis.estimatedSystemSizeKw * 1000 * 2.8;
+  const estimatedRoiYears = Number(
+    Math.max(4.2, Math.min(12.8, estimatedSystemCost / Math.max(annualSavings, 1))).toFixed(1)
+  );
+  const annualImpactLbs = Math.round(analysis.estimatedAnnualEnergyKwh * 1.54);
+  const billBasedOffset = Number.isFinite(monthlyBill) && monthlyBill > 0 ? monthlyBill * 12 : 2400;
+  const annualEnergyOffset = Math.min(
+    96,
+    Math.max(42, Math.round((analysis.estimatedAnnualEnergyKwh / billBasedOffset) * 100))
+  );
+
+  return {
+    annualSavings,
+    estimatedRoiYears,
+    annualImpactLbs,
+    annualEnergyOffset,
+    panelCount: analysis.estimatedPanelCount,
   };
 }

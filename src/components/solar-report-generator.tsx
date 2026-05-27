@@ -6,7 +6,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { FollowUpTimeline } from "@/components/follow-up-timeline";
 import { ButtonLink } from "@/components/ui/button";
 import { createFollowUpSequence, type FollowUpStep } from "@/lib/follow-ups";
-import { buildSolarReport, type SolarReport } from "@/lib/solar-report";
+import type { RoofAnalysis } from "@/lib/roof-analysis";
+import {
+  buildSolarReport,
+  buildSolarReportFromAnalysis,
+  type SolarReport,
+} from "@/lib/solar-report";
 
 type SolarReportGeneratorProps = {
   name: string;
@@ -15,6 +20,7 @@ type SolarReportGeneratorProps = {
   monthlyBill: number;
   leadId: string | null;
   reportUrl: string;
+  analysis?: RoofAnalysis | null;
   onEmailStatusChange?: (status: "idle" | "sending" | "sent" | "error", message: string) => void;
 };
 
@@ -37,6 +43,7 @@ export function SolarReportGenerator({
   monthlyBill,
   leadId,
   reportUrl,
+  analysis,
   onEmailStatusChange,
 }: SolarReportGeneratorProps) {
   const [emailState, setEmailState] = useState<"idle" | "sending" | "sent" | "error">("idle");
@@ -51,7 +58,13 @@ export function SolarReportGenerator({
   );
   const emailedLeadIdRef = useRef<string | null>(null);
 
-  const report = useMemo<SolarReport>(() => buildSolarReport(monthlyBill), [monthlyBill]);
+  const report = useMemo<SolarReport>(
+    () =>
+      analysis
+        ? buildSolarReportFromAnalysis(analysis, monthlyBill)
+        : buildSolarReport(monthlyBill),
+    [analysis, monthlyBill]
+  );
   const statusLabel =
     emailState === "sent"
       ? "Delivered"

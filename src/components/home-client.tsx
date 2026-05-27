@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AddressSearch } from "@/components/address-search";
 import { AnalysisSequence } from "@/components/analysis-sequence";
 import { InstallReadouts } from "@/components/install-readouts";
@@ -19,21 +19,6 @@ const HouseShowcase = dynamic(
     loading: () => null,
   }
 );
-
-const highlights = [
-  {
-    value: "18-28",
-    label: "Panels estimated for a typical Arizona roof",
-  },
-  {
-    value: "2-6 deg",
-    label: "Typical low-slope roof pitch range",
-  },
-  {
-    value: "$2.8K-$4.1K",
-    label: "Estimated yearly savings range",
-  },
-] as const;
 
 const featureCards = [
   {
@@ -77,6 +62,11 @@ const BUSINESS_PHONE_HREF = "tel:+16025550100";
 export function HomeClient() {
   const [selectedAddress, setSelectedAddress] = useState("");
   const [roofAnalysis, setRoofAnalysis] = useState<RoofAnalysis | null>(null);
+  const [selectedLocation, setSelectedLocation] = useState<{
+    address: string;
+    lat: number;
+    lng: number;
+  } | null>(null);
   const [showStickyCta, setShowStickyCta] = useState(false);
 
   useEffect(() => {
@@ -93,6 +83,33 @@ export function HomeClient() {
   }, []);
 
   const showAnalysis = Boolean(selectedAddress);
+  const highlights = useMemo(
+    () => [
+      {
+        value: roofAnalysis ? `${roofAnalysis.estimatedPanelCount}` : "18-28",
+        label: roofAnalysis
+          ? "Panels estimated for this roof"
+          : "Panels estimated for a typical Arizona roof",
+      },
+      {
+        value: roofAnalysis
+          ? `${roofAnalysis.roofPitchDegrees.toFixed(1)} deg`
+          : "2-6 deg",
+        label: roofAnalysis
+          ? "Roof pitch from the selected property"
+          : "Typical low-slope roof pitch range",
+      },
+      {
+        value: roofAnalysis
+          ? `$${roofAnalysis.estimatedAnnualSavings.toLocaleString()}/yr`
+          : "$2.8K-$4.1K",
+        label: roofAnalysis
+          ? "Estimated yearly savings for this address"
+          : "Estimated yearly savings range",
+      },
+    ],
+    [roofAnalysis]
+  );
 
   return (
     <main className="relative min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(25,72,108,0.3),_transparent_36%),radial-gradient(circle_at_80%_20%,_rgba(0,182,255,0.16),_transparent_26%),linear-gradient(180deg,#05070d_0%,#07111d_36%,#0b1625_68%,#06070b_100%)] text-slate-100">
@@ -162,7 +179,14 @@ export function HomeClient() {
             </p>
 
             <div className="mt-8 rounded-[1.75rem] border border-white/10 bg-white/5 p-5 shadow-[0_18px_50px_rgba(2,8,20,0.26)] backdrop-blur-xl">
-              <AddressSearch selectedAddress={selectedAddress} onSelect={setSelectedAddress} />
+              <AddressSearch
+                selectedAddress={selectedAddress}
+                onSelect={(nextAddress) => {
+                  setSelectedAddress(nextAddress);
+                  setRoofAnalysis(null);
+                  setSelectedLocation(null);
+                }}
+              />
               {selectedAddress ? (
                 <>
                   <div className="mt-4 rounded-[1.25rem] border border-white/8 bg-slate-950/35 px-4 py-3 text-sm text-slate-300">
@@ -224,9 +248,17 @@ export function HomeClient() {
             <div className="analysis-section relative">
               <div className="absolute -inset-4 rounded-[2rem] bg-cyan-400/10 blur-2xl" />
               <div className="relative overflow-hidden rounded-[2rem] border border-white/10 bg-white/5 p-3 shadow-[0_28px_100px_rgba(2,8,20,0.55)] backdrop-blur-xl">
-                <HouseShowcase selectedAddress={selectedAddress} analysis={roofAnalysis} />
+                <HouseShowcase
+                  selectedAddress={selectedAddress}
+                  analysis={roofAnalysis}
+                  location={selectedLocation}
+                />
               </div>
-              <SatellitePreview address={selectedAddress} onAnalysisChange={setRoofAnalysis} />
+              <SatellitePreview
+                address={selectedAddress}
+                onAnalysisChange={setRoofAnalysis}
+                onPropertyResolved={setSelectedLocation}
+              />
             </div>
           ) : null}
         </div>
@@ -314,7 +346,12 @@ export function HomeClient() {
         id="contact"
         className="relative mx-auto w-full max-w-7xl px-6 pb-16 md:px-10 lg:px-12"
       >
-        <LeadCaptureForm initialAddress={selectedAddress} />
+        <LeadCaptureForm
+          initialAddress={selectedAddress}
+          analysis={roofAnalysis}
+          lat={selectedLocation?.lat}
+          lng={selectedLocation?.lng}
+        />
       </section>
     </main>
   );

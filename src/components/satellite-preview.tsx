@@ -1,12 +1,13 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useState } from "react";
-import type { RoofAnalysis } from "@/lib/roof-analysis";
+import { useEffect, useMemo, useState } from "react";
+import { buildRoofAnalysis, type RoofAnalysis } from "@/lib/roof-analysis";
 
 type SatellitePreviewProps = {
   address?: string;
   onAnalysisChange?: (analysis: RoofAnalysis | null) => void;
+  onPropertyResolved?: (property: { address: string; lat: number; lng: number } | null) => void;
 };
 
 type SatellitePayload = {
@@ -18,30 +19,29 @@ type SatellitePayload = {
   message?: string;
 };
 
-const fallbackAnalysis: RoofAnalysis = {
-  zoom: 20,
-  usableRoofPercent: 72,
-  estimatedPanelCount: 22,
-  estimatedSystemSizeKw: 9.2,
-  estimatedAnnualSavings: 2346,
-  estimatedMonthlySavings: 196,
-  estimatedRoofAreaSqm: 60.1,
-  estimatedUsableSolarAreaSqm: 43.3,
-  estimatedRoofLengthMeters: 9.9,
-  estimatedRoofWidthMeters: 6.1,
-  roofPitchDegrees: 22,
-  confidence: "medium",
+type SolarPayload = {
+  analysis?: RoofAnalysis;
+  fallback?: RoofAnalysis;
+  message?: string;
 };
+
+const fallbackAnalysis = buildRoofAnalysis({
+  address: "Arizona property",
+  lat: 33.4942,
+  lng: -111.9261,
+});
 
 export function SatellitePreview({
   address,
   onAnalysisChange,
+  onPropertyResolved,
 }: SatellitePreviewProps) {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [displayAddress, setDisplayAddress] = useState(address ?? "");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<RoofAnalysis>(fallbackAnalysis);
+  const [solarFallbackMessage, setSolarFallbackMessage] = useState<string | null>(null);
 
   useEffect(() => {
     const trimmed = address?.trim();
@@ -51,8 +51,10 @@ export function SatellitePreview({
         setImageUrl(null);
         setDisplayAddress("");
         setError(null);
+        setSolarFallbackMessage(null);
         setAnalysis(fallbackAnalysis);
         onAnalysisChange?.(null);
+        onPropertyResolved?.(null);
         setLoading(false);
       }, 0);
 
@@ -61,9 +63,11 @@ export function SatellitePreview({
 
     const controller = new AbortController();
     let fetchTimer = 0;
+
     const startTimer = window.setTimeout(() => {
       setLoading(true);
       setError(null);
+      setSolarFallbackMessage(null);
 
       fetchTimer = window.setTimeout(async () => {
         try {
@@ -86,15 +90,48 @@ export function SatellitePreview({
             setError(payload.message ?? "We couldn't find that address.");
             setAnalysis(fallbackAnalysis);
             onAnalysisChange?.(fallbackAnalysis);
+            onPropertyResolved?.(null);
             setLoading(false);
             return;
           }
 
-          const nextAnalysis = payload.analysis ?? fallbackAnalysis;
           setImageUrl(payload.imageUrl);
           setDisplayAddress(payload.formattedAddress);
-          setAnalysis(nextAnalysis);
-          onAnalysisChange?.(nextAnalysis);
+          onPropertyResolved?.({
+            address: payload.formattedAddress,
+            lat: payload.lat,
+            lng: payload.lng,
+          });
+
+          const solarResponse = await fetch(
+            `/api/solar?lat=${encodeURIComponent(payload.lat)}&lng=${encodeURIComponent(
+              payload.lng
+            )}&zoom=${encodeURIComponent(payload.analysis?.zoom ?? 21)}&address=${encodeURIComponent(
+              payload.formattedAddress
+            )}`,
+            {
+              signal: controller.signal,
+            }
+          );
+
+          const solarPayload: SolarPayload = await solarResponse
+            .json()
+            .catch(() => ({} as SolarPayload));
+
+          if (solarResponse.ok && solarPayload.analysis) {
+            setAnalysis(solarPayload.analysis);
+            onAnalysisChange?.(solarPayload.analysis);
+            setSolarFallbackMessage(null);
+          } else {
+            const nextAnalysis = solarPayload.fallback ?? payload.analysis ?? fallbackAnalysis;
+            setAnalysis(nextAnalysis);
+            onAnalysisChange?.(nextAnalysis);
+            setSolarFallbackMessage(
+              solarPayload.message ??
+                "Detailed roof data isn't available for this address yet. Showing a general Arizona estimate instead."
+            );
+          }
+
           setLoading(false);
         } catch (caughtError) {
           if (caughtError instanceof DOMException && caughtError.name === "AbortError") {
@@ -106,6 +143,7 @@ export function SatellitePreview({
           setError("Satellite preview is temporarily unavailable.");
           setAnalysis(fallbackAnalysis);
           onAnalysisChange?.(fallbackAnalysis);
+          onPropertyResolved?.(null);
           setLoading(false);
         }
       }, 240);
@@ -116,14 +154,19 @@ export function SatellitePreview({
       window.clearTimeout(startTimer);
       window.clearTimeout(fetchTimer);
     };
-  }, [address, onAnalysisChange]);
+  }, [address, onAnalysisChange, onPropertyResolved]);
 
   const confidenceLabel =
     analysis.confidence === "high"
       ? "high confidence"
       : analysis.confidence === "medium"
         ? "good roof read"
-        : "partial read";
+        : "general estimate";
+
+  const savingsLabel = useMemo(
+    () => `$${analysis.estimatedMonthlySavings.toLocaleString()}/mo`,
+    [analysis.estimatedMonthlySavings]
+  );
 
   return (
     <section className="mt-6 overflow-hidden rounded-[1.75rem] border border-white/10 bg-white/5 shadow-[0_18px_50px_rgba(2,8,20,0.26)] backdrop-blur-xl">
@@ -176,8 +219,10 @@ export function SatellitePreview({
               </p>
               <p className="mt-1 text-sm leading-6 text-slate-200">
                 {loading
-                  ? "Generating rooftop detail..."
-                  : "High-zoom roof image ready for analysis."}
+                  ? "Pulling rooftop geometry and solar output..."
+                  : analysis.source === "solar-api"
+                    ? "Live roof geometry and production data loaded for this address."
+                    : "Detailed roof data unavailable - showing a general Arizona estimate."}
               </p>
             </div>
             <div className="analysis-orbit h-10 w-10 rounded-full border border-cyan-300/20 bg-cyan-300/10" />
@@ -185,7 +230,7 @@ export function SatellitePreview({
 
           <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
             <MetricChip label="System" value={`${analysis.estimatedSystemSizeKw.toFixed(1)} kW`} />
-            <MetricChip label="Monthly" value={`$${analysis.estimatedMonthlySavings.toLocaleString()}`} />
+            <MetricChip label="Monthly" value={savingsLabel} />
             <MetricChip label="Yearly" value={`$${analysis.estimatedAnnualSavings.toLocaleString()}`} />
             <MetricChip label="Usable" value={`${analysis.usableRoofPercent}%`} />
           </div>
@@ -196,15 +241,19 @@ export function SatellitePreview({
               <span>{confidenceLabel}</span>
             </div>
             <p className="mt-2 text-sm leading-6 text-slate-200">
-              Estimated {analysis.estimatedPanelCount} panels fit on the primary roof plane with a
-              modeled system size of {analysis.estimatedSystemSizeKw.toFixed(1)} kW.
+              Estimated {analysis.estimatedPanelCount} panels fit on this roof with a modeled
+              system size of {analysis.estimatedSystemSizeKw.toFixed(1)} kW and about{" "}
+              {analysis.estimatedAnnualEnergyKwh.toLocaleString()} kWh of yearly production.
             </p>
-            <p
-              className="mt-3 text-xs leading-6 text-slate-400"
-              title="This is a modeled estimate. Your final report will include measurements specific to your roof."
-            >
-              Estimated based on typical Arizona rooftops.
-            </p>
+            {solarFallbackMessage ? (
+              <p className="mt-3 text-sm leading-6 text-amber-300">
+                {solarFallbackMessage}
+              </p>
+            ) : (
+              <p className="mt-3 text-xs leading-6 text-slate-400">
+                Powered by live roof geometry from the Google Solar API.
+              </p>
+            )}
           </div>
         </div>
 
@@ -227,7 +276,19 @@ export function SatellitePreview({
             />
             <GeometryCard
               label="Roof pitch"
-              value={`${analysis.roofPitchDegrees.toFixed(0)} deg`}
+              value={`${analysis.roofPitchDegrees.toFixed(1)} deg`}
+            />
+            <GeometryCard
+              label="Max panel count"
+              value={`${analysis.maxPanelCount}`}
+            />
+            <GeometryCard
+              label="Sunshine hours"
+              value={
+                analysis.sunshineHours
+                  ? `${analysis.sunshineHours.toLocaleString()} / yr`
+                  : "Unavailable"
+              }
             />
           </div>
         </div>

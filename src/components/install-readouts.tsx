@@ -69,7 +69,9 @@ export function InstallReadouts({
             className="mt-4 text-xs leading-6 text-slate-400"
             title="This is a modeled estimate. Your final report will include measurements specific to your roof."
           >
-            Estimated based on typical Arizona rooftops.
+            {analysis.source === "solar-api"
+              ? "Powered by live roof geometry from the Google Solar API."
+              : "Estimated based on typical Arizona rooftops."}
           </p>
         </article>
 

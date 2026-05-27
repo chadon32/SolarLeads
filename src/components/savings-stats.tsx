@@ -45,6 +45,7 @@ function AnimatedValue({
   start: boolean;
 }) {
   const value = useCountUp(stat.value, start, 1700);
+  const displayValue = start ? value : stat.value;
 
   return (
     <div className="glass-panel relative overflow-hidden rounded-[1.75rem] p-5">
@@ -55,7 +56,7 @@ function AnimatedValue({
       <div className="mt-3 rounded-[1.1rem] border border-white/8 bg-slate-950/35 px-4 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
         <div className="flex items-end gap-2">
           <span className="font-display text-4xl font-semibold tracking-tight text-white sm:text-5xl">
-            {value.toLocaleString()}
+            {displayValue.toLocaleString()}
           </span>
           <span className="pb-1 text-sm font-semibold uppercase tracking-[0.22em] text-cyan-300">
             {stat.suffix}

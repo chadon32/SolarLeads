@@ -4,6 +4,7 @@ import type { FormEvent, InputHTMLAttributes } from "react";
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import type { RoofAnalysis } from "@/lib/roof-analysis";
 
 const SolarReportGenerator = dynamic(
   () =>
@@ -17,6 +18,9 @@ const SolarReportGenerator = dynamic(
 
 type LeadCaptureFormProps = {
   initialAddress: string;
+  analysis?: RoofAnalysis | null;
+  lat?: number;
+  lng?: number;
 };
 
 type FormValues = {
@@ -33,6 +37,7 @@ type SavedLead = {
   email: string;
   address: string;
   monthlyBill: number;
+  estimatedSavings: number;
   reportUrl: string;
 };
 
@@ -85,7 +90,12 @@ function buildFingerprint(values: FormValues) {
   ].join("|");
 }
 
-export function LeadCaptureForm({ initialAddress }: LeadCaptureFormProps) {
+export function LeadCaptureForm({
+  initialAddress,
+  analysis,
+  lat,
+  lng,
+}: LeadCaptureFormProps) {
   const [values, setValues] = useState<FormValues>({
     ...emptyValues,
     address: initialAddress,
@@ -117,10 +127,14 @@ export function LeadCaptureForm({ initialAddress }: LeadCaptureFormProps) {
   }, [initialAddress]);
 
   const estimatedSavings = useMemo(() => {
+    if (analysis?.estimatedAnnualSavings) {
+      return analysis.estimatedAnnualSavings;
+    }
+
     const monthly = Number(values.monthlyBill);
     if (!Number.isFinite(monthly) || monthly <= 0) return 0;
     return Math.round(monthly * 12 * 0.78);
-  }, [values.monthlyBill]);
+  }, [analysis?.estimatedAnnualSavings, values.monthlyBill]);
 
   const handleEmailStatusChange = useCallback(
     (nextStatus: "idle" | "sending" | "sent" | "error", nextMessage: string) => {
@@ -185,7 +199,7 @@ export function LeadCaptureForm({ initialAddress }: LeadCaptureFormProps) {
     setMessage("Saving your lead...");
 
     const monthlyBill = Number(values.monthlyBill);
-    const savings = Math.round(monthlyBill * 12 * 0.78);
+    const savings = analysis?.estimatedAnnualSavings ?? Math.round(monthlyBill * 12 * 0.78);
 
     try {
       const response = await fetch("/api/leads", {
@@ -199,6 +213,16 @@ export function LeadCaptureForm({ initialAddress }: LeadCaptureFormProps) {
           phone: values.phone.trim(),
           address: values.address.trim(),
           monthlyBill,
+          panelCount: analysis?.estimatedPanelCount,
+          systemSizeKw: analysis?.estimatedSystemSizeKw,
+          annualSavings: analysis?.estimatedAnnualSavings,
+          monthlySavings: analysis?.estimatedMonthlySavings,
+          annualEnergyKwh: analysis?.estimatedAnnualEnergyKwh,
+          roofAreaSqm: analysis?.estimatedRoofAreaSqm,
+          usableAreaSqm: analysis?.estimatedUsableSolarAreaSqm,
+          roofPitchDegrees: analysis?.roofPitchDegrees,
+          lat,
+          lng,
         }),
       });
 
@@ -216,7 +240,7 @@ export function LeadCaptureForm({ initialAddress }: LeadCaptureFormProps) {
       setSavedLead(payload.lead);
       setStatus("success");
       setMessage("Your AI solar report is being generated");
-      setSuccessSavings(savings);
+      setSuccessSavings(payload.lead.estimatedSavings ?? savings);
     } catch {
       setStatus("error");
       setMessage("Network error. Please try again.");
@@ -422,6 +446,7 @@ export function LeadCaptureForm({ initialAddress }: LeadCaptureFormProps) {
           email={savedLead.email}
           address={savedLead.address}
           monthlyBill={savedLead.monthlyBill}
+          analysis={analysis}
           onEmailStatusChange={handleEmailStatusChange}
         />
       ) : null}

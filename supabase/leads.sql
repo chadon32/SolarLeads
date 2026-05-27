@@ -9,6 +9,17 @@ create table if not exists public.leads (
   created_at timestamptz not null default now()
 );
 
+alter table public.leads add column if not exists panel_count integer;
+alter table public.leads add column if not exists system_size_kw numeric(10, 2);
+alter table public.leads add column if not exists annual_savings numeric(10, 2);
+alter table public.leads add column if not exists monthly_savings numeric(10, 2);
+alter table public.leads add column if not exists annual_energy_kwh numeric(12, 2);
+alter table public.leads add column if not exists roof_area_m2 numeric(10, 2);
+alter table public.leads add column if not exists usable_area_m2 numeric(10, 2);
+alter table public.leads add column if not exists roof_pitch_deg numeric(10, 2);
+alter table public.leads add column if not exists lat double precision;
+alter table public.leads add column if not exists lng double precision;
+
 alter table public.leads enable row level security;
 
 revoke all on table public.leads from anon;
