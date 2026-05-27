@@ -60,6 +60,7 @@ export function HouseShowcase({
   const [viewMode, setViewMode] = useState<ViewMode>("overview");
   const [sceneLoading, setSceneLoading] = useState(true);
   const [showFallbackHint, setShowFallbackHint] = useState(false);
+  const [diagnosticNote, setDiagnosticNote] = useState<string | null>(null);
   const [sceneMessage, setSceneMessage] = useState("Loading the live property view.");
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapElementRef = useRef<HTMLElement | null>(null);
@@ -83,6 +84,7 @@ export function HouseShowcase({
       const waitingHandle = window.requestAnimationFrame(() => {
         setSceneLoading(true);
         setShowFallbackHint(false);
+        setDiagnosticNote(null);
         setSceneMessage("Waiting for a resolved property location.");
         cleanupMap();
       });
@@ -94,6 +96,9 @@ export function HouseShowcase({
       const missingKeyHandle = window.requestAnimationFrame(() => {
         setSceneLoading(false);
         setShowFallbackHint(true);
+        setDiagnosticNote(
+          "Missing `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` in this environment."
+        );
         setSceneMessage(
           "3D maps are unavailable until NEXT_PUBLIC_GOOGLE_MAPS_API_KEY is configured."
         );
@@ -106,6 +111,11 @@ export function HouseShowcase({
     const loadingHandle = window.requestAnimationFrame(() => {
       setSceneLoading(true);
       setShowFallbackHint(false);
+      setDiagnosticNote(
+        mapId
+          ? "3D map will attempt to render with the provided Map ID."
+          : "No `NEXT_PUBLIC_GOOGLE_MAP_ID` found in this environment, so 3D fallback is expected."
+      );
       setSceneMessage("Loading the live property view.");
     });
 
@@ -165,6 +175,11 @@ export function HouseShowcase({
           if (cancelled) return;
           setSceneLoading(false);
           setShowFallbackHint(true);
+          setDiagnosticNote(
+            mapId
+              ? "Google returned a 3D map error or no 3D coverage for this location."
+              : "No Map ID is configured, so the view cannot use the photorealistic 3D path."
+          );
           setSceneMessage("3D view unavailable for this address - showing the satellite scan below.");
         };
 
@@ -199,12 +214,22 @@ export function HouseShowcase({
           if (cancelled) return;
           setShowFallbackHint(true);
           setSceneLoading(false);
+          setDiagnosticNote(
+            mapId
+              ? "3D render timed out. This is usually a coverage or project-configuration issue."
+              : "The environment has no Map ID, so the app is using the satellite fallback."
+          );
           setSceneMessage("3D view unavailable for this address - showing the satellite scan below.");
         }, 3200);
       } catch (error) {
         if (cancelled) return;
         setSceneLoading(false);
         setShowFallbackHint(true);
+        setDiagnosticNote(
+          error instanceof Error
+            ? error.message
+            : "3D render failed before the Google 3D library could initialize."
+        );
         setSceneMessage(
           error instanceof Error
             ? error.message
@@ -333,8 +358,18 @@ export function HouseShowcase({
           ) : null}
 
           {showFallbackHint ? (
-            <div className="pointer-events-none absolute inset-x-5 bottom-24 rounded-[1rem] border border-amber-400/20 bg-slate-950/72 px-4 py-3 text-sm leading-6 text-amber-200 shadow-[0_18px_50px_rgba(2,8,20,0.35)] backdrop-blur-xl">
-              3D view unavailable for this address - showing satellite view below.
+            <div className="pointer-events-none absolute inset-x-5 bottom-24 space-y-2">
+              <div className="rounded-[1rem] border border-amber-400/20 bg-slate-950/72 px-4 py-3 text-sm leading-6 text-amber-200 shadow-[0_18px_50px_rgba(2,8,20,0.35)] backdrop-blur-xl">
+                3D view unavailable for this address - showing satellite view below.
+              </div>
+              {diagnosticNote ? (
+                <div className="max-w-xl rounded-[1rem] border border-white/8 bg-slate-950/55 px-4 py-2 text-[0.72rem] leading-6 text-slate-300 shadow-[0_18px_50px_rgba(2,8,20,0.28)] backdrop-blur-xl">
+                  <span className="font-semibold uppercase tracking-[0.22em] text-cyan-200">
+                    Debug
+                  </span>{" "}
+                  {diagnosticNote}
+                </div>
+              ) : null}
             </div>
           ) : null}
         </div>
