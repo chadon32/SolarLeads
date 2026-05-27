@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { buildRoofAnalysis } from "@/lib/roof-analysis";
+import { buildFallbackRoofAnalysis } from "@/lib/roof-analysis";
 import { enforceRateLimit } from "@/lib/rate-limit";
 
 type GeocodeResponse = {
@@ -99,7 +99,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const analysis = buildRoofAnalysis({
+    const analysis = buildFallbackRoofAnalysis({
       address: result.formatted_address,
       lat: location.lat,
       lng: location.lng,
@@ -109,7 +109,7 @@ export async function POST(request: Request) {
     const imageUrl = `/api/satellite/image?lat=${encodeURIComponent(
       location.lat
     )}&lng=${encodeURIComponent(location.lng)}&zoom=${encodeURIComponent(
-      analysis.zoom
+      20
     )}&address=${encodeURIComponent(result.formatted_address)}`;
 
     return NextResponse.json({

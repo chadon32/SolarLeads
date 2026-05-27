@@ -149,15 +149,15 @@ export function SavingsStats({
 
   const coverage = Math.min(
     96,
-    Math.max(54, Math.round(analysis.estimatedSystemSizeKw * 7.3))
+    Math.max(54, Math.round(analysis.systemKw * 7.3))
   );
-  const carbonOffset = Math.round(analysis.estimatedAnnualSavings * 2.5);
+  const carbonOffset = Math.round(analysis.annualKwh * 1.54);
 
   const stats: Stat[] = [
     {
       label: "Annual savings",
       suffix: "/yr",
-      value: analysis.estimatedAnnualSavings,
+      value: analysis.annualSavingsUSD,
       description: "Modeled annual utility savings for this address.",
     },
     {

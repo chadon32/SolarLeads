@@ -28,16 +28,16 @@ export function buildSolarReportFromAnalysis(
   analysis: RoofAnalysis,
   monthlyBill: number
 ): SolarReport {
-  const annualSavings = analysis.estimatedAnnualSavings;
-  const estimatedSystemCost = analysis.estimatedSystemSizeKw * 1000 * 2.8;
+  const annualSavings = analysis.annualSavingsUSD;
+  const estimatedSystemCost = analysis.systemKw * 1000 * 2.8;
   const estimatedRoiYears = Number(
     Math.max(4.2, Math.min(12.8, estimatedSystemCost / Math.max(annualSavings, 1))).toFixed(1)
   );
-  const annualImpactLbs = Math.round(analysis.estimatedAnnualEnergyKwh * 1.54);
+  const annualImpactLbs = Math.round(analysis.annualKwh * 1.54);
   const billBasedOffset = Number.isFinite(monthlyBill) && monthlyBill > 0 ? monthlyBill * 12 : 2400;
   const annualEnergyOffset = Math.min(
     96,
-    Math.max(42, Math.round((analysis.estimatedAnnualEnergyKwh / billBasedOffset) * 100))
+    Math.max(42, Math.round((analysis.annualKwh / billBasedOffset) * 100))
   );
 
   return {
@@ -45,6 +45,6 @@ export function buildSolarReportFromAnalysis(
     estimatedRoiYears,
     annualImpactLbs,
     annualEnergyOffset,
-    panelCount: analysis.estimatedPanelCount,
+    panelCount: analysis.panelCount,
   };
 }

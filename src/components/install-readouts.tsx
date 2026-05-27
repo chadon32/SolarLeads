@@ -51,26 +51,28 @@ export function InstallReadouts({
             <div className="flex items-center justify-between gap-4 border-b border-white/8 pb-3">
               <span className="text-slate-400">Roof slope</span>
               <span className="font-semibold text-white">
-                {analysis.roofPitchDegrees.toFixed(1)} deg
+                {analysis.pitchDeg.toFixed(1)} deg
               </span>
             </div>
             <div className="flex items-center justify-between gap-4 border-b border-white/8 pb-3">
               <span className="text-slate-400">Usable area</span>
               <span className="font-semibold text-white">
-                {analysis.usableRoofPercent}%
+                {analysis.usablePctRoof}%
               </span>
             </div>
             <div className="flex items-center justify-between gap-4">
               <span className="text-slate-400">Shade risk</span>
-              <span className="font-semibold text-cyan-300">Low</span>
+              <span className="font-semibold capitalize text-cyan-300">
+                {analysis.shadingRisk}
+              </span>
             </div>
           </div>
           <p
             className="mt-4 text-xs leading-6 text-slate-400"
             title="This is a modeled estimate. Your final report will include measurements specific to your roof."
           >
-            {analysis.source === "solar-api"
-              ? "Powered by live roof geometry from the Google Solar API."
+            {analysis.source === "vision-api"
+              ? analysis.confidenceNote
               : "Estimated based on typical Arizona rooftops."}
           </p>
         </article>
@@ -105,18 +107,33 @@ export function InstallReadouts({
           </p>
           <div className="mt-5 rounded-[1.25rem] border border-white/8 bg-slate-950/35 p-4">
             <div className="grid gap-2">
-              <div className="h-3 rounded-full bg-white/10">
-                <div className="h-full w-[72%] rounded-full bg-[linear-gradient(90deg,#67e8f9,#38bdf8)]" />
-              </div>
-              <div className="h-3 rounded-full bg-white/10">
-                <div className="h-full w-[84%] rounded-full bg-[linear-gradient(90deg,#67e8f9,#38bdf8)]" />
-              </div>
-              <div className="h-3 rounded-full bg-white/10">
-                <div className="h-full w-[64%] rounded-full bg-[linear-gradient(90deg,#67e8f9,#38bdf8)]" />
-              </div>
+              {analysis.roofSegments.slice(0, 3).map((segment) => (
+                <div key={segment.label} className="space-y-1">
+                  <div className="flex items-center justify-between text-[0.65rem] uppercase tracking-[0.24em] text-slate-400">
+                    <span>{segment.label}</span>
+                    <span>{segment.panelsFit} panels</span>
+                  </div>
+                  <div className="h-3 rounded-full bg-white/10">
+                    <div
+                      className="h-full rounded-full bg-[linear-gradient(90deg,#67e8f9,#38bdf8)]"
+                      style={{
+                        width: `${Math.max(
+                          18,
+                          Math.min(
+                            100,
+                            Math.round(
+                              (segment.panelsFit / Math.max(analysis.panelCount, 1)) * 100
+                            )
+                          )
+                        )}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              ))}
             </div>
             <p className="mt-4 text-sm leading-6 text-slate-300">
-              The array lands where it makes sense visually and structurally: the large flat roof section above the garage.
+              {analysis.shadeNote}
             </p>
           </div>
         </article>

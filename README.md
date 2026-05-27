@@ -27,9 +27,7 @@ Create a `.env.local` file with:
 ```bash
 GOOGLE_PLACES_API_KEY=your_google_places_api_key_here
 GOOGLE_MAPS_API_KEY=your_google_maps_api_key_here
-NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=your_public_google_maps_javascript_api_key_here
-NEXT_PUBLIC_GOOGLE_MAP_ID=your_google_map_id_here
-GOOGLE_SOLAR_API_KEY=your_google_solar_api_key_here
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
 NEXT_PUBLIC_SITE_URL=https://your-domain.com
 REPORT_SIGNING_SECRET=your_report_link_signing_secret_here
 RATE_LIMIT_SECRET=your_rate_limit_secret_here
@@ -45,7 +43,7 @@ TWILIO_FROM_NUMBER=+16025550123
 DASHBOARD_ACCESS_TOKEN=your_optional_dashboard_token_here
 ```
 
-For Vercel, add the same values in the project environment settings. Keep `GOOGLE_SOLAR_API_KEY`, the service role key, report signing secret, rate limit secret, follow-up process secret, and Twilio values server-side only. `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` is used only for the Google Maps JavaScript 3D property view on the client.
+For Vercel, add the same values in the project environment settings. Keep `GOOGLE_MAPS_API_KEY`, `GOOGLE_PLACES_API_KEY`, `ANTHROPIC_API_KEY`, the service role key, report signing secret, rate limit secret, follow-up process secret, and Twilio values server-side only.
 
 Run the SQL files in `supabase/` to create the `leads`, `lead_followups`, and `request_events` tables before testing the dashboard or follow-up flow.
 
@@ -64,6 +62,6 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
-Before deploying, make sure `GOOGLE_PLACES_API_KEY`, `GOOGLE_MAPS_API_KEY`, `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`, `NEXT_PUBLIC_GOOGLE_MAP_ID`, `GOOGLE_SOLAR_API_KEY`, `SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `REPORT_SIGNING_SECRET`, `RATE_LIMIT_SECRET`, `FOLLOW_UP_PROCESS_SECRET`, `TWILIO_*`, and any Resend variables are set in Vercel.
+Before deploying, make sure `GOOGLE_PLACES_API_KEY`, `GOOGLE_MAPS_API_KEY`, `ANTHROPIC_API_KEY`, `SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `REPORT_SIGNING_SECRET`, `RATE_LIMIT_SECRET`, `FOLLOW_UP_PROCESS_SECRET`, `TWILIO_*`, and any Resend variables are set in Vercel.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.

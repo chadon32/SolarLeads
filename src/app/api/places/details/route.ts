@@ -47,7 +47,7 @@ export async function GET(request: Request) {
       {
         headers: {
           "X-Goog-Api-Key": googlePlacesKey,
-          "X-Goog-FieldMask": "formattedAddress",
+          "X-Goog-FieldMask": "formattedAddress,location",
         },
       }
     );
@@ -67,6 +67,8 @@ export async function GET(request: Request) {
 
     return NextResponse.json({
       formattedAddress: data.formattedAddress,
+      lat: data.location?.latitude,
+      lng: data.location?.longitude,
     });
   } catch (error) {
     return NextResponse.json(

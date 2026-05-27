@@ -127,14 +127,14 @@ export function LeadCaptureForm({
   }, [initialAddress]);
 
   const estimatedSavings = useMemo(() => {
-    if (analysis?.estimatedAnnualSavings) {
-      return analysis.estimatedAnnualSavings;
+    if (analysis?.annualSavingsUSD) {
+      return analysis.annualSavingsUSD;
     }
 
     const monthly = Number(values.monthlyBill);
     if (!Number.isFinite(monthly) || monthly <= 0) return 0;
     return Math.round(monthly * 12 * 0.78);
-  }, [analysis?.estimatedAnnualSavings, values.monthlyBill]);
+  }, [analysis?.annualSavingsUSD, values.monthlyBill]);
 
   const handleEmailStatusChange = useCallback(
     (nextStatus: "idle" | "sending" | "sent" | "error", nextMessage: string) => {
@@ -199,7 +199,7 @@ export function LeadCaptureForm({
     setMessage("Saving your lead...");
 
     const monthlyBill = Number(values.monthlyBill);
-    const savings = analysis?.estimatedAnnualSavings ?? Math.round(monthlyBill * 12 * 0.78);
+    const savings = analysis?.annualSavingsUSD ?? Math.round(monthlyBill * 12 * 0.78);
 
     try {
       const response = await fetch("/api/leads", {
@@ -213,14 +213,22 @@ export function LeadCaptureForm({
           phone: values.phone.trim(),
           address: values.address.trim(),
           monthlyBill,
-          panelCount: analysis?.estimatedPanelCount,
-          systemSizeKw: analysis?.estimatedSystemSizeKw,
-          annualSavings: analysis?.estimatedAnnualSavings,
-          monthlySavings: analysis?.estimatedMonthlySavings,
-          annualEnergyKwh: analysis?.estimatedAnnualEnergyKwh,
-          roofAreaSqm: analysis?.estimatedRoofAreaSqm,
-          usableAreaSqm: analysis?.estimatedUsableSolarAreaSqm,
-          roofPitchDegrees: analysis?.roofPitchDegrees,
+          panelCount: analysis?.panelCount,
+          systemSizeKw: analysis?.systemKw,
+          annualSavings: analysis?.annualSavingsUSD,
+          monthlySavings: analysis ? Math.round(analysis.annualSavingsUSD / 12) : undefined,
+          annualEnergyKwh: analysis?.annualKwh,
+          roofAreaSqm: analysis ? Math.round(analysis.widthM * analysis.depthM * 10) / 10 : undefined,
+          usableAreaSqm:
+            analysis
+              ? Math.round(
+                  analysis.widthM *
+                    analysis.depthM *
+                    (analysis.usablePctRoof / 100) *
+                    10
+                ) / 10
+              : undefined,
+          roofPitchDegrees: analysis?.pitchDeg,
           lat,
           lng,
         }),

@@ -12,7 +12,7 @@ type Prediction = {
 };
 
 type AddressSearchProps = {
-  onSelect: (address: string) => void;
+  onSelect: (property: { address: string; lat?: number; lng?: number }) => void;
   selectedAddress?: string;
 };
 
@@ -181,14 +181,14 @@ export function AddressSearch({
         setAddressError(
           "We currently only serve Arizona homes. Please enter an AZ address."
         );
-        onSelect("");
+        onSelect({ address: "" });
         setStatus("Arizona address required.");
         return;
       }
 
       setStatus(`Selected: ${address}`);
       setAddressError(null);
-      onSelect(address);
+      onSelect({ address });
       return;
     }
 
@@ -196,7 +196,12 @@ export function AddressSearch({
       const response = await fetch(
         `/api/places/details?placeId=${encodeURIComponent(prediction.place_id)}`
       );
-      const payload: { formattedAddress?: string; message?: string } =
+      const payload: {
+        formattedAddress?: string;
+        lat?: number;
+        lng?: number;
+        message?: string;
+      } =
         await response.json().catch(() => ({}));
       const formattedAddress =
         response.ok && payload.formattedAddress ? payload.formattedAddress : address;
@@ -206,17 +211,21 @@ export function AddressSearch({
           "We currently only serve Arizona homes. Please enter an AZ address."
         );
         setStatus("Arizona address required.");
-        onSelect("");
+        onSelect({ address: "" });
         return;
       }
 
       setQuery(formattedAddress);
-      onSelect(formattedAddress);
+      onSelect({
+        address: formattedAddress,
+        lat: payload.lat,
+        lng: payload.lng,
+      });
       setAddressError(null);
       setStatus(`Selected: ${formattedAddress}`);
     } catch {
       setAddressError(lookupUnavailableMessage);
-      onSelect("");
+      onSelect({ address: "" });
     }
   };
 

@@ -281,6 +281,15 @@ export function SolarReportGenerator({
             description="Approximate yearly CO2 reduction impact from the modeled array."
             metric="CO2 offset"
           />
+
+          {analysis ? (
+            <PreviewCard
+              title="Roof confidence"
+              value={analysis.confidence}
+              description={analysis.confidenceNote}
+              metric={analysis.roofShape}
+            />
+          ) : null}
         </div>
       </div>
 
