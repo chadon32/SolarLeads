@@ -143,7 +143,7 @@ export function HouseShowcase({ selectedAddress, analysis }: HouseShowcaseProps)
       },
       {
         label: "Usable roof area",
-        value: `${activeAnalysis.estimatedUsableSolarAreaSqm.toFixed(1)} m²`,
+        value: `${activeAnalysis.estimatedUsableSolarAreaSqm.toFixed(1)} sq m`,
       },
       {
         label: "Panel count",
@@ -161,7 +161,7 @@ export function HouseShowcase({ selectedAddress, analysis }: HouseShowcaseProps)
             3D rooftop visualization
           </p>
           <p className="mt-1 text-sm leading-6 text-slate-300">
-            Simplified house model, roof geometry, and solar placement tied to the selected address.
+            See a modeled roof layout, panel placement, and system size based on the selected property.
           </p>
         </div>
 
@@ -223,7 +223,7 @@ export function HouseShowcase({ selectedAddress, analysis }: HouseShowcaseProps)
           </Canvas>
 
           <div className="pointer-events-none absolute left-5 top-5 rounded-full border border-white/12 bg-slate-950/72 px-4 py-2 text-[0.62rem] font-semibold uppercase tracking-[0.34em] text-cyan-100 shadow-[0_14px_34px_rgba(2,8,23,0.35)] backdrop-blur-md">
-            AI roof model
+            Estimated roof model
           </div>
 
           <div className="pointer-events-none absolute bottom-5 left-5 right-5 flex flex-wrap items-end justify-between gap-3">
@@ -252,10 +252,10 @@ export function HouseShowcase({ selectedAddress, analysis }: HouseShowcaseProps)
                 <div className="flex items-center justify-between gap-4">
                   <div>
                     <p className="text-[0.62rem] font-semibold uppercase tracking-[0.34em] text-cyan-300">
-                      Preparing scene
+                      Preparing preview
                     </p>
                     <p className="mt-1 text-sm leading-6 text-slate-300">
-                      Building the rooftop model and panel layout.
+                      Loading the rooftop model and panel layout.
                     </p>
                   </div>
                   <p className="text-2xl font-semibold tracking-tight text-white">{progress}%</p>

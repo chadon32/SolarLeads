@@ -17,11 +17,11 @@ export const metadata: Metadata = {
     process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"
   ),
   title: {
-    default: "Address-to-Roof Solar Preview",
-    template: "%s | Address-to-Roof Solar Preview",
+    default: "See your home with solar",
+    template: "%s | Arizona Solar AI",
   },
   description:
-    "Premium AI solar preview for Arizona homeowners with address autocomplete, roof analysis, install visuals, and a fast lead-to-report flow.",
+    "See your home with solar before you commit. Arizona homeowners can enter an address and get a roof analysis, panel placement, and a savings estimate.",
   keywords: [
     "Arizona solar",
     "solar estimate",
@@ -34,16 +34,25 @@ export const metadata: Metadata = {
   publisher: "Arizona Solar AI",
   openGraph: {
     type: "website",
-    title: "Address-to-Roof Solar Preview",
+    title: "See your home with solar",
     description:
-      "Premium AI solar preview for Arizona homeowners with address autocomplete, roof analysis, and install visuals.",
-    siteName: "Address-to-Roof Solar Preview",
+      "See your home with solar before you commit. Arizona homeowners can preview roof placement and modeled savings in under a minute.",
+    siteName: "Arizona Solar AI",
+    images: [
+      {
+        url: "/og-image.jpg",
+        width: 1200,
+        height: 630,
+        alt: "Arizona Solar AI roof preview",
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
-    title: "Address-to-Roof Solar Preview",
+    title: "See your home with solar",
     description:
-      "Premium AI solar preview for Arizona homeowners with address autocomplete, roof analysis, and install visuals.",
+      "See your home with solar before you commit. Arizona homeowners can preview roof placement and modeled savings in under a minute.",
+    images: ["/og-image.jpg"],
   },
   robots: {
     index: true,

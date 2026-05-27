@@ -204,9 +204,12 @@ export function SolarReportGenerator({
             >
               Download PDF report
             </ButtonLink>
-            <ButtonLink href="/dashboard" variant="ghost" className="px-4 py-2 text-sm">
-              Open dashboard
-            </ButtonLink>
+            <span
+              className="inline-flex items-center rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm font-semibold text-slate-300"
+              title="This is a preview. Your dashboard will be available after report generation."
+            >
+              Dashboard preview only
+            </span>
           </div>
         </div>
 

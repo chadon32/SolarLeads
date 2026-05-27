@@ -111,6 +111,17 @@ h3,
   }
 }
 
+@keyframes fade-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @keyframes scan-sweep {
   0% {
     transform: translateY(-35%);
@@ -188,6 +199,10 @@ h3,
 
 .page-enter {
   animation: page-enter 900ms ease-out both;
+}
+
+.analysis-section {
+  animation: fade-slide-up 500ms ease forwards;
 }
 
 .scan-sweep {

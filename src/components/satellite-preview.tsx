@@ -133,7 +133,7 @@ export function SatellitePreview({
             Satellite preview
           </p>
           <p className="mt-1 text-sm leading-6 text-slate-300">
-            {displayAddress || "Waiting for an address..."}
+            {displayAddress || "Select an Arizona address to begin."}
           </p>
         </div>
         <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.26em] text-slate-300">
@@ -177,7 +177,7 @@ export function SatellitePreview({
               <p className="mt-1 text-sm leading-6 text-slate-200">
                 {loading
                   ? "Generating rooftop detail..."
-                  : "High-zoom roof image ready for analysis"}
+                  : "High-zoom roof image ready for analysis."}
               </p>
             </div>
             <div className="analysis-orbit h-10 w-10 rounded-full border border-cyan-300/20 bg-cyan-300/10" />
@@ -199,41 +199,36 @@ export function SatellitePreview({
               Estimated {analysis.estimatedPanelCount} panels fit on the primary roof plane with a
               modeled system size of {analysis.estimatedSystemSizeKw.toFixed(1)} kW.
             </p>
+            <p
+              className="mt-3 text-xs leading-6 text-slate-400"
+              title="This is a modeled estimate. Your final report will include measurements specific to your roof."
+            >
+              Estimated based on typical Arizona rooftops.
+            </p>
           </div>
         </div>
 
-        <div className="grid gap-4">
-          <div className="rounded-[1.4rem] border border-white/10 bg-slate-950/72 p-4 shadow-[0_18px_50px_rgba(2,8,20,0.45)] backdrop-blur-xl">
-            <p className="text-[0.62rem] font-semibold uppercase tracking-[0.34em] text-cyan-300">
-              Roof geometry
-            </p>
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              <GeometryCard
-                label="Estimated roof area"
-                value={`${analysis.estimatedRoofAreaSqm.toFixed(1)} m²`}
-              />
-              <GeometryCard
-                label="Usable solar area"
-                value={`${analysis.estimatedUsableSolarAreaSqm.toFixed(1)} m²`}
-              />
-              <GeometryCard
-                label="Roof dimensions"
-                value={`${analysis.estimatedRoofLengthMeters.toFixed(1)}m × ${analysis.estimatedRoofWidthMeters.toFixed(1)}m`}
-              />
-              <GeometryCard
-                label="Roof pitch"
-                value={`${analysis.roofPitchDegrees.toFixed(0)}°`}
-              />
-            </div>
-          </div>
-
-          <div className="rounded-[1rem] border border-white/8 bg-white/5 p-3">
-            <p className="text-[0.56rem] font-semibold uppercase tracking-[0.32em] text-slate-400">
-              Roof context
-            </p>
-            <p className="mt-1 text-sm leading-6 text-slate-300">
-              Satellite imagery stays clean, with all analysis moved into this separate panel.
-            </p>
+        <div className="rounded-[1.4rem] border border-white/10 bg-slate-950/72 p-4 shadow-[0_18px_50px_rgba(2,8,20,0.45)] backdrop-blur-xl">
+          <p className="text-[0.62rem] font-semibold uppercase tracking-[0.34em] text-cyan-300">
+            Roof geometry
+          </p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <GeometryCard
+              label="Estimated roof area"
+              value={`${analysis.estimatedRoofAreaSqm.toFixed(1)} sq m`}
+            />
+            <GeometryCard
+              label="Usable solar area"
+              value={`${analysis.estimatedUsableSolarAreaSqm.toFixed(1)} sq m`}
+            />
+            <GeometryCard
+              label="Roof dimensions"
+              value={`${analysis.estimatedRoofLengthMeters.toFixed(1)}m x ${analysis.estimatedRoofWidthMeters.toFixed(1)}m`}
+            />
+            <GeometryCard
+              label="Roof pitch"
+              value={`${analysis.roofPitchDegrees.toFixed(0)} deg`}
+            />
           </div>
         </div>
       </div>

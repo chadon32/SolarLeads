@@ -45,8 +45,14 @@ export default async function DashboardPage({
             Dashboard data is not ready yet.
           </h1>
           <p className="mt-3 text-sm leading-7 text-slate-300">
-            Make sure `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and the follow-up
-            table SQL are configured, then refresh this page.
+            Make sure `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and the Supabase
+            SQL files for `leads`, `lead_followups`, and `request_events` are all
+            configured in the same project, then refresh this page.
+          </p>
+          <p className="mt-3 rounded-[1.1rem] border border-white/10 bg-slate-950/40 px-4 py-3 text-xs leading-6 text-slate-300">
+            If Vercel is pointed at the wrong Supabase project, or the `leads`
+            table was not created there, this page will show the setup warning
+            instead of the data view.
           </p>
         </div>
       </main>

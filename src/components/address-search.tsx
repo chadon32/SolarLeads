@@ -24,6 +24,9 @@ const demoSuggestions = [
   "11310 N Scottsdale Rd, Scottsdale, AZ",
 ];
 
+const lookupUnavailableMessage =
+  "Address lookup is temporarily unavailable. Please try again or call us at (602) 555-0100.";
+
 function buildFallbackSuggestions(query: string) {
   const typedAddress = query.trim();
   const typedSuggestion =
@@ -50,6 +53,10 @@ function buildFallbackSuggestions(query: string) {
   return [...typedSuggestion, ...demoMatches].slice(0, 5);
 }
 
+function isArizonaAddress(address: string) {
+  return address.includes(", AZ") || address.includes("Arizona");
+}
+
 export function AddressSearch({
   onSelect,
   selectedAddress,
@@ -61,6 +68,15 @@ export function AddressSearch({
   const [status, setStatus] = useState("Search powered by Google Places.");
   const [activeIndex, setActiveIndex] = useState(-1);
   const [searching, setSearching] = useState(false);
+  const [addressError, setAddressError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const handle = window.requestAnimationFrame(() => {
+      setQuery(selectedAddress ?? "");
+    });
+
+    return () => window.cancelAnimationFrame(handle);
+  }, [selectedAddress]);
 
   useEffect(() => {
     const trimmed = query.trim();
@@ -77,12 +93,14 @@ export function AddressSearch({
         setPredictions(fallback);
         setActiveIndex(fallback.length ? 0 : -1);
         setStatus("Start typing to search real addresses.");
+        setAddressError(null);
         setSearching(false);
         return;
       }
 
       setStatus("Searching Google Places...");
       setSearching(true);
+      setAddressError(null);
 
       try {
         const response = await fetch("/api/places/autocomplete", {
@@ -103,6 +121,7 @@ export function AddressSearch({
           setActiveIndex(fallback.length ? 0 : -1);
           setPlacesReady(false);
           setStatus(payload.message ?? "Google Places search is unavailable.");
+          setAddressError(lookupUnavailableMessage);
           setSearching(false);
           return;
         }
@@ -116,6 +135,11 @@ export function AddressSearch({
             ? "Autocomplete suggestions ready."
             : "No matching addresses found."
         );
+        setAddressError(
+          nextPredictions.length
+            ? null
+            : "No results found. Try a nearby street address or check your spelling."
+        );
         setSearching(false);
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") {
@@ -127,6 +151,7 @@ export function AddressSearch({
         setActiveIndex(fallback.length ? 0 : -1);
         setPlacesReady(false);
         setStatus("Google Places search is unavailable.");
+        setAddressError(lookupUnavailableMessage);
         setSearching(false);
       }
     }, 220);
@@ -138,7 +163,7 @@ export function AddressSearch({
   }, [open, query]);
 
   const helperText =
-    "Type an address, then select a suggestion to load the house preview.";
+    "Type your address below and we will show a roof analysis only after a valid Arizona property is selected.";
 
   const selectPrediction = async (prediction: Prediction) => {
     const address = prediction.description;
@@ -147,13 +172,23 @@ export function AddressSearch({
     setPredictions([]);
     setActiveIndex(-1);
     setOpen(false);
-    onSelect(address);
 
     if (
       prediction.place_id.startsWith("demo-") ||
       prediction.place_id.startsWith("manual-")
     ) {
+      if (!isArizonaAddress(address)) {
+        setAddressError(
+          "We currently only serve Arizona homes. Please enter an AZ address."
+        );
+        onSelect("");
+        setStatus("Arizona address required.");
+        return;
+      }
+
       setStatus(`Selected: ${address}`);
+      setAddressError(null);
+      onSelect(address);
       return;
     }
 
@@ -166,11 +201,22 @@ export function AddressSearch({
       const formattedAddress =
         response.ok && payload.formattedAddress ? payload.formattedAddress : address;
 
+      if (!isArizonaAddress(formattedAddress)) {
+        setAddressError(
+          "We currently only serve Arizona homes. Please enter an AZ address."
+        );
+        setStatus("Arizona address required.");
+        onSelect("");
+        return;
+      }
+
       setQuery(formattedAddress);
       onSelect(formattedAddress);
+      setAddressError(null);
       setStatus(`Selected: ${formattedAddress}`);
     } catch {
-      setStatus(`Selected: ${address}`);
+      setAddressError(lookupUnavailableMessage);
+      onSelect("");
     }
   };
 
@@ -200,6 +246,7 @@ export function AddressSearch({
             setQuery(event.target.value);
             setOpen(true);
             setActiveIndex(-1);
+            setAddressError(null);
           }}
           onFocus={() => setOpen(true)}
           onKeyDown={(event) => {
@@ -235,8 +282,10 @@ export function AddressSearch({
           onBlur={() => {
             window.setTimeout(() => setOpen(false), 140);
           }}
-          placeholder="Start typing your service address..."
-          className="w-full rounded-[1.35rem] border border-white/10 bg-slate-950/45 px-5 py-4 text-base text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/35 focus:bg-slate-950/65"
+          placeholder="Start typing your Arizona address..."
+          className={`w-full rounded-[1.35rem] border bg-slate-950/45 px-5 py-4 text-base text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/35 focus:bg-slate-950/65 ${
+            addressError ? "border-rose-400/45" : "border-white/10"
+          }`}
         />
 
         <div className="mt-3 flex items-center justify-between gap-4 text-xs text-slate-400">
@@ -265,38 +314,44 @@ export function AddressSearch({
                   </div>
                 ))
               : predictions.map((prediction, index) => {
-              const selected = index === activeIndex;
+                  const selected = index === activeIndex;
 
-              return (
-                <button
-                  key={prediction.place_id}
-                  id={`address-option-${prediction.place_id}`}
-                  type="button"
-                  role="option"
-                  aria-selected={selected}
-                  className={`flex w-full items-start gap-3 border-b border-white/6 px-4 py-3 text-left transition last:border-b-0 ${
-                    selected ? "bg-white/8" : "hover:bg-white/5"
-                  }`}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => selectPrediction(prediction)}
-                >
-                  <span className="mt-1 h-2 w-2 rounded-full bg-cyan-300 shadow-[0_0_18px_rgba(103,232,249,0.7)]" />
-                  <span className="min-w-0">
-                    <span className="block text-sm font-medium text-white">
-                      {prediction.structured_formatting?.main_text ??
-                        prediction.description}
-                    </span>
-                    <span className="mt-1 block text-xs text-slate-400">
-                      {prediction.structured_formatting?.secondary_text ??
-                        `Match ${index + 1}`}
-                    </span>
-                  </span>
-                </button>
-              );
-              })}
+                  return (
+                    <button
+                      key={prediction.place_id}
+                      id={`address-option-${prediction.place_id}`}
+                      type="button"
+                      role="option"
+                      aria-selected={selected}
+                      className={`flex w-full items-start gap-3 border-b border-white/6 px-4 py-3 text-left transition last:border-b-0 ${
+                        selected ? "bg-white/8" : "hover:bg-white/5"
+                      }`}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => selectPrediction(prediction)}
+                    >
+                      <span className="mt-1 h-2 w-2 rounded-full bg-cyan-300 shadow-[0_0_18px_rgba(103,232,249,0.7)]" />
+                      <span className="min-w-0">
+                        <span className="block text-sm font-medium text-white">
+                          {prediction.structured_formatting?.main_text ??
+                            prediction.description}
+                        </span>
+                        <span className="mt-1 block text-xs text-slate-400">
+                          {prediction.structured_formatting?.secondary_text ??
+                            `Match ${index + 1}`}
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
           </div>
         )}
       </div>
+      <p className="mt-3 text-sm text-slate-400">
+        Currently serving Arizona addresses only.
+      </p>
+      {addressError ? (
+        <p className="mt-2 text-sm leading-6 text-rose-300">{addressError}</p>
+      ) : null}
       <p className="mt-3 text-sm leading-6 text-slate-400">{helperText}</p>
     </div>
   );

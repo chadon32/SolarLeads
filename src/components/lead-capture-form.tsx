@@ -239,8 +239,7 @@ export function LeadCaptureForm({ initialAddress }: LeadCaptureFormProps) {
                 Get your AI solar report.
               </h3>
               <p className="mt-3 max-w-xl text-sm leading-7 text-slate-300">
-                Capture the homeowner details and generate a tailored report in
-                one smooth step.
+                Enter your details and we will send the report as soon as it is generated.
               </p>
             </div>
             <div className="hidden rounded-full border border-cyan-300/15 bg-cyan-300/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.3em] text-cyan-200 sm:inline-flex">
@@ -281,11 +280,12 @@ export function LeadCaptureForm({ initialAddress }: LeadCaptureFormProps) {
               value={values.monthlyBill}
               onChange={(value) => updateField("monthlyBill", value)}
               error={errors.monthlyBill}
-              placeholder="250"
+              placeholder="e.g. 180"
               type="number"
               inputMode="decimal"
               prefix="$"
               autoComplete="off"
+              helperText="Used to estimate the savings shown in your report."
             />
             <div className="sm:col-span-2">
               <Field
@@ -299,16 +299,33 @@ export function LeadCaptureForm({ initialAddress }: LeadCaptureFormProps) {
             </div>
           </div>
 
-          <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="mt-6 text-center text-sm leading-6 text-slate-400">
+            No spam. No sales calls without your permission. Your info is only shared with licensed AZ installers.
+          </p>
+
+          <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="text-sm text-slate-400">
               Estimated annual savings:{" "}
               <span className="font-semibold text-white">
                 {formatMoney(estimatedSavings)}
               </span>
             </div>
-            <Button type="submit" disabled={status === "submitting"} className="px-6 py-3.5">
-              {status === "submitting" ? "Saving lead..." : "Generate report"}
-            </Button>
+            {status === "success" ? (
+              <div className="inline-flex items-center justify-center rounded-full border border-emerald-300/20 bg-emerald-300/12 px-6 py-3.5 text-sm font-semibold text-emerald-200">
+                Report sent! Check your email within 2 minutes.
+              </div>
+            ) : (
+              <Button type="submit" disabled={status === "submitting"} className="px-6 py-3.5">
+                {status === "submitting" ? (
+                  <span className="inline-flex items-center gap-2">
+                    <span className="h-4 w-4 rounded-full border-2 border-slate-950/20 border-t-slate-950 animate-spin" />
+                    Generating your report...
+                  </span>
+                ) : (
+                  "Generate Report"
+                )}
+              </Button>
+            )}
           </div>
 
           <div
@@ -336,7 +353,7 @@ export function LeadCaptureForm({ initialAddress }: LeadCaptureFormProps) {
               What happens next
             </p>
             <h4 className="mt-3 text-2xl font-semibold tracking-tight text-white">
-              A fast, convincing handoff from lead to report.
+              What happens next
             </h4>
             <div className="mt-6 grid gap-3">
               {[
@@ -387,7 +404,7 @@ export function LeadCaptureForm({ initialAddress }: LeadCaptureFormProps) {
                 <div className="mt-4 flex items-center gap-3">
                   <span className="success-pop flex h-10 w-10 items-center justify-center rounded-full bg-emerald-300/15 text-emerald-200">OK</span>
                   <span className="text-sm font-medium text-emerald-200">
-                    Success animation active
+                    Report ready
                   </span>
                 </div>
               ) : null}
@@ -422,6 +439,7 @@ type FieldProps = {
   inputMode?: InputHTMLAttributes<HTMLInputElement>["inputMode"];
   prefix?: string;
   autoComplete?: string;
+  helperText?: string;
 };
 
 function Field({
@@ -434,6 +452,7 @@ function Field({
   inputMode,
   prefix,
   autoComplete,
+  helperText,
 }: FieldProps) {
   return (
     <label className="block">
@@ -459,6 +478,9 @@ function Field({
         />
       </div>
       {error ? <p className="mt-2 text-sm text-rose-300">{error}</p> : null}
+      {!error && helperText ? (
+        <p className="mt-2 text-sm leading-6 text-slate-400">{helperText}</p>
+      ) : null}
     </label>
   );
 }
