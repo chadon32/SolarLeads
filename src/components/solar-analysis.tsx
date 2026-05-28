@@ -39,6 +39,8 @@ type SatelliteImagePayload = {
 
 type SolarDataLayersPayload = {
   annualFluxUrl?: string | null;
+  maskUrl?: string | null;
+  rgbUrl?: string | null;
   imageryQuality?: string | null;
   message?: string;
 };
@@ -96,6 +98,16 @@ type MeasurementLine = {
   label: string;
 };
 
+type RasterData =
+  | Float32Array
+  | Float64Array
+  | Uint8Array
+  | Uint16Array
+  | Uint32Array
+  | Int8Array
+  | Int16Array
+  | Int32Array;
+
 const viewModes: Array<{ id: ViewMode; label: string }> = [
   { id: "overview", label: "Overview" },
   { id: "panels", label: "Panels" },
@@ -131,6 +143,7 @@ export function SolarAnalysis({
   >("idle");
   const [satelliteImage, setSatelliteImage] = useState<string | null>(null);
   const [annualFluxUrl, setAnnualFluxUrl] = useState<string | null>(null);
+  const [solarMaskUrl, setSolarMaskUrl] = useState<string | null>(null);
   const [roofData, setRoofData] = useState<RoofAnalysis | null>(null);
   const [resolvedProperty, setResolvedProperty] =
     useState<ResolvedProperty | null>(null);
@@ -147,6 +160,7 @@ export function SolarAnalysis({
         setStage("idle");
         setSatelliteImage(null);
         setAnnualFluxUrl(null);
+        setSolarMaskUrl(null);
         setRoofData(null);
         setSelectedPanelCount(0);
         setResolvedProperty(null);
@@ -168,6 +182,7 @@ export function SolarAnalysis({
         setErrorMessage("");
         setRoofData(null);
         setAnnualFluxUrl(null);
+        setSolarMaskUrl(null);
         onAnalysisChange?.(null);
 
         const property = await resolveProperty(
@@ -217,8 +232,10 @@ export function SolarAnalysis({
             .json()
             .catch(() => ({}));
           setAnnualFluxUrl(dataLayersPayload.annualFluxUrl ?? null);
+          setSolarMaskUrl(dataLayersPayload.maskUrl ?? null);
         } else {
           setAnnualFluxUrl(null);
+          setSolarMaskUrl(null);
         }
         setStage("analyzing");
 
@@ -520,6 +537,7 @@ export function SolarAnalysis({
                 <ViewportCanvas
                   satelliteImage={satelliteImage}
                   annualFluxUrl={annualFluxUrl}
+                  solarMaskUrl={solarMaskUrl}
                   address={resolvedProperty?.address ?? address}
                   roofData={roofData}
                   overlay={overlay}
@@ -672,6 +690,7 @@ function ViewportHeader({
 function ViewportCanvas({
   satelliteImage,
   annualFluxUrl,
+  solarMaskUrl,
   address,
   roofData,
   overlay,
@@ -679,6 +698,7 @@ function ViewportCanvas({
 }: {
   satelliteImage: string | null;
   annualFluxUrl: string | null;
+  solarMaskUrl: string | null;
   address: string;
   roofData: RoofAnalysis;
   overlay: {
@@ -707,10 +727,23 @@ function ViewportCanvas({
           className="object-cover"
         />
       ) : null}
-      <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(4,8,16,0.1),rgba(4,8,16,0.68))]" />
-      <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(6,10,18,0.02),rgba(6,10,18,0.18))]" />
+      <div
+        className={`absolute inset-0 ${
+          viewMode === "overview" || viewMode === "irradiance"
+            ? "bg-[linear-gradient(180deg,rgba(4,8,16,0.04),rgba(4,8,16,0.2))]"
+            : "bg-[linear-gradient(180deg,rgba(4,8,16,0.08),rgba(4,8,16,0.52))]"
+        }`}
+      />
+      <div
+        className={`absolute inset-0 ${
+          viewMode === "overview" || viewMode === "irradiance"
+            ? "bg-[linear-gradient(180deg,rgba(6,10,18,0.01),rgba(6,10,18,0.08))]"
+            : "bg-[linear-gradient(180deg,rgba(6,10,18,0.02),rgba(6,10,18,0.18))]"
+        }`}
+      />
       <AnnualFluxCanvasOverlay
         annualFluxUrl={annualFluxUrl}
+        solarMaskUrl={solarMaskUrl}
         viewMode={viewMode}
         clipPath={polygonToCssClipPath(overlay.footprint)}
       />
@@ -868,10 +901,12 @@ function ViewportCanvas({
 
 function AnnualFluxCanvasOverlay({
   annualFluxUrl,
+  solarMaskUrl,
   viewMode,
   clipPath,
 }: {
   annualFluxUrl: string | null;
+  solarMaskUrl: string | null;
   viewMode: ViewMode;
   clipPath: string;
 }) {
@@ -890,29 +925,36 @@ function AnnualFluxCanvasOverlay({
     }
 
     const drawHeatmap = async () => {
-      const response = await fetch(annualFluxUrl, { cache: "no-store" });
-      if (!response.ok) {
+      const [fluxResponse, maskResponse] = await Promise.all([
+        fetch(annualFluxUrl, { cache: "no-store" }),
+        solarMaskUrl ? fetch(solarMaskUrl, { cache: "no-store" }).catch(() => null) : Promise.resolve(null),
+      ]);
+
+      if (!fluxResponse.ok) {
         throw new Error("Unable to load annual flux heatmap.");
       }
 
-      const arrayBuffer = await response.arrayBuffer();
+      const fluxBuffer = await fluxResponse.arrayBuffer();
       const { fromArrayBuffer } = await import("geotiff");
-      const tiff = await fromArrayBuffer(arrayBuffer);
-      const image = await tiff.getImage();
-      const width = image.getWidth();
-      const height = image.getHeight();
-      const raster = (await image.readRasters({ interleave: true })) as
-        | Float32Array
-        | Float64Array
-        | Uint8Array
-        | Uint16Array
-        | Uint32Array
-        | Int8Array
-        | Int16Array
-        | Int32Array;
+      const fluxTiff = await fromArrayBuffer(fluxBuffer);
+      const fluxImage = await fluxTiff.getImage();
+      const width = fluxImage.getWidth();
+      const height = fluxImage.getHeight();
+      const fluxRaster = (await fluxImage.readRasters({ interleave: true })) as RasterData;
+      let maskRaster: RasterData | null = null;
 
-      const validValues = Array.from(raster).filter(
-        (value) => Number.isFinite(value) && value > -9990
+      if (maskResponse?.ok) {
+        const maskBuffer = await maskResponse.arrayBuffer();
+        const maskTiff = await fromArrayBuffer(maskBuffer);
+        const maskImage = await maskTiff.getImage();
+        maskRaster = (await maskImage.readRasters({ interleave: true })) as RasterData;
+      }
+
+      const validValues = Array.from(fluxRaster).filter(
+        (value, index) =>
+          Number.isFinite(value) &&
+          value > -9990 &&
+          (!maskRaster || Number(maskRaster[index] ?? 0) > 0)
       ) as number[];
 
       if (!validValues.length || cancelled) {
@@ -934,21 +976,23 @@ function AnnualFluxCanvasOverlay({
       const imageData = context.createImageData(width, height);
       const pixels = imageData.data;
 
-      for (let index = 0; index < raster.length; index += 1) {
-        const value = raster[index];
+      for (let index = 0; index < fluxRaster.length; index += 1) {
+        const value = fluxRaster[index];
         const offset = index * 4;
+        const maskValue = maskRaster ? Number(maskRaster[index] ?? 0) : 1;
 
-        if (!Number.isFinite(value) || value <= -9990) {
+        if (!Number.isFinite(value) || value <= -9990 || maskValue <= 0) {
           pixels[offset + 3] = 0;
           continue;
         }
 
         const normalized = clamp01((value - low) / range);
-        const { r, g, b } = fluxColor(normalized);
+        const boosted = Math.pow(normalized, 0.78);
+        const { r, g, b } = fluxColor(boosted);
         pixels[offset] = r;
         pixels[offset + 1] = g;
         pixels[offset + 2] = b;
-        pixels[offset + 3] = 153;
+        pixels[offset + 3] = Math.round(120 + boosted * 95);
       }
 
       if (!cancelled) {
@@ -964,13 +1008,13 @@ function AnnualFluxCanvasOverlay({
     return () => {
       cancelled = true;
     };
-  }, [annualFluxUrl, viewMode]);
+  }, [annualFluxUrl, solarMaskUrl, viewMode]);
 
   return (
     <canvas
       ref={canvasRef}
       aria-hidden="true"
-      className="absolute inset-0 h-full w-full pointer-events-none opacity-60"
+      className="absolute inset-0 h-full w-full pointer-events-none opacity-90 mix-blend-screen"
       style={{
         clipPath,
         WebkitClipPath: clipPath,

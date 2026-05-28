@@ -38,6 +38,8 @@ export async function GET(request: Request) {
 
     return NextResponse.json({
       annualFluxUrl: dataLayers.annualFluxUrl ?? null,
+      maskUrl: dataLayers.maskUrl ?? null,
+      rgbUrl: dataLayers.rgbUrl ?? null,
       imageryQuality: dataLayers.imageryQuality ?? null,
       imageryDate: dataLayers.imageryDate ?? null,
       imageryProcessedDate: dataLayers.imageryProcessedDate ?? null,
