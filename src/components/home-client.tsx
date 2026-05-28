@@ -19,7 +19,7 @@ import { SolarAnalysis } from "@/components/solar-analysis";
 import type { RoofAnalysis } from "@/lib/roof-analysis";
 
 const VIDEO_SRC =
-  "https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260328_115001_bcdaa3b4-03de-47e7-ad63-ae3e392c32d4.mp4";
+  "/Drone_shot_over_solar_neighborhood_202605281518.mp4";
 
 const featureCards = [
   {
