@@ -55,6 +55,15 @@ type RoofComponent = {
   depthPx: number;
 };
 
+type ContextStats = {
+  nearbyPavedRatio: number;
+  nearbyVegetationRatio: number;
+  nearbyRoofLikeRatio: number;
+  nearbyRoofCount: number;
+  nearbyLargeRoofCount: number;
+  surroundingUniformity: number;
+};
+
 type BoundingBox = {
   centerX: number;
   centerY: number;
@@ -107,7 +116,8 @@ export function analyzeRoofDeterministically(
       formatAsRGBA: true,
     });
     const sampled = sampleImage(image.width, image.height, image.data);
-    const component = findRoofComponent(sampled);
+    const components = extractRoofComponents(sampled);
+    const component = components[0];
 
     if (!component) {
       const invalid = buildInvalidRoofAnalysis({
@@ -133,7 +143,15 @@ export function analyzeRoofDeterministically(
       1
     );
     const roofAreaM2 = widthM * depthM;
-    const propertyType = classifyPropertyType(component, widthM, depthM, roofAreaM2);
+    const contextStats = summarizeContext(sampled, component, components);
+    const propertyType = classifyPropertyType(
+      params.address,
+      component,
+      contextStats,
+      widthM,
+      depthM,
+      roofAreaM2
+    );
 
     if (propertyType !== "residential") {
       const invalid = buildInvalidRoofAnalysis({
@@ -299,7 +317,7 @@ function sampleImage(width: number, height: number, rgba: Uint8Array) {
   return cells;
 }
 
-function findRoofComponent(cells: SampleCell[]): RoofComponent | null {
+function extractRoofComponents(cells: SampleCell[]) {
   const mask = new Uint8Array(SAMPLE_SIZE * SAMPLE_SIZE);
 
   for (const cell of cells) {
@@ -415,11 +433,7 @@ function findRoofComponent(cells: SampleCell[]): RoofComponent | null {
     });
   }
 
-  if (!components.length) {
-    return null;
-  }
-
-  return components.sort((left, right) => scoreComponent(right) - scoreComponent(left))[0];
+  return components.sort((left, right) => scoreComponent(right) - scoreComponent(left));
 }
 
 function scoreComponent(component: RoofComponent) {
@@ -443,6 +457,93 @@ function createBoundingBox(component: RoofComponent): BoundingBox {
     axisY,
     halfWidth: component.widthPx / 2,
     halfHeight: component.depthPx / 2,
+  };
+}
+
+function summarizeContext(
+  cells: SampleCell[],
+  component: RoofComponent,
+  components: RoofComponent[]
+): ContextStats {
+  const ringMinX = Math.max(0, component.minX - 18);
+  const ringMaxX = Math.min(SAMPLE_SIZE - 1, component.maxX + 18);
+  const ringMinY = Math.max(0, component.minY - 18);
+  const ringMaxY = Math.min(SAMPLE_SIZE - 1, component.maxY + 18);
+  let ringCount = 0;
+  let pavedCount = 0;
+  let vegetationCount = 0;
+  let roofLikeCount = 0;
+  let lumaSum = 0;
+  let lumaSqSum = 0;
+
+  for (const cell of cells) {
+    if (
+      cell.x < ringMinX ||
+      cell.x > ringMaxX ||
+      cell.y < ringMinY ||
+      cell.y > ringMaxY
+    ) {
+      continue;
+    }
+
+    const insideComponentBounds =
+      cell.x >= component.minX &&
+      cell.x <= component.maxX &&
+      cell.y >= component.minY &&
+      cell.y <= component.maxY;
+
+    if (insideComponentBounds) {
+      continue;
+    }
+
+    ringCount += 1;
+    lumaSum += cell.luma;
+    lumaSqSum += cell.luma * cell.luma;
+
+    if (
+      !cell.vegetation &&
+      !cell.water &&
+      !cell.shadow &&
+      cell.saturation < 0.16 &&
+      cell.luma > 0.28 &&
+      cell.luma < 0.78
+    ) {
+      pavedCount += 1;
+    }
+
+    if (cell.vegetation) {
+      vegetationCount += 1;
+    }
+
+    if (cell.roofLike) {
+      roofLikeCount += 1;
+    }
+  }
+
+  const nearbyComponents = components.filter((candidate) => {
+    if (candidate === component) {
+      return false;
+    }
+
+    const distance = Math.hypot(
+      candidate.centroidX - component.centroidX,
+      candidate.centroidY - component.centroidY
+    );
+
+    return distance < 54;
+  });
+
+  const lumaMean = ringCount ? lumaSum / ringCount : 0;
+  const lumaVariance = ringCount ? lumaSqSum / ringCount - lumaMean ** 2 : 0;
+
+  return {
+    nearbyPavedRatio: ringCount ? pavedCount / ringCount : 0,
+    nearbyVegetationRatio: ringCount ? vegetationCount / ringCount : 0,
+    nearbyRoofLikeRatio: ringCount ? roofLikeCount / ringCount : 0,
+    nearbyRoofCount: nearbyComponents.length,
+    nearbyLargeRoofCount: nearbyComponents.filter((candidate) => candidate.area > 220)
+      .length,
+    surroundingUniformity: clamp(1 - lumaVariance * 9, 0, 1),
   };
 }
 
@@ -714,18 +815,55 @@ function createSegment(
 }
 
 function classifyPropertyType(
+  address: string,
   component: RoofComponent,
+  context: ContextStats,
   widthM: number,
   depthM: number,
   roofAreaM2: number
 ) {
   const areaShare = component.area / (SAMPLE_SIZE * SAMPLE_SIZE);
+  const normalizedAddress = address.toLowerCase();
+  const highTrafficAddress =
+    /\b(blvd|boulevard|pkwy|parkway|hwy|highway|loop|center|centre)\b/.test(
+      normalizedAddress
+    );
+  const multifamilyHint =
+    /\b(apt|apartment|suite|ste|unit|#)\b/.test(normalizedAddress);
 
-  if (roofAreaM2 > 360 || widthM > 27 || depthM > 24 || areaShare > 0.32) {
+  if (
+    roofAreaM2 > 360 ||
+    widthM > 27 ||
+    depthM > 24 ||
+    areaShare > 0.32 ||
+    context.nearbyLargeRoofCount >= 2
+  ) {
     return "commercial" as const;
   }
 
-  if (roofAreaM2 < 48 || component.compactness < 0.22) {
+  if (
+    (context.nearbyPavedRatio > 0.42 &&
+      context.nearbyVegetationRatio < 0.16 &&
+      context.surroundingUniformity > 0.62) ||
+    (highTrafficAddress &&
+      context.nearbyPavedRatio > 0.22 &&
+      context.nearbyVegetationRatio < 0.18) ||
+    (context.nearbyRoofLikeRatio > 0.44 && context.nearbyRoofCount >= 3) ||
+    (context.nearbyRoofCount >= 3 &&
+      context.nearbyPavedRatio > 0.3 &&
+      component.compactness < 0.58) ||
+    (roofAreaM2 > 210 && context.nearbyPavedRatio > 0.28)
+  ) {
+    return "commercial" as const;
+  }
+
+  if (
+    roofAreaM2 < 48 ||
+    component.compactness < 0.22 ||
+    multifamilyHint ||
+    (context.nearbyPavedRatio > 0.52 && context.nearbyVegetationRatio < 0.1) ||
+    (context.nearbyRoofCount >= 4 && context.surroundingUniformity > 0.7)
+  ) {
     return "unknown" as const;
   }
 

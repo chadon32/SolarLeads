@@ -5,9 +5,22 @@ create table if not exists public.request_events (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.roof_analysis_cache (
+  address_key text primary key,
+  address text not null,
+  lat double precision not null,
+  lng double precision not null,
+  analysis_version integer not null default 1,
+  analysis jsonb not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 alter table public.request_events enable row level security;
+alter table public.roof_analysis_cache enable row level security;
 
 revoke all on table public.request_events from anon;
+revoke all on table public.roof_analysis_cache from anon;
 revoke usage on schema public from anon;
 
 create index if not exists request_events_route_hash_created_idx
@@ -15,6 +28,9 @@ on public.request_events (route, key_hash, created_at desc);
 
 create index if not exists request_events_created_at_idx
 on public.request_events (created_at desc);
+
+create index if not exists roof_analysis_cache_updated_at_idx
+on public.roof_analysis_cache (updated_at desc);
 
 alter table public.lead_followups
   add column if not exists attempts integer not null default 0;

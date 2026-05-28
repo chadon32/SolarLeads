@@ -2,6 +2,10 @@ import Anthropic from "@anthropic-ai/sdk";
 import { NextResponse } from "next/server";
 import { analyzeRoofDeterministically } from "@/lib/deterministic-roof-analysis";
 import {
+  getCachedRoofAnalysis,
+  saveCachedRoofAnalysis,
+} from "@/lib/roof-analysis-cache";
+import {
   buildInvalidRoofAnalysis,
   buildFallbackRoofAnalysis,
   normalizeRoofAnalysis,
@@ -125,6 +129,8 @@ export async function POST(request: Request) {
       lat: Number.isFinite(lat) ? lat : 33.4942,
       lng: Number.isFinite(lng) ? lng : -111.9261,
     });
+    const cacheLat = Number.isFinite(lat) ? lat : 33.4942;
+    const cacheLng = Number.isFinite(lng) ? lng : -111.9261;
 
     if (!body.base64 || !mediaType) {
       return NextResponse.json(
@@ -133,10 +139,34 @@ export async function POST(request: Request) {
       );
     }
 
+    const cached = await getCachedRoofAnalysis({
+      address,
+      lat: cacheLat,
+      lng: cacheLng,
+      fallback,
+    });
+
+    if (cached) {
+      if (cached.validSite && cached.rooftopDetected) {
+        return NextResponse.json({ analysis: cached, cache: "hit" });
+      }
+
+      return NextResponse.json(
+        {
+          analysis: cached,
+          message:
+            cached.invalidReason ??
+            "A usable residential rooftop could not be confirmed for this address.",
+          cache: "hit",
+        },
+        { status: 422 }
+      );
+    }
+
     const deterministicAnalysis = analyzeRoofDeterministically({
       address,
-      lat: Number.isFinite(lat) ? lat : 33.4942,
-      lng: Number.isFinite(lng) ? lng : -111.9261,
+      lat: cacheLat,
+      lng: cacheLng,
       base64: body.base64,
       mimeType: mediaType,
     });
@@ -145,10 +175,22 @@ export async function POST(request: Request) {
       deterministicAnalysis.validSite &&
       deterministicAnalysis.rooftopDetected
     ) {
+      await saveCachedRoofAnalysis({
+        address,
+        lat: cacheLat,
+        lng: cacheLng,
+        analysis: deterministicAnalysis,
+      });
       return NextResponse.json({ analysis: deterministicAnalysis });
     }
 
     if (!claudeFallbackEnabled || !anthropicKey) {
+      await saveCachedRoofAnalysis({
+        address,
+        lat: cacheLat,
+        lng: cacheLng,
+        analysis: deterministicAnalysis,
+      });
       return NextResponse.json(
         {
           analysis: deterministicAnalysis,
@@ -169,15 +211,22 @@ export async function POST(request: Request) {
     const analysis = normalizeRoofAnalysis(parsed, fallback);
 
     if (!analysis.validSite || !analysis.rooftopDetected) {
+      const invalidAnalysis = buildInvalidRoofAnalysis({
+        propertyType: analysis.propertyType,
+        invalidReason:
+          analysis.invalidReason ??
+          "A usable residential rooftop could not be confirmed for this address.",
+        confidenceNote: analysis.confidenceNote,
+      });
+      await saveCachedRoofAnalysis({
+        address,
+        lat: cacheLat,
+        lng: cacheLng,
+        analysis: invalidAnalysis,
+      });
       return NextResponse.json(
         {
-          analysis: buildInvalidRoofAnalysis({
-            propertyType: analysis.propertyType,
-            invalidReason:
-              analysis.invalidReason ??
-              "A usable residential rooftop could not be confirmed for this address.",
-            confidenceNote: analysis.confidenceNote,
-          }),
+          analysis: invalidAnalysis,
           message:
             analysis.invalidReason ??
             "A usable residential rooftop could not be confirmed for this address.",
@@ -186,6 +235,12 @@ export async function POST(request: Request) {
       );
     }
 
+    await saveCachedRoofAnalysis({
+      address,
+      lat: cacheLat,
+      lng: cacheLng,
+      analysis,
+    });
     return NextResponse.json({ analysis });
   } catch (error) {
     const detail =
@@ -198,6 +253,12 @@ export async function POST(request: Request) {
     });
 
     if (isRecoverableAnalysisError(detail)) {
+      await saveCachedRoofAnalysis({
+        address: body.address?.trim() || "Arizona residential property",
+        lat: Number.isFinite(Number(body.lat)) ? Number(body.lat) : 33.4942,
+        lng: Number.isFinite(Number(body.lng)) ? Number(body.lng) : -111.9261,
+        analysis: fallback,
+      });
       return NextResponse.json(
         {
           analysis: fallback,

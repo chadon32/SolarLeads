@@ -1283,20 +1283,28 @@ function buildPanelLayout(analysis: RoofAnalysis, polygon: Point[]): PanelRect[]
       2.5,
       Math.min(4.4, (segmentHeight - gap * (rows - 1)) / rows)
     );
-    const startX = segmentBounds.minX + 1.5;
-    const startY = segmentBounds.minY + 1.6;
     const rotation = clampNumber((segment.azimuthDeg - 180) / 10, -18, 18);
+    const segmentCenter = getPolygonCenter(segment.outline);
+    const localPolygon = toLocalPolygon(segment.outline, segmentCenter, rotation);
+    const localBounds = getBounds(localPolygon);
+    const startX = localBounds.minX + panelWidth / 2 + 0.8;
+    const startY = localBounds.minY + panelHeight / 2 + 0.8;
     let segmentPlaced = 0;
 
     for (let index = 0; index < targetPanels * 3 && segmentPlaced < targetPanels; index += 1) {
       const column = index % columns;
       const row = Math.floor(index / columns);
-      const x = startX + column * (panelWidth + gap);
-      const y = startY + row * (panelHeight + gap * 0.9);
+      const localX = startX + column * (panelWidth + gap);
+      const localY = startY + row * (panelHeight + gap * 0.9);
+      const worldPosition = fromLocalPoint(
+        { x: localX, y: localY },
+        segmentCenter,
+        rotation
+      );
       const panel = {
         id: `panel-${segment.label}-${segmentIndex}-${segmentPlaced}`,
-        x,
-        y,
+        x: worldPosition.x - panelWidth / 2,
+        y: worldPosition.y - panelHeight / 2,
         width: panelWidth,
         height: panelHeight,
         rotation,
@@ -1351,12 +1359,7 @@ function pointsToString(points: Point[]) {
 }
 
 function panelFitsOutline(panel: PanelRect, outline: Point[]) {
-  const corners = [
-    { x: panel.x, y: panel.y },
-    { x: panel.x + panel.width, y: panel.y },
-    { x: panel.x, y: panel.y + panel.height },
-    { x: panel.x + panel.width, y: panel.y + panel.height },
-  ];
+  const corners = getRotatedPanelCorners(panel);
 
   return corners.every((corner) => pointInPolygon(corner, outline));
 }
@@ -1390,6 +1393,58 @@ function getPolygonCenter(points: Point[]) {
     }),
     { x: 0, y: 0 }
   );
+}
+
+function getRotatedPanelCorners(panel: PanelRect) {
+  const center = {
+    x: panel.x + panel.width / 2,
+    y: panel.y + panel.height / 2,
+  };
+  const localCorners = [
+    { x: -panel.width / 2, y: -panel.height / 2 },
+    { x: panel.width / 2, y: -panel.height / 2 },
+    { x: panel.width / 2, y: panel.height / 2 },
+    { x: -panel.width / 2, y: panel.height / 2 },
+  ];
+
+  return localCorners.map((corner) => {
+    const rotated = rotatePoint(corner, panel.rotation);
+    return {
+      x: center.x + rotated.x,
+      y: center.y + rotated.y,
+    };
+  });
+}
+
+function rotatePoint(point: Point, rotationDeg: number) {
+  const radians = (rotationDeg * Math.PI) / 180;
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+
+  return {
+    x: point.x * cos - point.y * sin,
+    y: point.x * sin + point.y * cos,
+  };
+}
+
+function toLocalPolygon(points: Point[], center: Point, rotationDeg: number) {
+  return points.map((point) =>
+    rotatePoint(
+      {
+        x: point.x - center.x,
+        y: point.y - center.y,
+      },
+      -rotationDeg
+    )
+  );
+}
+
+function fromLocalPoint(point: Point, center: Point, rotationDeg: number) {
+  const rotated = rotatePoint(point, rotationDeg);
+  return {
+    x: rotated.x + center.x,
+    y: rotated.y + center.y,
+  };
 }
 
 function formatAzimuth(value: number) {

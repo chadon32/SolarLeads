@@ -48,7 +48,7 @@ For Vercel, add the same values in the project environment settings. Keep `GOOGL
 
 The rooftop analysis pipeline now uses a deterministic satellite-image engine by default. Leave `ENABLE_CLAUDE_ROOF_ANALYSIS=false` to avoid Anthropic charges on normal address runs. Only set it to `true` if you want Claude fallback enabled for difficult rooftops.
 
-Run the SQL files in `supabase/` to create the `leads`, `lead_followups`, and `request_events` tables before testing the dashboard or follow-up flow.
+Run the SQL files in `supabase/` to create the `leads`, `lead_followups`, `request_events`, and `roof_analysis_cache` tables before testing the dashboard, rooftop analysis cache, or follow-up flow.
 
 The follow-up processor route is ready for a scheduler call. If you use Vercel Cron or another job runner, send `FOLLOW_UP_PROCESS_SECRET` as a bearer token or `x-process-secret` header when calling `POST /api/follow-ups/process`.
 
