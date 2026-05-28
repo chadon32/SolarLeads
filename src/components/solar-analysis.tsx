@@ -98,6 +98,7 @@ type GoogleMapsMapOptions = {
 type AnalysisMetrics = {
   roofArea: number;
   usableArea: number;
+  averageRoofPitch: number;
   selectedPanelCount: number;
   selectedSystemKw: number;
   selectedAnnualKwh: number;
@@ -391,6 +392,15 @@ export function SolarAnalysis({
 
     const roofArea = getRoofAreaM2(roofData);
     const usableArea = getUsableAreaM2(roofData);
+    const averageRoofPitch =
+      roofData.roofSegments.length > 0
+        ? Math.round(
+            (roofData.roofSegments.reduce(
+              (sum, segment) => sum + Math.max(segment.pitchDeg, 0),
+              0
+            ) / roofData.roofSegments.length) * 10
+          ) / 10
+        : roofData.pitchDeg;
     const panelCapacityWatts = roofData.panelCapacityWatts || 400;
     const livePanelCount = clampNumber(
       selectedPanelCount || roofData.panelCount,
@@ -430,6 +440,7 @@ export function SolarAnalysis({
     return {
       roofArea,
       usableArea,
+      averageRoofPitch,
       selectedPanelCount: livePanelCount,
       selectedSystemKw,
       selectedAnnualKwh,
@@ -562,13 +573,14 @@ export function SolarAnalysis({
                     max={roofData.panelCount}
                     onChange={setSelectedPanelCount}
                   />
-                  <PanelMapPreview
-                    address={resolvedProperty?.address ?? address}
-                    lat={resolvedProperty?.lat ?? 0}
-                    lng={resolvedProperty?.lng ?? 0}
-                    roofData={roofData}
-                    selectedPanels={selectedPanels}
-                  />
+                <PanelMapPreview
+                  address={resolvedProperty?.address ?? address}
+                  lat={resolvedProperty?.lat ?? 0}
+                  lng={resolvedProperty?.lng ?? 0}
+                  roofData={roofData}
+                  selectedPanels={selectedPanels}
+                />
+                  <RoofStatsPanel roofData={roofData} metrics={metrics} />
                   <MeasurementPanel roofData={roofData} metrics={metrics} />
                   <LegendPanel roofData={roofData} metrics={metrics} />
                 </div>
@@ -1265,6 +1277,74 @@ function PanelMapPreview({
       <p className="mt-3 text-xs leading-6 text-slate-400">
         The selected {selectedPanels.length} panels are drawn as live map overlays at the property center.
       </p>
+    </div>
+  );
+}
+
+function RoofStatsPanel({
+  roofData,
+  metrics,
+}: {
+  roofData: RoofAnalysis;
+  metrics: AnalysisMetrics;
+}) {
+  const primarySegment = roofData.roofSegments[0];
+  const secondarySegment = roofData.roofSegments[1];
+
+  return (
+    <div className="mt-4 rounded-[1.45rem] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.025))] p-4 shadow-[0_10px_28px_rgba(2,8,20,0.18)]">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[0.56rem] font-semibold uppercase tracking-[0.32em] text-cyan-300">
+            Roof stats
+          </p>
+          <p className="mt-2 text-sm leading-6 text-slate-300">
+            Live Solar API measurements and the current panel selection summary.
+          </p>
+        </div>
+        <div className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.22em] text-slate-300">
+          Live data
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3">
+        <MetricRow label="Roof width" value={`${roofData.widthM.toFixed(1)} m`} />
+        <MetricRow label="Roof depth" value={`${roofData.depthM.toFixed(1)} m`} />
+        <MetricRow label="Gross roof area" value={`${metrics.roofArea.toFixed(1)} sq m`} />
+        <MetricRow label="Usable roof area" value={`${metrics.usableArea.toFixed(1)} sq m`} />
+        <MetricRow label="Average roof pitch" value={`${metrics.averageRoofPitch.toFixed(1)}°`} />
+        <MetricRow label="Primary orientation" value={metrics.orientationLabel} />
+        <MetricRow label="Panel count" value={`${metrics.selectedPanelCount}`} />
+        <MetricRow label="Estimated payback" value={`${metrics.roiYears.toFixed(1)} yrs`} />
+      </div>
+
+      <div className="mt-4 rounded-[1rem] border border-white/8 bg-white/[0.03] p-3">
+        <p className="text-[0.56rem] font-semibold uppercase tracking-[0.28em] text-slate-400">
+          Segment breakdown
+        </p>
+        <div className="mt-3 space-y-2">
+          <div className="flex items-center justify-between gap-3 text-sm">
+            <span className="text-slate-300">Primary</span>
+            <span className="text-white">
+              {primarySegment ? `${primarySegment.areaM2.toFixed(1)} sq m` : "—"}
+            </span>
+          </div>
+          <div className="flex items-center justify-between gap-3 text-sm">
+            <span className="text-slate-300">Secondary</span>
+            <span className="text-white">
+              {secondarySegment ? `${secondarySegment.areaM2.toFixed(1)} sq m` : "—"}
+            </span>
+          </div>
+          <div className="flex items-center justify-between gap-3 text-sm">
+            <span className="text-slate-300">Garage</span>
+            <span className="text-white">
+              {roofData.roofSegments[2]
+                ? `${roofData.roofSegments[2].areaM2.toFixed(1)} sq m`
+                : "—"}
+            </span>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
