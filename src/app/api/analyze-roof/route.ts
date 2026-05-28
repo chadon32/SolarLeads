@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { NextResponse } from "next/server";
+import { analyzeRoofDeterministically } from "@/lib/deterministic-roof-analysis";
 import {
   buildInvalidRoofAnalysis,
   buildFallbackRoofAnalysis,
@@ -8,6 +9,7 @@ import {
 import { enforceRateLimit } from "@/lib/rate-limit";
 
 const anthropicKey = process.env.ANTHROPIC_API_KEY;
+const claudeFallbackEnabled = process.env.ENABLE_CLAUDE_ROOF_ANALYSIS === "true";
 const configuredModel = process.env.ANTHROPIC_MODEL?.trim();
 const modelCandidates = [
   configuredModel,
@@ -131,22 +133,30 @@ export async function POST(request: Request) {
       );
     }
 
-    if (!anthropicKey) {
-      const unavailableAnalysis = buildInvalidRoofAnalysis({
-        propertyType: "unknown",
-        invalidReason:
-          "Roof analysis is temporarily unavailable because the image-analysis service is not configured.",
-        confidenceNote:
-          "Image analysis could not run, so the rooftop could not be validated.",
-      });
+    const deterministicAnalysis = analyzeRoofDeterministically({
+      address,
+      lat: Number.isFinite(lat) ? lat : 33.4942,
+      lng: Number.isFinite(lng) ? lng : -111.9261,
+      base64: body.base64,
+      mimeType: mediaType,
+    });
 
+    if (
+      deterministicAnalysis.validSite &&
+      deterministicAnalysis.rooftopDetected
+    ) {
+      return NextResponse.json({ analysis: deterministicAnalysis });
+    }
+
+    if (!claudeFallbackEnabled || !anthropicKey) {
       return NextResponse.json(
         {
+          analysis: deterministicAnalysis,
           message:
-            "Roof analysis is temporarily unavailable because the image-analysis service is not configured.",
-          analysis: unavailableAnalysis,
+            deterministicAnalysis.invalidReason ??
+            "A usable residential rooftop could not be confirmed for this address.",
         },
-        { status: 503 }
+        { status: 422 }
       );
     }
 
@@ -192,7 +202,7 @@ export async function POST(request: Request) {
         {
           analysis: fallback,
           message:
-            "Detailed roof segmentation was unavailable, so the system is using a conservative modeled rooftop estimate for this address.",
+            "Detailed roof segmentation was unavailable, so the system is using the deterministic rooftop estimate for this address.",
           detail,
         },
         { status: 200 }

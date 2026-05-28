@@ -270,6 +270,10 @@ export function normalizeRoofAnalysis(
     primaryRoofAzimuth,
     roofShape
   );
+  const source =
+    input.source === "modeled" || input.source === "vision-api"
+      ? input.source
+      : fallback.source;
 
   return {
     propertyType,
@@ -305,7 +309,7 @@ export function normalizeRoofAnalysis(
       input.confidenceNote,
       fallback.confidenceNote
     ),
-    source: "vision-api",
+    source,
   };
 }
 
