@@ -5,11 +5,14 @@ import { enforceRateLimit } from "@/lib/rate-limit";
 type GeocodeResponse = {
   results?: Array<{
     formatted_address: string;
+    partial_match?: boolean;
+    types?: string[];
     geometry?: {
       location?: {
         lat: number;
         lng: number;
       };
+      location_type?: string;
       viewport?: {
         northeast: {
           lat: number;
@@ -80,6 +83,8 @@ export async function POST(request: Request) {
     const location = result?.geometry?.location;
     const viewport = result?.geometry?.viewport;
     const status = payload.status;
+    const resultTypes = result?.types ?? [];
+    const locationType = result?.geometry?.location_type;
 
     if (!response.ok || !result || !location || status !== "OK") {
       if (status === "ZERO_RESULTS") {
@@ -96,6 +101,37 @@ export async function POST(request: Request) {
             "Google Geocoding is unavailable for this project.",
         },
         { status: 502 }
+      );
+    }
+
+    const disallowedResultTypes = new Set([
+      "route",
+      "intersection",
+      "parking",
+      "plus_code",
+      "point_of_interest",
+      "airport",
+      "park",
+      "natural_feature",
+    ]);
+
+    if (result.partial_match) {
+      return NextResponse.json(
+        { message: "Please choose a full street address with a visible rooftop." },
+        { status: 422 }
+      );
+    }
+
+    if (
+      resultTypes.some((type) => disallowedResultTypes.has(type)) ||
+      locationType === "APPROXIMATE"
+    ) {
+      return NextResponse.json(
+        {
+          message:
+            "This address does not appear to be a precise residential rooftop. Please choose a house address.",
+        },
+        { status: 422 }
       );
     }
 

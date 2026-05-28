@@ -360,6 +360,7 @@ function addPanels(
           areaM2: roofData.widthM * roofData.depthM * 0.5,
           panelsFit: roofData.panelCount,
           usable: true,
+          outline: [],
         } satisfies RoofSegment,
       ];
 

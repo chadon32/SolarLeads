@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { NextResponse } from "next/server";
 import {
+  buildInvalidRoofAnalysis,
   buildFallbackRoofAnalysis,
   normalizeRoofAnalysis,
 } from "@/lib/roof-analysis";
@@ -8,12 +9,16 @@ import { enforceRateLimit } from "@/lib/rate-limit";
 
 const anthropicKey = process.env.ANTHROPIC_API_KEY;
 
-const analysisPrompt = (address: string) => `You are a solar rooftop analysis AI. You are looking at a satellite image of a residential property at: ${address}
+const analysisPrompt = (address: string) => `You are a solar rooftop analysis AI. You are looking at a satellite image of a property at: ${address}
 
 Analyze the roof visible in this overhead satellite image and return ONLY a valid JSON object with no extra text, markdown, or explanation.
 
 Return this exact structure:
 {
+  "propertyType": "residential" | "commercial" | "parking" | "road" | "vacant_lot" | "unknown",
+  "rooftopDetected": <boolean>,
+  "validSite": <boolean>,
+  "invalidReason": <string or null>,
   "roofShape": "gable" | "hip" | "flat" | "shed" | "complex",
   "widthM": <estimated roof width in meters, number>,
   "depthM": <estimated roof depth in meters, number>,
@@ -26,6 +31,17 @@ Return this exact structure:
   "annualSavingsUSD": <estimated annual savings at $0.13/kWh AZ rate, integer>,
   "shadingRisk": "low" | "medium" | "high",
   "shadeNote": "<one sentence about trees or obstructions if any, or 'No significant shading detected'>",
+  "roofOutline": [
+    { "x": <0-100>, "y": <0-100> }
+  ],
+  "usableOutline": [
+    { "x": <0-100>, "y": <0-100> }
+  ],
+  "obstructionOutlines": [
+    [
+      { "x": <0-100>, "y": <0-100> }
+    ]
+  ],
   "roofSegments": [
     {
       "label": "primary" | "secondary" | "garage",
@@ -33,7 +49,10 @@ Return this exact structure:
       "azimuthDeg": <number>,
       "areaM2": <number>,
       "panelsFit": <integer>,
-      "usable": true | false
+      "usable": true | false,
+      "outline": [
+        { "x": <0-100>, "y": <0-100> }
+      ]
     }
   ],
   "confidence": "high" | "medium" | "low",
@@ -43,7 +62,18 @@ Return this exact structure:
 Rules:
 - Arizona gets about 5.5 peak sun hours per day
 - Assume 400W panels and a 0.85 efficiency factor
-- If the roof is not clearly visible or this is not a residential building, set confidence to "low" and use conservative estimates
+- First decide whether this is a valid residential rooftop.
+- Reject roads, parking lots, empty lots, commercial buildings, large apartment blocks, and images where a usable roof cannot be confidently identified.
+- If the site is invalid, set:
+  - "propertyType" appropriately
+  - "rooftopDetected" to false if no clear roof exists
+  - "validSite" to false
+  - "invalidReason" to a short plain-English explanation
+  - panel and savings numbers to 0
+  - roofOutline, usableOutline, obstructionOutlines, and roofSegments to empty arrays
+- If the site is valid, set "propertyType" to "residential", "rooftopDetected" to true, and "validSite" to true.
+- Use normalized 0-100 coordinates for outlines, where x/y are percentages of the image.
+- Match panel zones and roof segment outlines to the visible roof geometry as closely as possible.
 - Return ONLY the JSON. No markdown. No explanation.`;
 
 export async function POST(request: Request) {
@@ -93,11 +123,19 @@ export async function POST(request: Request) {
     }
 
     if (!anthropicKey) {
+      const unavailableAnalysis = buildInvalidRoofAnalysis({
+        propertyType: "unknown",
+        invalidReason:
+          "Roof analysis is temporarily unavailable because the image-analysis service is not configured.",
+        confidenceNote:
+          "Image analysis could not run, so the rooftop could not be validated.",
+      });
+
       return NextResponse.json(
         {
           message:
-            "ANTHROPIC_API_KEY is not configured. Showing a modeled Arizona estimate instead.",
-          fallback,
+            "Roof analysis is temporarily unavailable because the image-analysis service is not configured.",
+          analysis: unavailableAnalysis,
         },
         { status: 503 }
       );
@@ -136,6 +174,24 @@ export async function POST(request: Request) {
     const parsed = extractJsonObject(textContent);
     const analysis = normalizeRoofAnalysis(parsed, fallback);
 
+    if (!analysis.validSite || !analysis.rooftopDetected) {
+      return NextResponse.json(
+        {
+          analysis: buildInvalidRoofAnalysis({
+            propertyType: analysis.propertyType,
+            invalidReason:
+              analysis.invalidReason ??
+              "A usable residential rooftop could not be confirmed for this address.",
+            confidenceNote: analysis.confidenceNote,
+          }),
+          message:
+            analysis.invalidReason ??
+            "A usable residential rooftop could not be confirmed for this address.",
+        },
+        { status: 422 }
+      );
+    }
+
     return NextResponse.json({ analysis });
   } catch (error) {
     const detail =
@@ -143,7 +199,12 @@ export async function POST(request: Request) {
 
     return NextResponse.json(
       {
-        message: "Roof analysis failed. Showing a modeled Arizona estimate instead.",
+        message: "Roof analysis failed before a rooftop could be validated.",
+        analysis: buildInvalidRoofAnalysis({
+          propertyType: "unknown",
+          invalidReason: "Roof analysis failed before a usable rooftop could be confirmed.",
+          confidenceNote: detail,
+        }),
         detail,
       },
       { status: 500 }

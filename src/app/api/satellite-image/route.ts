@@ -48,6 +48,10 @@ export async function GET(request: Request) {
     satelliteUrl.searchParams.set("size", "640x640");
     satelliteUrl.searchParams.set("scale", "2");
     satelliteUrl.searchParams.set("maptype", "satellite");
+    satelliteUrl.searchParams.append(
+      "style",
+      "feature:all|element:labels|visibility:off"
+    );
     satelliteUrl.searchParams.set("key", mapsKey);
 
     const imageResponse = await fetch(satelliteUrl, {

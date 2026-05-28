@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
 import { ButtonLink } from "@/components/ui/button";
 import {
+  buildDefaultObstructionOutlines,
   buildFallbackRoofAnalysis,
   getMonthlySavings,
   getRoofAreaM2,
@@ -104,7 +105,7 @@ export function SolarAnalysis({
   onAnalysisChange,
 }: SolarAnalysisProps) {
   const [stage, setStage] = useState<
-    "idle" | "resolving" | "fetching" | "analyzing" | "done" | "error"
+    "idle" | "resolving" | "fetching" | "analyzing" | "done" | "invalid" | "error"
   >("idle");
   const [satelliteImage, setSatelliteImage] = useState<string | null>(null);
   const [roofData, setRoofData] = useState<RoofAnalysis | null>(null);
@@ -204,6 +205,18 @@ export function SolarAnalysis({
         const nextRoofData =
           analysisPayload.analysis ?? analysisPayload.fallback ?? fallback;
 
+        if (!nextRoofData.validSite || !nextRoofData.rooftopDetected) {
+          setRoofData(nextRoofData);
+          onAnalysisChange?.(null);
+          setStage("invalid");
+          setErrorMessage(
+            analysisPayload.message ??
+              nextRoofData.invalidReason ??
+              "A usable residential rooftop could not be confirmed for this address."
+          );
+          return;
+        }
+
         setRoofData(nextRoofData);
         onAnalysisChange?.(nextRoofData);
         setStage("done");
@@ -242,10 +255,19 @@ export function SolarAnalysis({
       return null;
     }
 
-    const footprint = getRoofFootprint(roofData.roofShape);
-    const usable = insetPolygon(footprint, 10 - Math.min(roofData.usablePctRoof / 25, 3));
+    const footprint =
+      roofData.roofOutline.length >= 3
+        ? roofData.roofOutline
+        : getRoofFootprint(roofData.roofShape);
+    const usable =
+      roofData.usableOutline.length >= 3
+        ? roofData.usableOutline
+        : insetPolygon(footprint, 10 - Math.min(roofData.usablePctRoof / 25, 3));
     const panels = buildPanelLayout(roofData, usable);
-    const obstructions = getObstructionMarkers(roofData);
+    const obstructions =
+      roofData.obstructionOutlines.length > 0
+        ? roofData.obstructionOutlines
+        : buildDefaultObstructionOutlines(roofData.shadingRisk);
     const bounds = getBounds(footprint);
     const measurements = buildMeasurementLines(bounds, roofData);
 
@@ -305,6 +327,35 @@ export function SolarAnalysis({
       <section className="space-y-5">
         <div className="rounded-[1.8rem] border border-rose-400/20 bg-rose-950/20 p-6 text-sm leading-7 text-rose-200">
           Could not complete roof analysis: {errorMessage}
+        </div>
+      </section>
+    );
+  }
+
+  if (stage === "invalid") {
+    return (
+      <section className="space-y-5">
+        <div className="rounded-[1.8rem] border border-amber-400/20 bg-amber-950/18 p-6">
+          <p className="text-[0.62rem] font-semibold uppercase tracking-[0.34em] text-amber-300">
+            Rooftop validation failed
+          </p>
+          <h3 className="mt-3 text-2xl font-semibold tracking-tight text-white">
+            A usable residential roof was not confirmed for this address.
+          </h3>
+          <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-300">
+            {errorMessage}
+          </p>
+          <div className="mt-5 grid gap-3 sm:grid-cols-3">
+            <MetricRow label="Property type" value={roofData?.propertyType ?? "unknown"} />
+            <MetricRow
+              label="Roof detected"
+              value={roofData?.rooftopDetected ? "Yes" : "No"}
+            />
+            <MetricRow label="Confidence" value={roofData?.confidence ?? "low"} />
+          </div>
+          <p className="mt-5 text-sm leading-6 text-slate-400">
+            Try a detached house address with a clearly visible rooftop in the satellite image.
+          </p>
         </div>
       </section>
     );
@@ -559,7 +610,7 @@ function ViewportCanvas({
     footprint: Point[];
     usable: Point[];
     panels: PanelRect[];
-    obstructions: Point[];
+    obstructions: Point[][];
     bounds: Bounds;
     measurements: MeasurementLine[];
   };
@@ -653,6 +704,28 @@ function ViewportCanvas({
         />
 
         <g clipPath="url(#usable-roof-zone)">
+          {roofData.roofSegments
+            .filter((segment) => segment.outline.length >= 3)
+            .map((segment) => (
+              <g key={`segment-${segment.label}`}>
+                <polygon
+                  points={pointsToString(segment.outline)}
+                  fill={segment.usable ? "rgba(255,255,255,0.05)" : "rgba(248,113,113,0.08)"}
+                  stroke={segment.usable ? "rgba(255,255,255,0.32)" : "rgba(248,113,113,0.42)"}
+                  strokeWidth="0.18"
+                />
+                <text
+                  x={getPolygonCenter(segment.outline).x}
+                  y={getPolygonCenter(segment.outline).y}
+                  textAnchor="middle"
+                  fontSize="1.05"
+                  fill="rgba(255,255,255,0.84)"
+                  letterSpacing="0.08em"
+                >
+                  {segment.label.toUpperCase()}
+                </text>
+              </g>
+            ))}
           {showPanels
             ? overlay.panels.map((panel) => (
                 <rect
@@ -674,17 +747,15 @@ function ViewportCanvas({
         </g>
 
         {showObstructions
-          ? overlay.obstructions.map((point, index) => (
-              <g key={`${point.x}-${point.y}-${index}`}>
-                <circle
-                  cx={point.x}
-                  cy={point.y}
-                  r="1.8"
-                  fill="rgba(15, 23, 42, 0.75)"
-                  stroke="rgba(248, 113, 113, 0.75)"
-                  strokeWidth="0.24"
+          ? overlay.obstructions.map((zone, index) => (
+              <g key={`zone-${index}`}>
+                <polygon
+                  points={pointsToString(zone)}
+                  fill="rgba(248,113,113,0.18)"
+                  stroke="rgba(248,113,113,0.78)"
+                  strokeWidth="0.22"
+                  strokeDasharray="0.8 0.6"
                 />
-                <circle cx={point.x} cy={point.y} r="0.65" fill="rgba(248, 113, 113, 0.85)" />
               </g>
             ))
           : null}
@@ -1155,21 +1226,67 @@ function insetPolygon(points: Point[], inset: number): Point[] {
 }
 
 function buildPanelLayout(analysis: RoofAnalysis, polygon: Point[]): PanelRect[] {
-  const bounds = polygon.reduce(
-    (accumulator, point) => ({
-      minX: Math.min(accumulator.minX, point.x),
-      maxX: Math.max(accumulator.maxX, point.x),
-      minY: Math.min(accumulator.minY, point.y),
-      maxY: Math.max(accumulator.maxY, point.y),
-    }),
-    {
-      minX: Number.POSITIVE_INFINITY,
-      maxX: Number.NEGATIVE_INFINITY,
-      minY: Number.POSITIVE_INFINITY,
-      maxY: Number.NEGATIVE_INFINITY,
-    }
-  );
+  const usableSegments = analysis.roofSegments
+    .filter((segment) => segment.usable && segment.outline.length >= 3)
+    .sort((left, right) => right.panelsFit - left.panelsFit);
 
+  if (!usableSegments.length || analysis.panelCount <= 0) {
+    return [];
+  }
+
+  const panels: PanelRect[] = [];
+  let placedPanels = 0;
+
+  usableSegments.forEach((segment, segmentIndex) => {
+    const segmentBounds = getBounds(segment.outline);
+    const segmentWidth = Math.max(segmentBounds.maxX - segmentBounds.minX - 3.2, 8);
+    const segmentHeight = Math.max(segmentBounds.maxY - segmentBounds.minY - 3, 6);
+    const targetPanels = Math.min(
+      segment.panelsFit,
+      Math.max(0, analysis.panelCount - placedPanels)
+    );
+
+    if (targetPanels <= 0) {
+      return;
+    }
+
+    const columns = Math.max(2, Math.min(6, Math.round(Math.sqrt(targetPanels * 1.2))));
+    const rows = Math.max(1, Math.ceil(targetPanels / columns));
+    const gap = 0.7;
+    const panelWidth = Math.max(
+      2.2,
+      Math.min(5.2, (segmentWidth - gap * (columns - 1)) / columns)
+    );
+    const panelHeight = Math.max(
+      2.5,
+      Math.min(4.4, (segmentHeight - gap * (rows - 1)) / rows)
+    );
+    const startX = segmentBounds.minX + 1.5;
+    const startY = segmentBounds.minY + 1.6;
+    const rotation = clampNumber((segment.azimuthDeg - 180) / 10, -18, 18);
+
+    for (let index = 0; index < targetPanels; index += 1) {
+      const column = index % columns;
+      const row = Math.floor(index / columns);
+
+      panels.push({
+        id: `panel-${segment.label}-${segmentIndex}-${index}`,
+        x: startX + column * (panelWidth + gap),
+        y: startY + row * (panelHeight + gap * 0.9),
+        width: panelWidth,
+        height: panelHeight,
+        rotation,
+      });
+    }
+
+    placedPanels += targetPanels;
+  });
+
+  if (panels.length > 0) {
+    return panels;
+  }
+
+  const bounds = getBounds(polygon);
   const usableWidth = Math.max(bounds.maxX - bounds.minX - 6, 12);
   const usableHeight = Math.max(bounds.maxY - bounds.minY - 6, 10);
   const columns = Math.max(2, Math.min(8, Math.ceil(Math.sqrt(analysis.panelCount * 1.15))));
@@ -1196,27 +1313,18 @@ function buildPanelLayout(analysis: RoofAnalysis, polygon: Point[]): PanelRect[]
   });
 }
 
-function getObstructionMarkers(analysis: RoofAnalysis): Point[] {
-  if (analysis.shadingRisk === "low") {
-    return [{ x: 26, y: 24 }];
-  }
-
-  if (analysis.shadingRisk === "medium") {
-    return [
-      { x: 24, y: 26 },
-      { x: 75, y: 30 },
-    ];
-  }
-
-  return [
-    { x: 24, y: 24 },
-    { x: 73, y: 28 },
-    { x: 67, y: 70 },
-  ];
-}
-
 function pointsToString(points: Point[]) {
   return points.map((point) => `${point.x},${point.y}`).join(" ");
+}
+
+function getPolygonCenter(points: Point[]) {
+  return points.reduce(
+    (accumulator, point) => ({
+      x: accumulator.x + point.x / points.length,
+      y: accumulator.y + point.y / points.length,
+    }),
+    { x: 0, y: 0 }
+  );
 }
 
 function formatAzimuth(value: number) {
