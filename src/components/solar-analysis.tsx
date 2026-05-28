@@ -673,7 +673,13 @@ function ViewportHeader({
           <button
             key={mode.id}
             type="button"
-            onClick={() => onSelectView(mode.id)}
+            onClick={() =>
+              onSelectView(
+                viewMode === mode.id && mode.id !== "overview"
+                  ? "overview"
+                  : mode.id
+              )
+            }
             className={`rounded-full px-3.5 py-2 text-xs font-semibold uppercase tracking-[0.24em] transition ${
               viewMode === mode.id
                 ? "bg-cyan-300 text-slate-950"
@@ -710,12 +716,10 @@ function ViewportCanvas({
   const mapElementRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<GoogleMapInstance | null>(null);
   const overlayRefs = useRef<GoogleMapOverlayInstance[]>([]);
+  const overlayRunRef = useRef(0);
   const mapsApiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
   const center = useMemo(
-    () =>
-      property
-        ? { lat: property.lat, lng: property.lng }
-        : getRoofBoundsCenter(roofData.roofBounds),
+    () => getRoofBoundsCenter(roofData.roofBounds) ?? property,
     [property, roofData.roofBounds]
   );
 
@@ -771,6 +775,8 @@ function ViewportCanvas({
         return;
       }
 
+      const overlayRun = overlayRunRef.current + 1;
+      overlayRunRef.current = overlayRun;
       clearGoogleOverlays(overlayRefs.current);
       overlayRefs.current = [];
 
@@ -784,17 +790,31 @@ function ViewportCanvas({
         nextOverlays.push(boundsOverlay);
       }
 
-      if (viewMode === "overview" || viewMode === "irradiance") {
-        const heatmapOverlay = await createAnnualFluxMapOverlay({
+      nextOverlays.push(
+        ...createRoofSegmentOverlays({
           googleApi,
           map: mapRef.current,
+          roofData,
+        })
+      );
+      overlayRefs.current = nextOverlays;
+
+      if (viewMode === "irradiance") {
+        const heatmapOverlay = await createAnnualFluxMapOverlay({
+          googleApi,
           annualFluxUrl,
           solarMaskUrl,
           fallbackBounds: roofData.roofBounds,
-          opacity: viewMode === "overview" ? 0.55 : 0.68,
+          opacity: 0.68,
         });
 
         if (heatmapOverlay) {
+          if (cancelled || overlayRunRef.current !== overlayRun || !mapRef.current) {
+            heatmapOverlay.setMap(null);
+            return;
+          }
+
+          heatmapOverlay.setMap(mapRef.current);
           nextOverlays.push(heatmapOverlay);
         }
       }
@@ -810,13 +830,18 @@ function ViewportCanvas({
         );
       }
 
-      overlayRefs.current = nextOverlays;
+      if (!cancelled && overlayRunRef.current === overlayRun) {
+        overlayRefs.current = nextOverlays;
+      } else {
+        clearGoogleOverlays(nextOverlays);
+      }
     };
 
     void drawOverlays();
 
     return () => {
       cancelled = true;
+      overlayRunRef.current += 1;
       clearGoogleOverlays(overlayRefs.current);
       overlayRefs.current = [];
     };
@@ -902,7 +927,13 @@ function loadGoogleMapsApi(apiKey: string) {
 }
 
 function clearGoogleOverlays(overlays: GoogleMapOverlayInstance[]) {
-  overlays.forEach((overlay) => overlay.setMap(null));
+  overlays.forEach((overlay) => {
+    try {
+      overlay.setMap(null);
+    } catch {
+      // Rapid view changes can leave Google-managed overlays already detached.
+    }
+  });
 }
 
 function createRoofBoundsOverlay(
@@ -932,6 +963,40 @@ function createRoofBoundsOverlay(
   return rectangle;
 }
 
+function createRoofSegmentOverlays({
+  googleApi,
+  map,
+  roofData,
+}: {
+  googleApi: GoogleMapsApi;
+  map: GoogleMapInstance;
+  roofData: RoofAnalysis;
+}) {
+  return roofData.roofSegments
+    .map((segment, index) => {
+      if (!segment.bounds) {
+        return null;
+      }
+
+      return new googleApi.maps.Rectangle({
+        bounds: {
+          north: segment.bounds.northeast.lat,
+          south: segment.bounds.southwest.lat,
+          east: segment.bounds.northeast.lng,
+          west: segment.bounds.southwest.lng,
+        },
+        clickable: false,
+        fillColor: index === 0 ? "#38bdf8" : "#fbbf24",
+        fillOpacity: index === 0 ? 0.075 : 0.045,
+        map,
+        strokeColor: index === 0 ? "#e0f2fe" : "#fde68a",
+        strokeOpacity: 0.72,
+        strokeWeight: 1,
+      });
+    })
+    .filter((overlay): overlay is GoogleMapOverlayInstance => Boolean(overlay));
+}
+
 function createPanelMapOverlays({
   googleApi,
   map,
@@ -955,6 +1020,8 @@ function createPanelMapOverlays({
         centerLng: panel.center.lng,
         orientation: panel.orientation,
         azimuthDeg: azimuth,
+        panelWidthMeters: roofData.panelWidthMeters,
+        panelHeightMeters: roofData.panelHeightMeters,
       });
 
       return new googleApi.maps.Polygon({
@@ -972,14 +1039,12 @@ function createPanelMapOverlays({
 
 async function createAnnualFluxMapOverlay({
   googleApi,
-  map,
   annualFluxUrl,
   solarMaskUrl,
   fallbackBounds,
   opacity,
 }: {
   googleApi: GoogleMapsApi;
-  map: GoogleMapInstance;
   annualFluxUrl: string | null;
   solarMaskUrl: string | null;
   fallbackBounds: RoofGeoBounds | null;
@@ -1040,7 +1105,6 @@ async function createAnnualFluxMapOverlay({
   overlay.onRemove = function onRemove() {
     container.remove();
   };
-  overlay.setMap(map);
 
   return overlay;
 }
@@ -1144,10 +1208,14 @@ function buildPanelPath(
     centerLng: number;
     orientation: "PORTRAIT" | "LANDSCAPE";
     azimuthDeg: number;
+    panelWidthMeters: number;
+    panelHeightMeters: number;
   }
 ) {
-  const widthMeters = params.orientation === "LANDSCAPE" ? 1.7 : 1.0;
-  const heightMeters = params.orientation === "LANDSCAPE" ? 1.0 : 1.7;
+  const shortSide = Math.min(params.panelWidthMeters, params.panelHeightMeters);
+  const longSide = Math.max(params.panelWidthMeters, params.panelHeightMeters);
+  const widthMeters = params.orientation === "LANDSCAPE" ? longSide : shortSide;
+  const heightMeters = params.orientation === "LANDSCAPE" ? shortSide : longSide;
   const halfWidth = widthMeters / 2;
   const halfHeight = heightMeters / 2;
   const rotation = (params.azimuthDeg * Math.PI) / 180;
