@@ -57,6 +57,10 @@ function isArizonaAddress(address: string) {
   return address.includes(", AZ") || address.includes("Arizona");
 }
 
+function normalizeAddress(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
 export function AddressSearch({
   onSelect,
   selectedAddress,
@@ -132,7 +136,7 @@ export function AddressSearch({
         setPlacesReady(true);
         setStatus(
           nextPredictions.length
-            ? "Autocomplete suggestions ready."
+            ? "Choose the matching address to start the roof scan."
             : "No matching addresses found."
         );
         setAddressError(
@@ -163,7 +167,12 @@ export function AddressSearch({
   }, [open, query]);
 
   const helperText =
-    "Type your address below and we will show a roof analysis only after a valid Arizona property is selected.";
+    "Type your address below and pick the matching suggestion. Once the address is selected, the roof analysis will start automatically.";
+
+  const exactPredictionMatch = predictions.find(
+    (prediction) =>
+      normalizeAddress(prediction.description) === normalizeAddress(query.trim())
+  );
 
   const selectPrediction = async (prediction: Prediction) => {
     const address = prediction.description;
@@ -283,6 +292,16 @@ export function AddressSearch({
               return;
             }
 
+            if (
+              event.key === "Enter" &&
+              activeIndex < 0 &&
+              (exactPredictionMatch || predictions[0])
+            ) {
+              event.preventDefault();
+              void selectPrediction(exactPredictionMatch ?? predictions[0]);
+              return;
+            }
+
             if (event.key === "Escape") {
               event.preventDefault();
               setOpen(false);
@@ -301,6 +320,16 @@ export function AddressSearch({
           <span>{status}</span>
           <span>{placesReady ? "Google Places" : "Local fallback"}</span>
         </div>
+
+        {open && exactPredictionMatch ? (
+          <p className="mt-2 text-xs text-cyan-200">
+            Press Enter to use{" "}
+            <span className="font-semibold text-white">
+              {exactPredictionMatch.description}
+            </span>
+            .
+          </p>
+        ) : null}
 
         {(showPredictions || showLoadingShell) && (
           <div
