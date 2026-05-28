@@ -557,25 +557,17 @@ export function SolarAnalysis({
                     viewMode={viewMode}
                     selectedPanelCount={metrics.selectedPanelCount}
                   />
-                  <div className="absolute left-4 top-4 z-10 hidden w-[22rem] max-w-[calc(100%-2rem)] lg:block">
-                    <SunroofSummaryCard
-                      address={resolvedProperty?.address ?? address}
-                      metrics={metrics}
-                      confidence={roofData.rooftopConfidenceScore}
-                    />
-                  </div>
-                </div>
-                <div className="mt-4 lg:hidden">
-                  <SunroofSummaryCard
-                    address={resolvedProperty?.address ?? address}
-                    metrics={metrics}
-                    confidence={roofData.rooftopConfidenceScore}
-                  />
                 </div>
               </div>
             </article>
 
             <aside className="space-y-4">
+              <SunroofSummaryCard
+                address={resolvedProperty?.address ?? address}
+                metrics={metrics}
+                confidence={roofData.rooftopConfidenceScore}
+              />
+
               <SidebarPanel>
                 <p className="text-[0.62rem] font-semibold uppercase tracking-[0.34em] text-cyan-300">
                   Analysis status
