@@ -71,9 +71,11 @@ export function InstallReadouts({
             className="mt-4 text-xs leading-6 text-slate-400"
             title="This is a modeled estimate. Your final report will include measurements specific to your roof."
           >
-            {analysis.source === "vision-api"
+            {analysis.source === "solar-api"
               ? analysis.confidenceNote
-              : "Estimated based on typical Arizona rooftops."}
+              : analysis.source === "vision-api"
+                ? analysis.confidenceNote
+                : "Estimated based on typical Arizona rooftops."}
           </p>
         </article>
 

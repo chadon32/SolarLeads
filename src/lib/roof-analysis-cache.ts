@@ -2,7 +2,7 @@ import { normalizeRoofAnalysis, type RoofAnalysis } from "@/lib/roof-analysis";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
 
 const CACHE_TABLE = "roof_analysis_cache";
-const ANALYSIS_VERSION = 6;
+const ANALYSIS_VERSION = 7;
 
 type CacheLookupParams = {
   address: string;

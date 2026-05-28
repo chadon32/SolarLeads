@@ -4,8 +4,6 @@ import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
 import { ButtonLink } from "@/components/ui/button";
 import {
-  buildDefaultObstructionOutlines,
-  buildFallbackRoofAnalysis,
   getMonthlySavings,
   getRoofAreaM2,
   getUsableAreaM2,
@@ -145,7 +143,6 @@ export function SolarAnalysis({
 
         const property = await resolveProperty(
           trimmedAddress,
-          location,
           controller.signal
         );
 
@@ -197,13 +194,20 @@ export function SolarAnalysis({
           .json()
           .catch(() => ({}));
 
-        const fallback = buildFallbackRoofAnalysis({
-          address: property.address,
-          lat: property.lat,
-          lng: property.lng,
-        });
-        const nextRoofData =
-          analysisPayload.analysis ?? analysisPayload.fallback ?? fallback;
+        const nextRoofData = analysisPayload.analysis;
+
+        if (!analysisResponse.ok || !nextRoofData) {
+          const message =
+            analysisPayload.message ??
+            analysisPayload.detail ??
+            "A usable residential rooftop could not be confirmed for this address.";
+
+          setStage("invalid");
+          setRoofData(nextRoofData ?? null);
+          onAnalysisChange?.(nextRoofData ?? null);
+          setErrorMessage(message);
+          return;
+        }
 
         if (!nextRoofData.validSite || !nextRoofData.rooftopDetected) {
           setRoofData(nextRoofData);
@@ -221,12 +225,7 @@ export function SolarAnalysis({
         onAnalysisChange?.(nextRoofData);
         setStage("done");
         setNotice(
-          analysisResponse.ok
-            ? nextRoofData.confidence !== "high"
-              ? nextRoofData.confidenceNote
-              : null
-            : analysisPayload.message ??
-                "Detailed roof analysis was unavailable, so this view is using a modeled Arizona estimate."
+          nextRoofData.confidence !== "high" ? nextRoofData.confidenceNote : null
         );
       } catch (error) {
         if (controller.signal.aborted || cancelled) {
@@ -256,18 +255,11 @@ export function SolarAnalysis({
     }
 
     const footprint =
-      roofData.roofOutline.length >= 3
-        ? roofData.roofOutline
-        : getRoofFootprint(roofData.roofShape);
+      roofData.roofOutline.length >= 3 ? roofData.roofOutline : [];
     const usable =
-      roofData.usableOutline.length >= 3
-        ? roofData.usableOutline
-        : insetPolygon(footprint, 10 - Math.min(roofData.usablePctRoof / 25, 3));
+      roofData.usableOutline.length >= 3 ? roofData.usableOutline : footprint;
     const panels = buildPanelLayout(roofData, usable);
-    const obstructions =
-      roofData.obstructionOutlines.length > 0
-        ? roofData.obstructionOutlines
-        : buildDefaultObstructionOutlines(roofData.shadingRisk);
+    const obstructions = roofData.obstructionOutlines;
     const bounds = getBounds(footprint);
     const measurements = buildMeasurementLines(footprint, bounds, roofData);
 
@@ -462,7 +454,15 @@ export function SolarAnalysis({
               </p>
               <div className="mt-4 flex flex-wrap gap-2">
                 <Pill label={`${roofData.confidence} confidence`} tone="cyan" />
-                <Pill label={`${roofData.source === "vision-api" ? "Image analysis" : "Modeled"} source`} />
+                <Pill
+                  label={
+                    roofData.source === "solar-api"
+                      ? "Solar API source"
+                      : roofData.source === "vision-api"
+                        ? "Image analysis"
+                        : "Modeled source"
+                  }
+                />
                 <Pill label={`${metrics.orientationLabel} orientation`} />
               </div>
               <p className="mt-4 text-sm leading-6 text-slate-400">
@@ -1088,17 +1088,8 @@ type Bounds = {
 
 async function resolveProperty(
   address: string,
-  location: { lat?: number; lng?: number } | null | undefined,
   signal: AbortSignal
 ): Promise<ResolvedProperty> {
-  if (Number.isFinite(location?.lat) && Number.isFinite(location?.lng)) {
-    return {
-      address,
-      lat: Number(location?.lat),
-      lng: Number(location?.lng),
-    };
-  }
-
   const response = await fetch("/api/satellite/preview", {
     method: "POST",
     headers: {
@@ -1125,54 +1116,6 @@ async function resolveProperty(
     lat: Number(payload.lat),
     lng: Number(payload.lng),
   };
-}
-
-function getRoofFootprint(shape: RoofAnalysis["roofShape"]): Point[] {
-  switch (shape) {
-    case "complex":
-      return [
-        { x: 20, y: 24 },
-        { x: 68, y: 18 },
-        { x: 80, y: 32 },
-        { x: 75, y: 62 },
-        { x: 62, y: 68 },
-        { x: 58, y: 80 },
-        { x: 28, y: 78 },
-        { x: 18, y: 58 },
-      ];
-    case "hip":
-      return [
-        { x: 26, y: 24 },
-        { x: 72, y: 24 },
-        { x: 80, y: 38 },
-        { x: 73, y: 73 },
-        { x: 27, y: 73 },
-        { x: 20, y: 38 },
-      ];
-    case "shed":
-      return [
-        { x: 24, y: 30 },
-        { x: 74, y: 22 },
-        { x: 82, y: 64 },
-        { x: 31, y: 72 },
-      ];
-    case "flat":
-      return [
-        { x: 23, y: 28 },
-        { x: 77, y: 28 },
-        { x: 77, y: 72 },
-        { x: 23, y: 72 },
-      ];
-    case "gable":
-    default:
-      return [
-        { x: 24, y: 26 },
-        { x: 76, y: 26 },
-        { x: 79, y: 66 },
-        { x: 50, y: 76 },
-        { x: 21, y: 66 },
-      ];
-  }
 }
 
 function getBounds(points: Point[]): Bounds {
@@ -1230,21 +1173,6 @@ function buildMeasurementLines(
       label: `${roofData.depthM.toFixed(1)} m`,
     },
   ];
-}
-
-function insetPolygon(points: Point[], inset: number): Point[] {
-  const center = points.reduce(
-    (accumulator, point) => ({
-      x: accumulator.x + point.x / points.length,
-      y: accumulator.y + point.y / points.length,
-    }),
-    { x: 0, y: 0 }
-  );
-
-  return points.map((point) => ({
-    x: point.x + ((center.x - point.x) * inset) / 100,
-    y: point.y + ((center.y - point.y) * inset) / 100,
-  }));
 }
 
 function buildPanelLayout(analysis: RoofAnalysis, polygon: Point[]): PanelRect[] {

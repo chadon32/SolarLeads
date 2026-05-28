@@ -27,8 +27,9 @@ Create a `.env.local` file with:
 ```bash
 GOOGLE_PLACES_API_KEY=your_google_places_api_key_here
 GOOGLE_MAPS_API_KEY=your_google_maps_api_key_here
-ANTHROPIC_API_KEY=your_anthropic_api_key_here
-ENABLE_CLAUDE_ROOF_ANALYSIS=false
+GOOGLE_SOLAR_API_KEY=your_google_solar_api_key_here
+# Optional legacy alias for local experiments only; server-side key above is preferred.
+NEXT_PUBLIC_GOOGLE_SOLAR_API_KEY=your_google_solar_api_key_here
 NEXT_PUBLIC_SITE_URL=https://your-domain.com
 REPORT_SIGNING_SECRET=your_report_link_signing_secret_here
 RATE_LIMIT_SECRET=your_rate_limit_secret_here
@@ -44,9 +45,9 @@ TWILIO_FROM_NUMBER=+16025550123
 DASHBOARD_ACCESS_TOKEN=your_optional_dashboard_token_here
 ```
 
-For Vercel, add the same values in the project environment settings. Keep `GOOGLE_MAPS_API_KEY`, `GOOGLE_PLACES_API_KEY`, `ANTHROPIC_API_KEY`, the service role key, report signing secret, rate limit secret, follow-up process secret, and Twilio values server-side only.
+For Vercel, add the same values in the project environment settings. Keep `GOOGLE_MAPS_API_KEY`, `GOOGLE_PLACES_API_KEY`, `GOOGLE_SOLAR_API_KEY`, the service role key, report signing secret, rate limit secret, follow-up process secret, and Twilio values server-side only.
 
-The rooftop analysis pipeline now uses a deterministic satellite-image engine by default. Leave `ENABLE_CLAUDE_ROOF_ANALYSIS=false` to avoid Anthropic charges on normal address runs. Only set it to `true` if you want Claude fallback enabled for difficult rooftops.
+The rooftop analysis pipeline now uses Google Geocoding plus the Google Maps Platform Solar API by default. The analysis is live per address, so every selected rooftop pulls real Solar API values for panel count, roof area, pitch, and energy estimates.
 
 Run the SQL files in `supabase/` to create the `leads`, `lead_followups`, `request_events`, and `roof_analysis_cache` tables before testing the dashboard, rooftop analysis cache, or follow-up flow.
 
@@ -65,6 +66,6 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
-Before deploying, make sure `GOOGLE_PLACES_API_KEY`, `GOOGLE_MAPS_API_KEY`, `SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `REPORT_SIGNING_SECRET`, `RATE_LIMIT_SECRET`, `FOLLOW_UP_PROCESS_SECRET`, `TWILIO_*`, and any Resend variables are set in Vercel. `ANTHROPIC_API_KEY` is now optional unless you explicitly enable `ENABLE_CLAUDE_ROOF_ANALYSIS=true`.
+Before deploying, make sure `GOOGLE_PLACES_API_KEY`, `GOOGLE_MAPS_API_KEY`, `GOOGLE_SOLAR_API_KEY`, `SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `REPORT_SIGNING_SECRET`, `RATE_LIMIT_SECRET`, `FOLLOW_UP_PROCESS_SECRET`, `TWILIO_*`, and any Resend variables are set in Vercel.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.

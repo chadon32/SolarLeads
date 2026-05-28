@@ -54,7 +54,7 @@ export type RoofAnalysis = {
   roofSegments: RoofSegment[];
   confidence: AnalysisConfidence;
   confidenceNote: string;
-  source: "vision-api" | "modeled";
+  source: "solar-api" | "vision-api" | "modeled";
 };
 
 export function buildFallbackRoofAnalysis(params: {
@@ -271,7 +271,9 @@ export function normalizeRoofAnalysis(
     roofShape
   );
   const source =
-    input.source === "modeled" || input.source === "vision-api"
+    input.source === "modeled" ||
+    input.source === "vision-api" ||
+    input.source === "solar-api"
       ? input.source
       : fallback.source;
 
