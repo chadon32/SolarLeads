@@ -203,7 +203,7 @@ export function SolarAnalysis({
               ? nextRoofData.confidenceNote
               : null
             : analysisPayload.message ??
-                "Detailed roof analysis was unavailable, so this workspace is using a modeled Arizona estimate."
+                "Detailed roof analysis was unavailable, so this view is using a modeled Arizona estimate."
         );
       } catch (error) {
         if (controller.signal.aborted || cancelled) {
@@ -283,7 +283,7 @@ export function SolarAnalysis({
       : stage === "fetching"
         ? { label: "Pulling high-zoom rooftop imagery...", pct: 38 }
         : stage === "analyzing"
-          ? { label: "Running AI roof intelligence...", pct: 76 }
+          ? { label: "Running roof analysis...", pct: 76 }
           : null;
 
   if (stage === "error") {
@@ -304,7 +304,7 @@ export function SolarAnalysis({
 
       {satelliteImage && stage !== "done" ? (
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1.55fr)_22rem]">
-          <div className="overflow-hidden rounded-[1.85rem] border border-white/10 bg-slate-950/70 shadow-[0_28px_90px_rgba(2,8,20,0.52)]">
+          <div className="overflow-hidden rounded-[1.85rem] border border-white/10 bg-slate-950/76 shadow-[0_12px_42px_rgba(2,8,20,0.36)]">
             <ViewportHeader
               address={resolvedProperty?.address ?? address}
               viewMode={viewMode}
@@ -318,18 +318,18 @@ export function SolarAnalysis({
                 unoptimized
                 className="object-cover"
               />
-              <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(3,8,15,0.08),rgba(3,8,15,0.64))]" />
+              <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(3,8,15,0.1),rgba(3,8,15,0.72))]" />
               <div className="absolute inset-x-0 top-0 h-32 bg-[linear-gradient(180deg,rgba(10,18,30,0.72),transparent)]" />
               <div className="absolute inset-0 flex items-center justify-center">
-                <div className="rounded-[1.45rem] border border-cyan-300/18 bg-slate-950/78 px-7 py-5 text-center shadow-[0_18px_60px_rgba(6,12,24,0.45)] backdrop-blur-xl">
+                <div className="rounded-[1.45rem] border border-white/10 bg-slate-950/84 px-7 py-5 text-center shadow-[0_12px_36px_rgba(6,12,24,0.34)] backdrop-blur-xl">
                   <p className="text-[0.62rem] font-semibold uppercase tracking-[0.34em] text-cyan-300">
-                    Analysis in progress
+                    Processing
                   </p>
                   <p className="mt-3 text-base font-medium text-white">
-                    Building the roof intelligence layer
+                    Building the roof analysis view
                   </p>
                   <p className="mt-2 text-sm leading-6 text-slate-300">
-                    Detecting panel zones, irradiance strength, roof edges, and usable area.
+                    Measuring roof edges, usable area, and likely panel zones.
                   </p>
                 </div>
               </div>
@@ -343,7 +343,7 @@ export function SolarAnalysis({
       {stage === "done" && roofData && overlay && metrics ? (
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1.55fr)_22rem]">
           <div className="space-y-6">
-            <article className="overflow-hidden rounded-[1.95rem] border border-white/10 bg-slate-950/72 shadow-[0_28px_90px_rgba(2,8,20,0.52)]">
+            <article className="overflow-hidden rounded-[1.95rem] border border-white/10 bg-slate-950/78 shadow-[0_14px_44px_rgba(2,8,20,0.36)]">
               <ViewportHeader
                 address={resolvedProperty?.address ?? address}
                 viewMode={viewMode}
@@ -361,10 +361,10 @@ export function SolarAnalysis({
                 <div className="border-t border-white/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.02))] p-4 lg:border-l lg:border-t-0">
                   <div className="rounded-[1.45rem] border border-white/10 bg-black/20 p-3">
                     <p className="text-[0.62rem] font-semibold uppercase tracking-[0.32em] text-cyan-300">
-                      Volumetric context
+                      3D reference
                     </p>
                     <p className="mt-2 text-sm text-slate-300">
-                      Secondary 3D model for roof form, panel pitch, and structure context.
+                      Secondary reference model for roof form, pitch, and placement context.
                     </p>
                     <RoofModel3D
                       roofData={roofData}
@@ -379,9 +379,9 @@ export function SolarAnalysis({
 
             <section className="grid gap-4 lg:grid-cols-3">
               <IntelligenceCard
-                eyebrow="AI findings"
-                title="Rooftop intelligence summary"
-                body={`The primary roof plane faces ${metrics.orientationLabel} with about ${metrics.recommendedSegment?.panelsFit ?? roofData.panelCount} modules fitting on the best-performing segment. The model reads ${roofData.usablePctRoof}% of the roof as usable for solar with ${roofData.shadingRisk} shading exposure.`}
+                eyebrow="Site findings"
+                title="Rooftop analysis summary"
+                body={`The primary roof plane faces ${metrics.orientationLabel} with about ${metrics.recommendedSegment?.panelsFit ?? roofData.panelCount} modules fitting on the best-performing segment. The current analysis reads ${roofData.usablePctRoof}% of the roof as usable for solar with ${roofData.shadingRisk} shading exposure.`}
               />
               <IntelligenceCard
                 eyebrow="Environmental impact"
@@ -390,8 +390,8 @@ export function SolarAnalysis({
               />
               <IntelligenceCard
                 eyebrow="Install strategy"
-                title="Recommended installation path"
-                body={`Prioritize the ${metrics.recommendedSegment?.label ?? "primary"} roof segment first, reserve lower-performing planes for optional expansion, and keep conduit routing tight to preserve the cleanest visible elevation.`}
+                title="Recommended installation approach"
+                body={`Prioritize the ${metrics.recommendedSegment?.label ?? "primary"} roof segment first, reserve lower-performing planes for optional expansion, and keep conduit routing tight to reduce visible clutter on the front elevation.`}
               />
             </section>
           </div>
@@ -399,18 +399,18 @@ export function SolarAnalysis({
           <aside className="space-y-4">
             <SidebarPanel>
               <p className="text-[0.62rem] font-semibold uppercase tracking-[0.34em] text-cyan-300">
-                AI analysis
+                Analysis summary
               </p>
               <h3 className="mt-3 text-2xl font-semibold tracking-tight text-white">
                 Rooftop analysis is ready.
               </h3>
               <p className="mt-3 text-sm leading-7 text-slate-300">
-                The platform mapped roof geometry, candidate panel zones, obstructions, and projected savings from the actual rooftop image.
+                The platform mapped roof geometry, candidate panel zones, obstructions, and projected savings from the rooftop image.
               </p>
               <div className="mt-4 flex flex-wrap gap-2">
                 <Pill label={`${roofData.confidence} confidence`} tone="cyan" />
-                <Pill label={`${roofData.source === "vision-api" ? "Vision AI" : "Modeled"} source`} />
-                <Pill label={`${metrics.orientationLabel} exposure`} />
+                <Pill label={`${roofData.source === "vision-api" ? "Image analysis" : "Modeled"} source`} />
+                <Pill label={`${metrics.orientationLabel} orientation`} />
               </div>
               <p className="mt-4 text-sm leading-6 text-slate-400">
                 {notice ?? roofData.confidenceNote}
@@ -473,13 +473,13 @@ export function SolarAnalysis({
 
             <SidebarPanel className="bg-[linear-gradient(180deg,rgba(103,232,249,0.1),rgba(255,255,255,0.02))]">
               <p className="text-[0.62rem] font-semibold uppercase tracking-[0.34em] text-cyan-300">
-                Next step
+                Report delivery
               </p>
               <h3 className="mt-3 text-xl font-semibold tracking-tight text-white">
-                Turn this into a full homeowner report.
+                Convert this analysis into a homeowner report.
               </h3>
               <p className="mt-3 text-sm leading-7 text-slate-300">
-                Capture the property details, savings range, and installation recommendation in a shareable solar proposal.
+                Capture the property details, modeled savings, and installation recommendation in a shareable solar proposal.
               </p>
               <div className="mt-5 grid gap-3">
                 <ButtonLink href="#contact" variant="primary" className="w-full">
@@ -511,10 +511,10 @@ function ViewportHeader({
       <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <p className="text-[0.62rem] font-semibold uppercase tracking-[0.34em] text-cyan-300">
-            Rooftop analysis workspace
+            Rooftop analysis
           </p>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
-            Satellite imagery is the primary analysis layer, with AI overlays for roof polygons, panel placement, and irradiance guidance.
+            Satellite imagery is the primary analysis layer, with roof polygons, panel placement, and irradiance guidance overlaid directly on the property.
           </p>
         </div>
         <div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-slate-300">
@@ -530,7 +530,7 @@ function ViewportHeader({
             onClick={() => onSelectView(mode.id)}
             className={`rounded-full px-3.5 py-2 text-xs font-semibold uppercase tracking-[0.24em] transition ${
               viewMode === mode.id
-                ? "bg-cyan-300 text-slate-950 shadow-[0_14px_40px_rgba(34,211,238,0.18)]"
+                ? "bg-cyan-300 text-slate-950"
                 : "border border-white/10 bg-white/[0.04] text-slate-300 hover:bg-white/[0.08]"
             }`}
           >
@@ -591,7 +591,7 @@ function ViewportCanvas({
         />
       ) : null}
       <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(4,8,16,0.1),rgba(4,8,16,0.68))]" />
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(56,189,248,0.18),transparent_28%),radial-gradient(circle_at_85%_22%,rgba(16,185,129,0.16),transparent_26%),radial-gradient(circle_at_50%_100%,rgba(255,255,255,0.05),transparent_32%)]" />
+      <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(6,10,18,0.02),rgba(6,10,18,0.18))]" />
 
       <svg
         viewBox="0 0 100 100"
@@ -692,7 +692,7 @@ function ViewportCanvas({
       <div className="absolute left-4 top-4 flex flex-wrap gap-2">
         <StatusBadge label="Roof polygon detected" tone="cyan" />
         <StatusBadge label={`${roofData.panelCount} panel layout`} tone="amber" />
-        <StatusBadge label={`${metrics.orientationLabel} exposure`} />
+        <StatusBadge label={`${metrics.orientationLabel} orientation`} />
       </div>
 
       <div className="absolute bottom-4 left-4 right-4 grid gap-3 md:grid-cols-3">
@@ -734,6 +734,9 @@ function LegendPanel({
       <div className="rounded-[1.15rem] border border-white/8 bg-white/[0.03] p-3 text-sm leading-6 text-slate-300">
         {roofData.panelCount} modules fit across about {metrics.usableArea.toFixed(1)} sq m of usable roof area. Estimated payback is about {metrics.roiYears.toFixed(1)} years.
       </div>
+      <div className="rounded-[1.15rem] border border-white/8 bg-slate-950/42 p-3 text-xs leading-6 text-slate-400">
+        Estimates are based on rooftop image interpretation, standard 400W modules, and a $0.13/kWh Arizona utility rate.
+      </div>
     </div>
   );
 }
@@ -744,7 +747,7 @@ function AnalysisSidebarSkeleton() {
       {[0, 1, 2, 3].map((index) => (
         <div
           key={index}
-          className="rounded-[1.6rem] border border-white/10 bg-white/[0.04] p-5 shadow-[0_18px_60px_rgba(2,8,20,0.28)] backdrop-blur-xl"
+          className="rounded-[1.6rem] border border-white/10 bg-white/[0.04] p-5 shadow-[0_10px_30px_rgba(2,8,20,0.22)] backdrop-blur-xl"
         >
           <div className="h-3 w-24 rounded-full bg-white/10" />
           <div className="mt-4 h-7 w-40 rounded-full bg-white/10" />
@@ -764,7 +767,7 @@ function SidebarPanel({
 }) {
   return (
     <article
-      className={`rounded-[1.6rem] border border-white/10 bg-white/[0.04] p-5 shadow-[0_18px_60px_rgba(2,8,20,0.28)] backdrop-blur-xl ${className}`.trim()}
+      className={`rounded-[1.6rem] border border-white/10 bg-white/[0.04] p-5 shadow-[0_10px_30px_rgba(2,8,20,0.22)] backdrop-blur-xl ${className}`.trim()}
     >
       {children}
     </article>
@@ -781,7 +784,7 @@ function IntelligenceCard({
   body: string;
 }) {
   return (
-    <article className="rounded-[1.6rem] border border-white/10 bg-white/[0.04] p-5 shadow-[0_18px_60px_rgba(2,8,20,0.24)] backdrop-blur-xl transition hover:-translate-y-1 hover:bg-white/[0.06]">
+    <article className="rounded-[1.6rem] border border-white/10 bg-white/[0.04] p-5 shadow-[0_10px_28px_rgba(2,8,20,0.2)] backdrop-blur-xl transition hover:bg-white/[0.05]">
       <p className="text-[0.62rem] font-semibold uppercase tracking-[0.34em] text-cyan-300">
         {eyebrow}
       </p>
@@ -795,7 +798,7 @@ function IntelligenceCard({
 
 function AnalysisProgress({ step, pct }: { step: string; pct: number }) {
   return (
-    <div className="rounded-[1.55rem] border border-white/10 bg-white/[0.05] p-4 shadow-[0_18px_50px_rgba(2,8,20,0.26)] backdrop-blur-xl">
+    <div className="rounded-[1.55rem] border border-white/10 bg-white/[0.05] p-4 shadow-[0_10px_28px_rgba(2,8,20,0.2)] backdrop-blur-xl">
       <p className="text-sm text-slate-300 animate-pulse">{step}</p>
       <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/10">
         <div
@@ -818,7 +821,7 @@ function MetricRow({ label, value }: { label: string; value: string }) {
 
 function HudCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-[1.1rem] border border-white/10 bg-slate-950/68 px-3 py-3 shadow-[0_14px_40px_rgba(2,8,20,0.28)] backdrop-blur-xl">
+    <div className="rounded-[1.1rem] border border-white/10 bg-slate-950/72 px-3 py-3 shadow-[0_10px_24px_rgba(2,8,20,0.18)] backdrop-blur-xl">
       <p className="text-[0.58rem] font-semibold uppercase tracking-[0.28em] text-slate-400">
         {label}
       </p>
@@ -875,7 +878,7 @@ function StatusBadge({
 
   return (
     <span
-      className={`rounded-full border px-3 py-1.5 text-[0.6rem] font-semibold uppercase tracking-[0.26em] shadow-[0_12px_30px_rgba(2,8,20,0.28)] backdrop-blur-md ${toneClass}`.trim()}
+      className={`rounded-full border px-3 py-1.5 text-[0.6rem] font-semibold uppercase tracking-[0.26em] backdrop-blur-md ${toneClass}`.trim()}
     >
       {label}
     </span>

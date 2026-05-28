@@ -92,7 +92,7 @@ export function HomeClient() {
           ? `${roofAnalysis.usablePctRoof}%`
           : "68-84%",
         label: roofAnalysis
-          ? "Usable roof area confirmed by AI analysis"
+          ? "Usable roof area identified in the image analysis"
           : "Typical usable roof area for Arizona homes",
       },
     ],
@@ -100,12 +100,9 @@ export function HomeClient() {
   );
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(25,72,108,0.3),_transparent_36%),radial-gradient(circle_at_80%_20%,_rgba(0,182,255,0.16),_transparent_26%),linear-gradient(180deg,#05070d_0%,#07111d_36%,#0b1625_68%,#06070b_100%)] text-slate-100">
+    <main className="relative min-h-screen overflow-hidden bg-[linear-gradient(180deg,#06080d_0%,#0a131d_32%,#0d1724_68%,#090d14_100%)] text-slate-100">
       <div className="pointer-events-none absolute inset-0">
-        <div className="absolute left-[-6rem] top-[-5rem] h-80 w-80 rounded-full bg-cyan-400/10 blur-3xl" />
-        <div className="absolute right-[-10rem] top-24 h-[30rem] w-[30rem] rounded-full bg-sky-500/10 blur-3xl" />
-        <div className="absolute bottom-[-8rem] left-1/2 h-72 w-[46rem] -translate-x-1/2 rounded-full bg-blue-500/10 blur-3xl" />
-        <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-300/20 to-transparent" />
+        <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-slate-400/15 to-transparent" />
       </div>
 
       {showStickyCta ? (
@@ -127,11 +124,11 @@ export function HomeClient() {
       >
         <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.36em] text-slate-400">
+            <p className="text-xs font-semibold uppercase tracking-[0.36em] text-slate-500">
               Arizona Solar AI
             </p>
             <p className="mt-2 text-sm font-medium tracking-tight text-slate-200 sm:text-base">
-              Real roof analysis for Arizona homeowners
+              Solar site analysis for Arizona homeowners
             </p>
           </div>
           <div className="flex items-center gap-3 self-start sm:self-auto">
@@ -152,9 +149,9 @@ export function HomeClient() {
         </header>
 
         <div className="relative z-10 max-w-4xl">
-            <div className="inline-flex items-center gap-2 rounded-full border border-cyan-300/15 bg-white/5 px-4 py-2 text-sm font-medium text-slate-300 shadow-[0_12px_40px_rgba(2,8,20,0.3)] backdrop-blur-md">
-              <span className="h-2 w-2 rounded-full bg-cyan-300 shadow-[0_0_18px_rgba(103,232,249,0.8)]" />
-              Arizona-only solar roof preview
+            <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-4 py-2 text-sm font-medium text-slate-300 backdrop-blur-md">
+              <span className="h-2 w-2 rounded-full bg-cyan-300" />
+              Arizona residential analysis
             </div>
 
             <h1 className="mt-6 max-w-3xl text-5xl font-semibold leading-[0.95] tracking-tight text-white sm:text-6xl lg:text-7xl">
@@ -162,10 +159,10 @@ export function HomeClient() {
             </h1>
 
             <p className="mt-6 max-w-2xl text-base leading-7 text-slate-300 sm:text-lg">
-              Type your address below and get a real roof analysis, panel placement, and savings estimate in under 60 seconds. No sales calls. No obligation.
+              Type your address below to review rooftop imagery, estimated panel placement, and a modeled savings profile for your property. No obligation.
             </p>
 
-            <div className="mt-8 rounded-[1.75rem] border border-white/10 bg-white/5 p-5 shadow-[0_18px_50px_rgba(2,8,20,0.26)] backdrop-blur-xl">
+            <div className="mt-8 rounded-[1.75rem] border border-white/10 bg-white/[0.04] p-5 shadow-[0_10px_32px_rgba(2,8,20,0.22)] backdrop-blur-xl">
               <AddressSearch
                 selectedAddress={selectedAddress}
                 onSelect={(property) => {
@@ -244,13 +241,12 @@ export function HomeClient() {
         <>
           <SectionDivider
             eyebrow="Solar workspace"
-            title="A rooftop intelligence workspace built around the actual property."
-            copy="Satellite imagery, roof segmentation, panel placement, and financial intelligence now live in one analysis surface."
+            title="A practical rooftop analysis workspace built around the actual property."
+            copy="Satellite imagery, roof segmentation, panel placement, and financial estimates are organized in one clear analysis surface."
           />
 
           <section className="analysis-section relative mx-auto w-full max-w-7xl px-6 pb-10 md:px-10 lg:px-12">
-            <div className="absolute -inset-4 rounded-[2rem] bg-cyan-400/8 blur-3xl" />
-            <div className="relative overflow-hidden rounded-[2rem] border border-white/10 bg-white/5 p-3 shadow-[0_28px_100px_rgba(2,8,20,0.55)] backdrop-blur-xl">
+            <div className="relative overflow-hidden rounded-[2rem] border border-white/10 bg-white/[0.04] p-3 shadow-[0_14px_44px_rgba(2,8,20,0.34)] backdrop-blur-xl">
               <SolarAnalysis
                 key={selectedAddress}
                 address={selectedAddress}
