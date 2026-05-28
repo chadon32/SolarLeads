@@ -6,6 +6,7 @@ import {
   type RoofPlaneLabel,
   type RoofPoint,
   type RoofSegment,
+  type SolarPanelPlacement,
   type ShadingRisk,
 } from "@/lib/roof-analysis";
 
@@ -66,7 +67,18 @@ type SolarPotential = {
   wholeRoofStats?: SizeAndSunshineStats;
   buildingStats?: SizeAndSunshineStats;
   roofSegmentStats?: RoofSegmentStats[];
+  solarPanels?: SolarPanel[];
   solarPanelConfigs?: SolarPanelConfig[];
+};
+
+type SolarPanel = {
+  center?: {
+    latitude?: number;
+    longitude?: number;
+  };
+  orientation?: "PORTRAIT" | "LANDSCAPE";
+  yearlyEnergyDcKwh?: number;
+  segmentIndex?: number;
 };
 
 export type SolarDataLayers = {
@@ -277,6 +289,14 @@ export function buildSolarRoofAnalysis(params: {
     Number(solarPotential.panelCapacityWatts ?? 400),
     1
   );
+  const panelWidthMeters = Math.max(
+    Number(solarPotential.panelWidthMeters ?? 1.1),
+    0.5
+  );
+  const panelHeightMeters = Math.max(
+    Number(solarPotential.panelHeightMeters ?? 1.7),
+    1
+  );
   const solarPanelConfigs = [...(solarPotential.solarPanelConfigs ?? [])].sort(
     (left, right) =>
       (right.yearlyEnergyDcKwh ?? 0) -
@@ -293,6 +313,9 @@ export function buildSolarRoofAnalysis(params: {
       (left.stats?.areaMeters2 ?? left.stats?.groundAreaMeters2 ?? 0)
   );
   const roofBox = params.insights.boundingBox;
+  const solarPanels = (solarPotential.solarPanels ?? []).map((panel) =>
+    normalizeSolarPanel(panel)
+  );
 
   if (!roofBox?.sw || !roofBox?.ne) {
     return buildInvalidRoofAnalysis({
@@ -364,12 +387,16 @@ export function buildSolarRoofAnalysis(params: {
       systemKw: roundTo((panelCount * panelCapacityWatts) / 1000, 1),
       annualKwh,
       annualSavingsUSD,
+      panelCapacityWatts,
+      panelWidthMeters,
+      panelHeightMeters,
       shadingRisk,
       shadeNote: buildShadeNote(shadingRisk, roofSegments.length),
       roofOutline,
       usableOutline,
       obstructionOutlines,
       roofSegments: roofSegmentsOut,
+      solarPanels,
       confidence,
       confidenceNote: buildConfidenceNote(
         params.insights.imageryQuality ?? "UNKNOWN",
@@ -383,6 +410,18 @@ export function buildSolarRoofAnalysis(params: {
       confidenceNote: "Solar API roof data was not sufficient for a rooftop estimate.",
     })
   );
+}
+
+function normalizeSolarPanel(panel: SolarPanel): SolarPanelPlacement {
+  return {
+    center: {
+      lat: Number(panel.center?.latitude ?? 0),
+      lng: Number(panel.center?.longitude ?? 0),
+    },
+    orientation: panel.orientation === "LANDSCAPE" ? "LANDSCAPE" : "PORTRAIT",
+    yearlyEnergyDcKwh: Math.max(0, Number(panel.yearlyEnergyDcKwh ?? 0)),
+    segmentIndex: Math.max(0, Math.round(Number(panel.segmentIndex ?? 0))),
+  };
 }
 
 function deriveRoofShape(segments: RoofSegmentStats[]) {

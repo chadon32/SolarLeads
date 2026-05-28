@@ -31,6 +31,16 @@ export type RoofSegment = {
   outline: RoofPoint[];
 };
 
+export type SolarPanelPlacement = {
+  center: {
+    lat: number;
+    lng: number;
+  };
+  orientation: "PORTRAIT" | "LANDSCAPE";
+  yearlyEnergyDcKwh: number;
+  segmentIndex: number;
+};
+
 export type RoofAnalysis = {
   propertyType: PropertyType;
   rooftopDetected: boolean;
@@ -46,12 +56,16 @@ export type RoofAnalysis = {
   systemKw: number;
   annualKwh: number;
   annualSavingsUSD: number;
+  panelCapacityWatts: number;
+  panelWidthMeters: number;
+  panelHeightMeters: number;
   shadingRisk: ShadingRisk;
   shadeNote: string;
   roofOutline: RoofPoint[];
   usableOutline: RoofPoint[];
   obstructionOutlines: RoofPoint[][];
   roofSegments: RoofSegment[];
+  solarPanels: SolarPanelPlacement[];
   confidence: AnalysisConfidence;
   confidenceNote: string;
   source: "solar-api" | "vision-api" | "modeled";
@@ -143,12 +157,16 @@ export function buildFallbackRoofAnalysis(params: {
     systemKw,
     annualKwh,
     annualSavingsUSD,
+    panelCapacityWatts: 400,
+    panelWidthMeters: 1.1,
+    panelHeightMeters: 1.7,
     shadingRisk: "low",
     shadeNote: "No significant shading detected.",
     roofOutline,
     usableOutline,
     obstructionOutlines,
     roofSegments,
+    solarPanels: [],
     confidence: span < 0.005 ? "medium" : "low",
     confidenceNote:
       "Using a conservative Arizona fallback because detailed roof analysis was unavailable.",
@@ -177,11 +195,15 @@ export function buildInvalidRoofAnalysis(params: {
     systemKw: 0,
     annualKwh: 0,
     annualSavingsUSD: 0,
+    panelCapacityWatts: fallback.panelCapacityWatts,
+    panelWidthMeters: fallback.panelWidthMeters,
+    panelHeightMeters: fallback.panelHeightMeters,
     usablePctRoof: 0,
     roofOutline: [],
     usableOutline: [],
     obstructionOutlines: [],
     roofSegments: [],
+    solarPanels: [],
     confidence: "low",
     confidenceNote:
       params.confidenceNote ??
@@ -270,6 +292,22 @@ export function normalizeRoofAnalysis(
     primaryRoofAzimuth,
     roofShape
   );
+  const solarPanels = normalizeSolarPanels(
+    input.solarPanels,
+    fallback.solarPanels
+  );
+  const panelCapacityWatts = Math.max(
+    1,
+    numberOrFallback(input.panelCapacityWatts, fallback.panelCapacityWatts)
+  );
+  const panelWidthMeters = Math.max(
+    0.5,
+    roundTo(numberOrFallback(input.panelWidthMeters, fallback.panelWidthMeters), 2)
+  );
+  const panelHeightMeters = Math.max(
+    1,
+    roundTo(numberOrFallback(input.panelHeightMeters, fallback.panelHeightMeters), 2)
+  );
   const source =
     input.source === "modeled" ||
     input.source === "vision-api" ||
@@ -300,12 +338,16 @@ export function normalizeRoofAnalysis(
     systemKw,
     annualKwh,
     annualSavingsUSD,
+    panelCapacityWatts,
+    panelWidthMeters,
+    panelHeightMeters,
     shadingRisk: shadingRiskOrFallback(input.shadingRisk, fallback.shadingRisk),
     shadeNote: stringOrFallback(input.shadeNote, fallback.shadeNote),
     roofOutline,
     usableOutline,
     obstructionOutlines,
     roofSegments,
+    solarPanels,
     confidence: confidenceOrFallback(input.confidence, fallback.confidence),
     confidenceNote: stringOrFallback(
       input.confidenceNote,
@@ -500,6 +542,47 @@ function normalizeRoofSegments(
     .filter((segment): segment is RoofSegment => Boolean(segment));
 
   return nextSegments.length ? nextSegments : fallback;
+}
+
+function normalizeSolarPanels(value: unknown, fallback: SolarPanelPlacement[]) {
+  if (!Array.isArray(value) || value.length === 0) {
+    return fallback;
+  }
+
+  return value
+    .map((panel) => {
+      if (!panel || typeof panel !== "object") {
+        return null;
+      }
+
+      const input = panel as Record<string, unknown>;
+      const center = input.center as Record<string, unknown> | undefined;
+      const lat = numberOrFallback(center?.lat, NaN);
+      const lng = numberOrFallback(center?.lng, NaN);
+      const orientation =
+        input.orientation === "LANDSCAPE" ? "LANDSCAPE" : "PORTRAIT";
+
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        return null;
+      }
+
+      return {
+        center: {
+          lat,
+          lng,
+        },
+        orientation,
+        yearlyEnergyDcKwh: Math.max(
+          0,
+          numberOrFallback(input.yearlyEnergyDcKwh, 0)
+        ),
+        segmentIndex: Math.max(
+          0,
+          Math.round(numberOrFallback(input.segmentIndex, 0))
+        ),
+      } satisfies SolarPanelPlacement;
+    })
+    .filter((panel): panel is SolarPanelPlacement => Boolean(panel));
 }
 
 function getDefaultSegmentOutlines(shape: RoofShape): Record<RoofPlaneLabel, RoofPoint[]> {
