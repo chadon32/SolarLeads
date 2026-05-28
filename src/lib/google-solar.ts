@@ -90,6 +90,7 @@ type SolarPanel = {
 
 export type SolarDataLayers = {
   annualFluxUrl?: string;
+  dsmUrl?: string;
   maskUrl?: string;
   rgbUrl?: string;
   imageryQuality?: string;

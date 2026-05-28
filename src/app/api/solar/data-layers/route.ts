@@ -42,6 +42,7 @@ export async function GET(request: Request) {
 
     return NextResponse.json({
       annualFluxUrl: proxyUrl(dataLayers.annualFluxUrl),
+      dsmUrl: proxyUrl(dataLayers.dsmUrl),
       maskUrl: proxyUrl(dataLayers.maskUrl),
       rgbUrl: proxyUrl(dataLayers.rgbUrl),
       imageryQuality: dataLayers.imageryQuality ?? null,

@@ -41,6 +41,7 @@ type SatelliteImagePayload = {
 
 type SolarDataLayersPayload = {
   annualFluxUrl?: string | null;
+  dsmUrl?: string | null;
   maskUrl?: string | null;
   rgbUrl?: string | null;
   imageryQuality?: string | null;
@@ -84,6 +85,21 @@ type RasterData =
   | Int8Array
   | Int16Array
   | Int32Array;
+
+type LatLngPoint = {
+  lat: number;
+  lng: number;
+};
+
+type DsmPlaneExtraction = {
+  bounds: RoofGeoBounds;
+  planes: Array<{
+    aspectDeg: number;
+    confidence: number;
+    path: LatLngPoint[];
+    slopeDeg: number;
+  }>;
+};
 
 type GoogleMapsWindow = Window &
   typeof globalThis & {
@@ -147,6 +163,8 @@ const viewModes: Array<{ id: ViewMode; label: string }> = [
   { id: "irradiance", label: "Irradiance" },
 ];
 
+const dsmPlaneExtractionCache = new Map<string, Promise<DsmPlaneExtraction | null>>();
+
 const azimuthLabels = [
   "N",
   "NNE",
@@ -176,6 +194,7 @@ export function SolarAnalysis({
   >("idle");
   const [satelliteImage, setSatelliteImage] = useState<string | null>(null);
   const [annualFluxUrl, setAnnualFluxUrl] = useState<string | null>(null);
+  const [dsmUrl, setDsmUrl] = useState<string | null>(null);
   const [solarMaskUrl, setSolarMaskUrl] = useState<string | null>(null);
   const [roofData, setRoofData] = useState<RoofAnalysis | null>(null);
   const [resolvedProperty, setResolvedProperty] =
@@ -193,6 +212,7 @@ export function SolarAnalysis({
         setStage("idle");
         setSatelliteImage(null);
         setAnnualFluxUrl(null);
+        setDsmUrl(null);
         setSolarMaskUrl(null);
         setRoofData(null);
         setSelectedPanelCount(0);
@@ -215,6 +235,7 @@ export function SolarAnalysis({
         setErrorMessage("");
         setRoofData(null);
         setAnnualFluxUrl(null);
+        setDsmUrl(null);
         setSolarMaskUrl(null);
         onAnalysisChange?.(null);
 
@@ -265,9 +286,11 @@ export function SolarAnalysis({
             .json()
             .catch(() => ({}));
           setAnnualFluxUrl(dataLayersPayload.annualFluxUrl ?? null);
+          setDsmUrl(dataLayersPayload.dsmUrl ?? null);
           setSolarMaskUrl(dataLayersPayload.maskUrl ?? null);
         } else {
           setAnnualFluxUrl(null);
+          setDsmUrl(null);
           setSolarMaskUrl(null);
         }
         setStage("analyzing");
@@ -554,6 +577,7 @@ export function SolarAnalysis({
                   <ViewportCanvas
                     satelliteImage={satelliteImage}
                     annualFluxUrl={annualFluxUrl}
+                    dsmUrl={dsmUrl}
                     solarMaskUrl={solarMaskUrl}
                     address={resolvedProperty?.address ?? address}
                     property={resolvedProperty}
@@ -701,6 +725,7 @@ function ViewportHeader({
 function ViewportCanvas({
   satelliteImage,
   annualFluxUrl,
+  dsmUrl,
   solarMaskUrl,
   address,
   property,
@@ -710,6 +735,7 @@ function ViewportCanvas({
 }: {
   satelliteImage: string | null;
   annualFluxUrl: string | null;
+  dsmUrl: string | null;
   solarMaskUrl: string | null;
   address: string;
   property: ResolvedProperty | null;
@@ -790,6 +816,15 @@ function ViewportCanvas({
       overlayRefs.current = [];
 
       const nextOverlays: GoogleMapOverlayInstance[] = [];
+      const dsmExtraction = await getDsmPlaneExtraction({
+        dsmUrl,
+        fallbackBounds: roofData.roofBounds,
+        maskUrl: solarMaskUrl,
+      });
+      if (cancelled || overlayRunRef.current !== overlayRun || !mapRef.current) {
+        return;
+      }
+
       const boundsOverlay = createRoofBoundsOverlay(
         googleApi,
         roofData.roofBounds,
@@ -808,12 +843,22 @@ function ViewportCanvas({
         nextOverlays.push(footprintOverlay);
       }
 
+      const dsmPlaneOverlays = dsmExtraction?.planes.length
+        ? createDsmPlaneOverlays({
+            extraction: dsmExtraction,
+            googleApi,
+            map: mapRef.current,
+          })
+        : [];
+
       nextOverlays.push(
-        ...createRoofSegmentOverlays({
-          googleApi,
-          map: mapRef.current,
-          roofData,
-        })
+        ...(dsmPlaneOverlays.length
+          ? dsmPlaneOverlays
+          : createRoofSegmentOverlays({
+              googleApi,
+              map: mapRef.current,
+              roofData,
+            }))
       );
       overlayRefs.current = nextOverlays;
 
@@ -843,6 +888,7 @@ function ViewportCanvas({
             googleApi,
             map: mapRef.current,
             roofData,
+            clipPolygons: dsmExtraction?.planes.map((plane) => plane.path) ?? null,
             selectedPanelCount,
           })
         );
@@ -865,6 +911,7 @@ function ViewportCanvas({
     };
   }, [
     annualFluxUrl,
+    dsmUrl,
     mapsApiKey,
     roofData,
     selectedPanelCount,
@@ -1035,20 +1082,59 @@ function createRoofSegmentOverlays({
     .filter((overlay): overlay is GoogleMapOverlayInstance => Boolean(overlay));
 }
 
+function createDsmPlaneOverlays({
+  extraction,
+  googleApi,
+  map,
+}: {
+  extraction: DsmPlaneExtraction;
+  googleApi: GoogleMapsApi;
+  map: GoogleMapInstance;
+}) {
+  return extraction.planes.map((plane, index) => {
+    const path = plane.path.map((point) =>
+      new googleApi.maps.LatLng(point.lat, point.lng)
+    );
+
+    return new googleApi.maps.Polygon({
+      clickable: false,
+      fillColor: index === 0 ? "#38bdf8" : "#fbbf24",
+      fillOpacity: index === 0 ? 0.085 : 0.052,
+      map,
+      paths: path,
+      strokeColor: index === 0 ? "#e0f2fe" : "#fde68a",
+      strokeOpacity: Math.max(0.42, plane.confidence),
+      strokeWeight: 1,
+    });
+  });
+}
+
 function createPanelMapOverlays({
+  clipPolygons,
   googleApi,
   map,
   roofData,
   selectedPanelCount,
 }: {
+  clipPolygons: LatLngPoint[][] | null;
   googleApi: GoogleMapsApi;
   map: GoogleMapInstance;
   roofData: RoofAnalysis;
   selectedPanelCount: number;
 }) {
   const visiblePanels = roofData.solarPanels.slice(0, selectedPanelCount);
+  const clippedPanels =
+    clipPolygons?.length
+      ? visiblePanels.filter((panel) =>
+          isPointInAnyPolygon(panel.center, clipPolygons)
+        )
+      : visiblePanels;
+  const panelsToRender =
+    clippedPanels.length >= Math.max(1, Math.floor(visiblePanels.length * 0.65))
+      ? clippedPanels
+      : visiblePanels;
 
-  return visiblePanels.map((panel) => {
+  return panelsToRender.map((panel) => {
       const segment = roofData.roofSegments[panel.segmentIndex];
       const azimuth = Number.isFinite(panel.azimuthDeg)
         ? panel.azimuthDeg
@@ -1237,6 +1323,296 @@ async function buildAnnualFluxCanvas({
     canvas,
     bounds: getGeoTiffBounds(fluxImage, fallbackBounds),
   };
+}
+
+async function getDsmPlaneExtraction({
+  dsmUrl,
+  fallbackBounds,
+  maskUrl,
+}: {
+  dsmUrl: string | null;
+  fallbackBounds: RoofGeoBounds | null;
+  maskUrl: string | null;
+}) {
+  if (!dsmUrl || !maskUrl) {
+    return null;
+  }
+
+  const cacheKey = `${dsmUrl}|${maskUrl}`;
+  const cached = dsmPlaneExtractionCache.get(cacheKey);
+
+  if (cached) {
+    return cached;
+  }
+
+  const promise = buildDsmPlaneExtraction({
+    dsmUrl,
+    fallbackBounds,
+    maskUrl,
+  }).catch(() => null);
+  dsmPlaneExtractionCache.set(cacheKey, promise);
+
+  return promise;
+}
+
+async function buildDsmPlaneExtraction({
+  dsmUrl,
+  fallbackBounds,
+  maskUrl,
+}: {
+  dsmUrl: string;
+  fallbackBounds: RoofGeoBounds | null;
+  maskUrl: string;
+}): Promise<DsmPlaneExtraction | null> {
+  const [dsm, mask] = await Promise.all([
+    readGeoTiffRaster(dsmUrl, fallbackBounds),
+    readGeoTiffRaster(maskUrl, fallbackBounds),
+  ]);
+
+  if (!dsm || !mask || dsm.width !== mask.width || dsm.height !== mask.height) {
+    return null;
+  }
+
+  return extractDsmPlanes({
+    bounds: dsm.bounds,
+    dsmRaster: dsm.raster,
+    height: dsm.height,
+    maskRaster: mask.raster,
+    width: dsm.width,
+  });
+}
+
+async function readGeoTiffRaster(
+  url: string,
+  fallbackBounds: RoofGeoBounds | null
+) {
+  const response = await fetch(url, { cache: "no-store" });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const { fromArrayBuffer } = await import("geotiff");
+  const tiff = await fromArrayBuffer(await response.arrayBuffer());
+  const image = await tiff.getImage();
+
+  return {
+    bounds: getGeoTiffBounds(image, fallbackBounds),
+    height: image.getHeight(),
+    raster: (await image.readRasters({ interleave: true })) as RasterData,
+    width: image.getWidth(),
+  };
+}
+
+function extractDsmPlanes({
+  bounds,
+  dsmRaster,
+  height,
+  maskRaster,
+  width,
+}: {
+  bounds: RoofGeoBounds;
+  dsmRaster: RasterData;
+  height: number;
+  maskRaster: RasterData;
+  width: number;
+}): DsmPlaneExtraction | null {
+  const stride = Math.max(1, Math.floor(Math.max(width, height) / 180));
+  const groups = new Map<number, Array<{ aspectDeg: number; slopeDeg: number; x: number; y: number }>>();
+  const roofPixels: Array<{ x: number; y: number }> = [];
+
+  for (let y = 1; y < height - 1; y += stride) {
+    for (let x = 1; x < width - 1; x += stride) {
+      const index = y * width + x;
+
+      if (!isValidRoofRasterValue(dsmRaster[index], maskRaster[index])) {
+        continue;
+      }
+
+      roofPixels.push({ x, y });
+
+      const left = dsmRaster[index - 1];
+      const right = dsmRaster[index + 1];
+      const up = dsmRaster[index - width];
+      const down = dsmRaster[index + width];
+
+      if (
+        !isValidRoofRasterValue(left, maskRaster[index - 1]) ||
+        !isValidRoofRasterValue(right, maskRaster[index + 1]) ||
+        !isValidRoofRasterValue(up, maskRaster[index - width]) ||
+        !isValidRoofRasterValue(down, maskRaster[index + width])
+      ) {
+        continue;
+      }
+
+      const dzDx = (Number(right) - Number(left)) / 2;
+      const dzDy = (Number(down) - Number(up)) / 2;
+      const slopeDeg = Math.atan(Math.hypot(dzDx, dzDy)) * (180 / Math.PI);
+      const aspectDeg = normalizeDegrees(Math.atan2(dzDx, -dzDy) * (180 / Math.PI));
+      const bin = slopeDeg < 3 ? 0 : 1 + (Math.round(aspectDeg / 45) % 8);
+      const group = groups.get(bin) ?? [];
+      group.push({ aspectDeg, slopeDeg, x, y });
+      groups.set(bin, group);
+    }
+  }
+
+  const minimumPlanePixels = Math.max(20, Math.round(roofPixels.length * 0.055));
+  const planes = [...groups.values()]
+    .filter((group) => group.length >= minimumPlanePixels)
+    .sort((left, right) => right.length - left.length)
+    .slice(0, 4)
+    .map((group) => {
+      const hull = convexHullPixels(group);
+      const path = hull.map((point) =>
+        pixelToLatLng(point.x, point.y, width, height, bounds)
+      );
+      const slopeDeg =
+        group.reduce((sum, point) => sum + point.slopeDeg, 0) / group.length;
+      const aspectDeg =
+        group.reduce((sum, point) => sum + point.aspectDeg, 0) / group.length;
+
+      return {
+        aspectDeg: Math.round(normalizeDegrees(aspectDeg)),
+        confidence: clamp01(group.length / Math.max(roofPixels.length, 1)),
+        path,
+        slopeDeg: Math.round(slopeDeg * 10) / 10,
+      };
+    })
+    .filter((plane) => plane.path.length >= 3);
+
+  if (planes.length) {
+    return { bounds, planes };
+  }
+
+  if (roofPixels.length >= 12) {
+    return {
+      bounds,
+      planes: [
+        {
+          aspectDeg: 0,
+          confidence: 0.38,
+          path: convexHullPixels(roofPixels).map((point) =>
+            pixelToLatLng(point.x, point.y, width, height, bounds)
+          ),
+          slopeDeg: 0,
+        },
+      ],
+    };
+  }
+
+  return null;
+}
+
+function isValidRoofRasterValue(dsmValue: unknown, maskValue: unknown) {
+  const heightValue = Number(dsmValue);
+
+  return Number.isFinite(heightValue) && heightValue > -9990 && Number(maskValue ?? 0) > 0;
+}
+
+function pixelToLatLng(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  bounds: RoofGeoBounds
+): LatLngPoint {
+  const west = bounds.southwest.lng;
+  const east = bounds.northeast.lng;
+  const south = bounds.southwest.lat;
+  const north = bounds.northeast.lat;
+
+  return {
+    lat: north - (north - south) * clamp01(y / Math.max(height - 1, 1)),
+    lng: west + (east - west) * clamp01(x / Math.max(width - 1, 1)),
+  };
+}
+
+function convexHullPixels(points: Array<{ x: number; y: number }>) {
+  const sorted = [...points].sort((left, right) =>
+    left.x === right.x ? left.y - right.y : left.x - right.x
+  );
+
+  if (sorted.length <= 3) {
+    return sorted;
+  }
+
+  const lower: Array<{ x: number; y: number }> = [];
+  for (const point of sorted) {
+    while (lower.length >= 2 && pixelCross(lower[lower.length - 2], lower[lower.length - 1], point) <= 0) {
+      lower.pop();
+    }
+    lower.push(point);
+  }
+
+  const upper: Array<{ x: number; y: number }> = [];
+  for (let index = sorted.length - 1; index >= 0; index -= 1) {
+    const point = sorted[index];
+    while (upper.length >= 2 && pixelCross(upper[upper.length - 2], upper[upper.length - 1], point) <= 0) {
+      upper.pop();
+    }
+    upper.push(point);
+  }
+
+  lower.pop();
+  upper.pop();
+  return [...lower, ...upper];
+}
+
+function pixelCross(
+  origin: { x: number; y: number },
+  left: { x: number; y: number },
+  right: { x: number; y: number }
+) {
+  return (left.x - origin.x) * (right.y - origin.y) - (left.y - origin.y) * (right.x - origin.x);
+}
+
+function isPointInAnyPolygon(point: LatLngPoint, polygons: LatLngPoint[][]) {
+  return polygons.some((polygon) => isPointInPolygon(point, polygon));
+}
+
+function isPointInPolygon(point: LatLngPoint, polygon: LatLngPoint[]) {
+  if (polygon.length < 3) {
+    return false;
+  }
+
+  let inside = false;
+  const x = point.lng;
+  const y = point.lat;
+
+  for (
+    let currentIndex = 0, previousIndex = polygon.length - 1;
+    currentIndex < polygon.length;
+    previousIndex = currentIndex, currentIndex += 1
+  ) {
+    const current = polygon[currentIndex];
+    const previous = polygon[previousIndex];
+
+    if (!current || !previous) {
+      continue;
+    }
+
+    const currentX = current.lng;
+    const currentY = current.lat;
+    const previousX = previous.lng;
+    const previousY = previous.lat;
+    const crossesLatitude =
+      (currentY > y) !== (previousY > y);
+
+    if (!crossesLatitude) {
+      continue;
+    }
+
+    const intersectionX =
+      ((previousX - currentX) * (y - currentY)) /
+        (previousY - currentY || Number.EPSILON) +
+      currentX;
+
+    if (x < intersectionX) {
+      inside = !inside;
+    }
+  }
+
+  return inside;
 }
 
 function buildPanelPath(
