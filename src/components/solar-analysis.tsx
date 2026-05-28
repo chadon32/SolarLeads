@@ -2,7 +2,6 @@
 
 import Image from "next/image";
 import { useEffect, useMemo, useState } from "react";
-import { RoofModel3D } from "@/components/roof-model-3d";
 import { ButtonLink } from "@/components/ui/button";
 import {
   buildFallbackRoofAnalysis,
@@ -61,6 +60,17 @@ type PanelRect = {
   width: number;
   height: number;
   rotation: number;
+};
+
+type MeasurementLine = {
+  id: string;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  labelX: number;
+  labelY: number;
+  label: string;
 };
 
 const viewModes: Array<{ id: ViewMode; label: string }> = [
@@ -236,12 +246,16 @@ export function SolarAnalysis({
     const usable = insetPolygon(footprint, 10 - Math.min(roofData.usablePctRoof / 25, 3));
     const panels = buildPanelLayout(roofData, usable);
     const obstructions = getObstructionMarkers(roofData);
+    const bounds = getBounds(footprint);
+    const measurements = buildMeasurementLines(bounds, roofData);
 
     return {
       footprint,
       usable,
       panels,
       obstructions,
+      bounds,
+      measurements,
     };
   }, [roofData]);
 
@@ -359,19 +373,7 @@ export function SolarAnalysis({
                   viewMode={viewMode}
                 />
                 <div className="border-t border-white/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.02))] p-4 lg:border-l lg:border-t-0">
-                  <div className="rounded-[1.45rem] border border-white/10 bg-black/20 p-3">
-                    <p className="text-[0.62rem] font-semibold uppercase tracking-[0.32em] text-cyan-300">
-                      3D reference
-                    </p>
-                    <p className="mt-2 text-sm text-slate-300">
-                      Secondary reference model for roof form, pitch, and placement context.
-                    </p>
-                    <RoofModel3D
-                      roofData={roofData}
-                      address={resolvedProperty?.address ?? address}
-                      className="mt-4 h-[16rem] rounded-[1.2rem]"
-                    />
-                  </div>
+                  <MeasurementPanel roofData={roofData} metrics={metrics} />
                   <LegendPanel roofData={roofData} metrics={metrics} />
                 </div>
               </div>
@@ -558,6 +560,8 @@ function ViewportCanvas({
     usable: Point[];
     panels: PanelRect[];
     obstructions: Point[];
+    bounds: Bounds;
+    measurements: MeasurementLine[];
   };
   metrics: {
     roofArea: number;
@@ -685,6 +689,55 @@ function ViewportCanvas({
             ))
           : null}
 
+        {overlay.measurements.map((measurement) => (
+          <g key={measurement.id}>
+            <line
+              x1={measurement.x1}
+              y1={measurement.y1}
+              x2={measurement.x2}
+              y2={measurement.y2}
+              stroke="rgba(255,255,255,0.82)"
+              strokeWidth="0.24"
+            />
+            <line
+              x1={measurement.x1}
+              y1={measurement.y1}
+              x2={measurement.x1 + (measurement.x1 === measurement.x2 ? -1.1 : 0)}
+              y2={measurement.y1 + (measurement.y1 === measurement.y2 ? -1.1 : 0)}
+              stroke="rgba(255,255,255,0.82)"
+              strokeWidth="0.24"
+            />
+            <line
+              x1={measurement.x2}
+              y1={measurement.y2}
+              x2={measurement.x2 + (measurement.x1 === measurement.x2 ? -1.1 : 0)}
+              y2={measurement.y2 + (measurement.y1 === measurement.y2 ? -1.1 : 0)}
+              stroke="rgba(255,255,255,0.82)"
+              strokeWidth="0.24"
+            />
+            <rect
+              x={measurement.labelX - 5.8}
+              y={measurement.labelY - 2}
+              width="11.6"
+              height="4"
+              rx="1.2"
+              fill="rgba(8, 12, 20, 0.82)"
+              stroke="rgba(255,255,255,0.16)"
+              strokeWidth="0.12"
+            />
+            <text
+              x={measurement.labelX}
+              y={measurement.labelY + 0.35}
+              textAnchor="middle"
+              fontSize="1.25"
+              fill="rgba(255,255,255,0.92)"
+              letterSpacing="0.06em"
+            >
+              {measurement.label}
+            </text>
+          </g>
+        ))}
+
         <line x1="50" y1="12" x2="50" y2="88" stroke="rgba(255,255,255,0.14)" strokeWidth="0.14" />
         <line x1="18" y1="50" x2="82" y2="50" stroke="rgba(255,255,255,0.14)" strokeWidth="0.14" />
       </svg>
@@ -695,10 +748,70 @@ function ViewportCanvas({
         <StatusBadge label={`${metrics.orientationLabel} orientation`} />
       </div>
 
+      <div className="absolute right-4 top-20 rounded-[1rem] border border-white/10 bg-slate-950/76 px-3 py-3 text-xs text-slate-200 shadow-[0_10px_24px_rgba(2,8,20,0.18)] backdrop-blur-xl">
+        <p className="text-[0.56rem] font-semibold uppercase tracking-[0.28em] text-slate-400">
+          Measured roof
+        </p>
+        <p className="mt-2 font-semibold text-white">
+          {metrics.roofArea.toFixed(1)} sq m gross area
+        </p>
+        <p className="mt-1 text-slate-400">
+          {metrics.usableArea.toFixed(1)} sq m usable
+        </p>
+      </div>
+
       <div className="absolute bottom-4 left-4 right-4 grid gap-3 md:grid-cols-3">
         <HudCard label="Usable roof area" value={`${metrics.usableArea.toFixed(1)} sq m`} />
         <HudCard label="Estimated monthly savings" value={`$${metrics.monthlySavings.toLocaleString()}`} />
         <HudCard label="Recommended segment" value={metrics.recommendedSegment?.label ?? "Primary"} />
+      </div>
+    </div>
+  );
+}
+
+function MeasurementPanel({
+  roofData,
+  metrics,
+}: {
+  roofData: RoofAnalysis;
+  metrics: {
+    roofArea: number;
+    usableArea: number;
+    monthlySavings: number;
+    roiYears: number;
+    carbonOffsetLbs: number;
+    carbonOffsetTons: number;
+    treesEquivalent: number;
+    recommendedSegment?: RoofAnalysis["roofSegments"][number];
+    financingFrom: number;
+    orientationLabel: string;
+  };
+}) {
+  return (
+    <div className="rounded-[1.45rem] border border-white/10 bg-black/16 p-4">
+      <p className="text-[0.62rem] font-semibold uppercase tracking-[0.32em] text-cyan-300">
+        Measurements
+      </p>
+      <div className="mt-4 grid gap-3">
+        <MetricRow label="Roof width" value={`${roofData.widthM.toFixed(1)} m`} />
+        <MetricRow label="Roof depth" value={`${roofData.depthM.toFixed(1)} m`} />
+        <MetricRow label="Gross roof area" value={`${metrics.roofArea.toFixed(1)} sq m`} />
+        <MetricRow label="Usable roof area" value={`${metrics.usableArea.toFixed(1)} sq m`} />
+        <MetricRow label="Average roof pitch" value={`${roofData.pitchDeg.toFixed(1)} deg`} />
+        <MetricRow label="Primary orientation" value={metrics.orientationLabel} />
+      </div>
+      <div className="mt-4 rounded-[1rem] border border-white/8 bg-white/[0.03] p-3">
+        <p className="text-[0.56rem] font-semibold uppercase tracking-[0.28em] text-slate-400">
+          Segment allocation
+        </p>
+        <div className="mt-3 space-y-2">
+          {roofData.roofSegments.slice(0, 3).map((segment) => (
+            <div key={segment.label} className="flex items-center justify-between gap-3 text-xs">
+              <span className="capitalize text-slate-300">{segment.label}</span>
+              <span className="text-slate-400">{segment.areaM2.toFixed(1)} sq m</span>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -885,6 +998,13 @@ function StatusBadge({
   );
 }
 
+type Bounds = {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+};
+
 async function resolveProperty(
   address: string,
   location: { lat?: number; lng?: number } | null | undefined,
@@ -972,6 +1092,51 @@ function getRoofFootprint(shape: RoofAnalysis["roofShape"]): Point[] {
         { x: 21, y: 66 },
       ];
   }
+}
+
+function getBounds(points: Point[]): Bounds {
+  return points.reduce(
+    (accumulator, point) => ({
+      minX: Math.min(accumulator.minX, point.x),
+      maxX: Math.max(accumulator.maxX, point.x),
+      minY: Math.min(accumulator.minY, point.y),
+      maxY: Math.max(accumulator.maxY, point.y),
+    }),
+    {
+      minX: Number.POSITIVE_INFINITY,
+      maxX: Number.NEGATIVE_INFINITY,
+      minY: Number.POSITIVE_INFINITY,
+      maxY: Number.NEGATIVE_INFINITY,
+    }
+  );
+}
+
+function buildMeasurementLines(bounds: Bounds, roofData: RoofAnalysis): MeasurementLine[] {
+  const topY = Math.max(8, bounds.minY - 5.4);
+  const rightX = Math.min(94, bounds.maxX + 4.8);
+
+  return [
+    {
+      id: "width",
+      x1: bounds.minX,
+      y1: topY,
+      x2: bounds.maxX,
+      y2: topY,
+      labelX: (bounds.minX + bounds.maxX) / 2,
+      labelY: topY - 2.3,
+      label: `${roofData.widthM.toFixed(1)} m`,
+    },
+    {
+      id: "depth",
+      x1: rightX,
+      y1: bounds.minY,
+      x2: rightX,
+      y2: bounds.maxY,
+      labelX: rightX + 1.8,
+      labelY: (bounds.minY + bounds.maxY) / 2,
+      label: `${roofData.depthM.toFixed(1)} m`,
+    },
+  ];
 }
 
 function insetPolygon(points: Point[], inset: number): Point[] {
