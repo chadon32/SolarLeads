@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ButtonLink } from "@/components/ui/button";
 import {
   getMonthlySavings,
@@ -35,6 +35,12 @@ type SatellitePreviewPayload = {
 type SatelliteImagePayload = {
   base64?: string;
   mimeType?: string;
+  message?: string;
+};
+
+type SolarDataLayersPayload = {
+  annualFluxUrl?: string | null;
+  imageryQuality?: string | null;
   message?: string;
 };
 
@@ -106,6 +112,7 @@ export function SolarAnalysis({
     "idle" | "resolving" | "fetching" | "analyzing" | "done" | "invalid" | "error"
   >("idle");
   const [satelliteImage, setSatelliteImage] = useState<string | null>(null);
+  const [annualFluxUrl, setAnnualFluxUrl] = useState<string | null>(null);
   const [roofData, setRoofData] = useState<RoofAnalysis | null>(null);
   const [resolvedProperty, setResolvedProperty] =
     useState<ResolvedProperty | null>(null);
@@ -120,6 +127,7 @@ export function SolarAnalysis({
       const resetHandle = window.requestAnimationFrame(() => {
         setStage("idle");
         setSatelliteImage(null);
+        setAnnualFluxUrl(null);
         setRoofData(null);
         setResolvedProperty(null);
         setNotice(null);
@@ -139,6 +147,7 @@ export function SolarAnalysis({
         setNotice(null);
         setErrorMessage("");
         setRoofData(null);
+        setAnnualFluxUrl(null);
         onAnalysisChange?.(null);
 
         const property = await resolveProperty(
@@ -153,14 +162,24 @@ export function SolarAnalysis({
         setResolvedProperty(property);
         setStage("fetching");
 
-        const imageResponse = await fetch(
-          `/api/satellite-image?lat=${encodeURIComponent(
-            property.lat
-          )}&lng=${encodeURIComponent(property.lng)}`,
-          {
-            signal: controller.signal,
-          }
-        );
+        const [imageResponse, dataLayersResponse] = await Promise.all([
+          fetch(
+            `/api/satellite-image?lat=${encodeURIComponent(
+              property.lat
+            )}&lng=${encodeURIComponent(property.lng)}`,
+            {
+              signal: controller.signal,
+            }
+          ),
+          fetch(
+            `/api/solar/data-layers?lat=${encodeURIComponent(
+              property.lat
+            )}&lng=${encodeURIComponent(property.lng)}`,
+            {
+              signal: controller.signal,
+            }
+          ).catch(() => null),
+        ]);
         const imagePayload: SatelliteImagePayload = await imageResponse
           .json()
           .catch(() => ({}));
@@ -173,6 +192,14 @@ export function SolarAnalysis({
 
         const dataUri = `data:${imagePayload.mimeType};base64,${imagePayload.base64}`;
         setSatelliteImage(dataUri);
+        if (dataLayersResponse?.ok) {
+          const dataLayersPayload: SolarDataLayersPayload = await dataLayersResponse
+            .json()
+            .catch(() => ({}));
+          setAnnualFluxUrl(dataLayersPayload.annualFluxUrl ?? null);
+        } else {
+          setAnnualFluxUrl(null);
+        }
         setStage("analyzing");
 
         const analysisResponse = await fetch("/api/analyze-roof", {
@@ -409,6 +436,7 @@ export function SolarAnalysis({
               <div className="grid border-t border-white/8 lg:grid-cols-[minmax(0,1fr)_17rem]">
                 <ViewportCanvas
                   satelliteImage={satelliteImage}
+                  annualFluxUrl={annualFluxUrl}
                   address={resolvedProperty?.address ?? address}
                   roofData={roofData}
                   overlay={overlay}
@@ -597,6 +625,7 @@ function ViewportHeader({
 
 function ViewportCanvas({
   satelliteImage,
+  annualFluxUrl,
   address,
   roofData,
   overlay,
@@ -604,6 +633,7 @@ function ViewportCanvas({
   viewMode,
 }: {
   satelliteImage: string | null;
+  annualFluxUrl: string | null;
   address: string;
   roofData: RoofAnalysis;
   overlay: {
@@ -647,6 +677,7 @@ function ViewportCanvas({
       ) : null}
       <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(4,8,16,0.1),rgba(4,8,16,0.68))]" />
       <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(6,10,18,0.02),rgba(6,10,18,0.18))]" />
+      <AnnualFluxCanvasOverlay annualFluxUrl={annualFluxUrl} viewMode={viewMode} />
 
       <svg
         viewBox="0 0 100 100"
@@ -848,6 +879,150 @@ function ViewportCanvas({
       </div>
     </div>
   );
+}
+
+function AnnualFluxCanvasOverlay({
+  annualFluxUrl,
+  viewMode,
+}: {
+  annualFluxUrl: string | null;
+  viewMode: ViewMode;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const canvas = canvasRef.current;
+
+    if (!canvas || !annualFluxUrl || (viewMode !== "overview" && viewMode !== "irradiance")) {
+      const context = canvas?.getContext("2d");
+      if (canvas && context) {
+        context.clearRect(0, 0, canvas.width, canvas.height);
+      }
+      return undefined;
+    }
+
+    const drawHeatmap = async () => {
+      const response = await fetch(annualFluxUrl, { cache: "no-store" });
+      if (!response.ok) {
+        throw new Error("Unable to load annual flux heatmap.");
+      }
+
+      const arrayBuffer = await response.arrayBuffer();
+      const { fromArrayBuffer } = await import("geotiff");
+      const tiff = await fromArrayBuffer(arrayBuffer);
+      const image = await tiff.getImage();
+      const width = image.getWidth();
+      const height = image.getHeight();
+      const raster = (await image.readRasters({ interleave: true })) as
+        | Float32Array
+        | Float64Array
+        | Uint8Array
+        | Uint16Array
+        | Uint32Array
+        | Int8Array
+        | Int16Array
+        | Int32Array;
+
+      const validValues = Array.from(raster).filter(
+        (value) => Number.isFinite(value) && value > -9990
+      ) as number[];
+
+      if (!validValues.length || cancelled) {
+        return;
+      }
+
+      validValues.sort((left, right) => left - right);
+      const low = percentile(validValues, 0.08);
+      const high = percentile(validValues, 0.92);
+      const range = Math.max(high - low, 1);
+
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext("2d");
+      if (!context) {
+        return;
+      }
+
+      const imageData = context.createImageData(width, height);
+      const pixels = imageData.data;
+
+      for (let index = 0; index < raster.length; index += 1) {
+        const value = raster[index];
+        const offset = index * 4;
+
+        if (!Number.isFinite(value) || value <= -9990) {
+          pixels[offset + 3] = 0;
+          continue;
+        }
+
+        const normalized = clamp01((value - low) / range);
+        const { r, g, b } = fluxColor(normalized);
+        pixels[offset] = r;
+        pixels[offset + 1] = g;
+        pixels[offset + 2] = b;
+        pixels[offset + 3] = 153;
+      }
+
+      if (!cancelled) {
+        context.putImageData(imageData, 0, 0);
+      }
+    };
+
+    void drawHeatmap().catch(() => {
+      const context = canvas.getContext("2d");
+      context?.clearRect(0, 0, canvas.width, canvas.height);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [annualFluxUrl, viewMode]);
+
+  return <canvas ref={canvasRef} aria-hidden="true" className="absolute inset-0 h-full w-full pointer-events-none" />;
+}
+
+function fluxColor(value: number) {
+  const blue = { r: 37, g: 99, b: 235 };
+  const yellow = { r: 250, g: 204, b: 21 };
+  const red = { r: 239, g: 68, b: 68 };
+
+  if (value <= 0.5) {
+    return blendColor(blue, yellow, value / 0.5);
+  }
+
+  return blendColor(yellow, red, (value - 0.5) / 0.5);
+}
+
+function blendColor(
+  left: { r: number; g: number; b: number },
+  right: { r: number; g: number; b: number },
+  amount: number
+) {
+  const t = clamp01(amount);
+
+  return {
+    r: Math.round(left.r + (right.r - left.r) * t),
+    g: Math.round(left.g + (right.g - left.g) * t),
+    b: Math.round(left.b + (right.b - left.b) * t),
+  };
+}
+
+function percentile(values: number[], ratio: number) {
+  if (!values.length) {
+    return 0;
+  }
+
+  const index = Math.min(
+    values.length - 1,
+    Math.max(0, Math.round((values.length - 1) * clamp01(ratio)))
+  );
+
+  return values[index] ?? 0;
+}
+
+function clamp01(value: number) {
+  return Math.max(0, Math.min(1, value));
 }
 
 function MeasurementPanel({

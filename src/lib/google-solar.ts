@@ -11,7 +11,9 @@ import {
 
 const GOOGLE_MAPS_KEY = process.env.GOOGLE_MAPS_API_KEY;
 const GOOGLE_SOLAR_KEY =
-  process.env.GOOGLE_SOLAR_API_KEY ?? process.env.NEXT_PUBLIC_GOOGLE_SOLAR_API_KEY;
+  process.env.GOOGLE_SOLAR_API_KEY ??
+  process.env.NEXT_PUBLIC_GOOGLE_SOLAR_API_KEY ??
+  process.env.GOOGLE_MAPS_API_KEY;
 
 const AZ_RATE_PER_KWH = 0.13;
 
@@ -65,6 +67,21 @@ type SolarPotential = {
   buildingStats?: SizeAndSunshineStats;
   roofSegmentStats?: RoofSegmentStats[];
   solarPanelConfigs?: SolarPanelConfig[];
+};
+
+export type SolarDataLayers = {
+  annualFluxUrl?: string;
+  imageryQuality?: string;
+  imageryDate?: {
+    year?: number;
+    month?: number;
+    day?: number;
+  };
+  imageryProcessedDate?: {
+    year?: number;
+    month?: number;
+    day?: number;
+  };
 };
 
 type SizeAndSunshineStats = {
@@ -183,6 +200,44 @@ export async function fetchSolarBuildingInsights(
     throw new Error(
       payload.error?.message || "Google Solar API could not return building insights."
     );
+  }
+
+  return payload;
+}
+
+export async function fetchSolarDataLayers(
+  lat: number,
+  lng: number,
+  signal?: AbortSignal
+): Promise<SolarDataLayers> {
+  const solarKey = GOOGLE_SOLAR_KEY;
+
+  if (!solarKey) {
+    throw new Error("Google Solar API key is not configured.");
+  }
+
+  const url = new URL("https://solar.googleapis.com/v1/dataLayers:get");
+  url.searchParams.set("location.latitude", String(lat));
+  url.searchParams.set("location.longitude", String(lng));
+  url.searchParams.set("radiusMeters", "100");
+  url.searchParams.set("view", "IMAGERY_AND_ANNUAL_FLUX_LAYERS");
+  url.searchParams.set("requiredQuality", "HIGH");
+  url.searchParams.set("exactQualityRequired", "true");
+  url.searchParams.set("pixelSizeMeters", "0.5");
+  url.searchParams.set("key", solarKey);
+
+  const response = await fetch(url, {
+    headers: { Accept: "application/json" },
+    cache: "no-store",
+    signal,
+  });
+
+  const payload = (await response.json().catch(() => ({}))) as SolarDataLayers & {
+    error?: { message?: string };
+  };
+
+  if (!response.ok) {
+    throw new Error(payload.error?.message || "Google Solar API could not return data layers.");
   }
 
   return payload;
