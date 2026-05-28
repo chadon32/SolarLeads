@@ -331,7 +331,7 @@ export function SolarAnalysis({
       roofData.roofOutline.length >= 3 ? roofData.roofOutline : [];
     const usable =
       roofData.usableOutline.length >= 3 ? roofData.usableOutline : footprint;
-    const panels = buildPanelLayout(roofData, usable);
+    const panels = projectSolarPanels(roofData);
     const obstructions = roofData.obstructionOutlines;
     const bounds = getBounds(footprint);
     const measurements = buildMeasurementLines(footprint, bounds, roofData);
@@ -470,7 +470,10 @@ export function SolarAnalysis({
               label="Roof detected"
               value={roofData?.rooftopDetected ? "Yes" : "No"}
             />
-            <MetricRow label="Confidence" value={roofData?.confidence ?? "low"} />
+            <MetricRow
+              label="Confidence"
+              value={`${roofData?.confidence ?? "low"}${roofData ? ` (${roofData.rooftopConfidenceScore}/100)` : ""}`}
+            />
           </div>
           <p className="mt-5 text-sm leading-6 text-slate-400">
             Try a detached house address with a clearly visible rooftop in the satellite image.
@@ -526,86 +529,49 @@ export function SolarAnalysis({
 
       {stage === "done" && roofData && overlay && metrics ? (
         <div className="space-y-6">
-          <article className="overflow-hidden rounded-[1.95rem] border border-white/10 bg-slate-950/78 shadow-[0_14px_44px_rgba(2,8,20,0.36)]">
-            <ViewportHeader
-              address={resolvedProperty?.address ?? address}
-              viewMode={viewMode}
-              onSelectView={setViewMode}
-            />
-            <div className="border-t border-white/8 p-4 sm:p-5">
-              <div className="relative overflow-hidden rounded-[1.7rem] border border-white/8">
-                <ViewportCanvas
-                  satelliteImage={satelliteImage}
-                  annualFluxUrl={annualFluxUrl}
-                  solarMaskUrl={solarMaskUrl}
-                  address={resolvedProperty?.address ?? address}
-                  roofData={roofData}
-                  overlay={overlay}
-                  viewMode={viewMode}
-                />
-                <div className="absolute left-4 top-4 z-10 w-[24rem] max-w-[calc(100%-2rem)]">
-                  <SunroofSummaryCard
+          <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_23rem]">
+            <article className="overflow-hidden rounded-[1.95rem] border border-white/10 bg-slate-950/82 shadow-[0_14px_44px_rgba(2,8,20,0.36)]">
+              <ViewportHeader
+                address={resolvedProperty?.address ?? address}
+                viewMode={viewMode}
+                onSelectView={setViewMode}
+              />
+              <div className="border-t border-white/8 p-4 sm:p-5">
+                <div className="relative overflow-hidden rounded-[1.7rem] border border-white/8">
+                  <ViewportCanvas
+                    satelliteImage={satelliteImage}
+                    annualFluxUrl={annualFluxUrl}
+                    solarMaskUrl={solarMaskUrl}
                     address={resolvedProperty?.address ?? address}
-                    metrics={metrics}
+                    roofData={roofData}
+                    overlay={overlay}
+                    viewMode={viewMode}
+                    selectedPanelCount={metrics.selectedPanelCount}
                   />
+                  <div className="absolute left-4 top-4 z-10 w-[24rem] max-w-[calc(100%-2rem)]">
+                    <SunroofSummaryCard
+                      address={resolvedProperty?.address ?? address}
+                      metrics={metrics}
+                    />
+                  </div>
                 </div>
               </div>
-
-              <div className="mt-4 grid gap-4 lg:grid-cols-3">
-                <PanelSelectionSlider
-                  value={metrics.selectedPanelCount}
-                  max={roofData.panelCount}
-                  onChange={setSelectedPanelCount}
-                />
-                <RoofStatsPanel roofData={roofData} metrics={metrics} />
-                <FinancialSnapshot metrics={metrics} />
-              </div>
-            </div>
-          </article>
-
-          <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_20rem]">
-            <div className="space-y-6">
-              <section className="grid gap-4 lg:grid-cols-3">
-                <IntelligenceCard
-                  eyebrow="Site findings"
-                  title="Rooftop analysis summary"
-                  body={`The primary roof plane faces ${metrics.orientationLabel} with about ${metrics.selectedPanelCount} modules selected across the detected roof planes. The current analysis reads ${roofData.usablePctRoof}% of the roof as usable for solar with ${roofData.shadingRisk} shading exposure.`}
-                />
-                <IntelligenceCard
-                  eyebrow="Environmental impact"
-                  title={`${metrics.carbonOffsetTons.toFixed(1)} tons of annual carbon avoided`}
-                  body={`That is roughly ${metrics.treesEquivalent} mature trees worth of yearly carbon offset, driven by an estimated ${metrics.selectedAnnualKwh.toLocaleString()} kWh of solar production.`}
-                />
-                <IntelligenceCard
-                  eyebrow="Install strategy"
-                  title="Recommended installation approach"
-                  body={`Prioritize the ${metrics.recommendedSegment?.label ?? "primary"} roof segment first, reserve lower-performing planes for optional expansion, and keep conduit routing tight to reduce visible clutter on the front elevation.`}
-                />
-              </section>
-            </div>
+            </article>
 
             <aside className="space-y-4">
               <SidebarPanel>
                 <p className="text-[0.62rem] font-semibold uppercase tracking-[0.34em] text-cyan-300">
-                  Analysis summary
+                  Analysis status
                 </p>
                 <h3 className="mt-3 text-2xl font-semibold tracking-tight text-white">
-                  Analysis complete.
+                  Rooftop model confirmed
                 </h3>
                 <p className="mt-3 text-sm leading-7 text-slate-300">
-                  Roof geometry, candidate panel zones, solar exposure, and projected savings are aligned to the detected structure.
+                  Solar geometry, usable roof surfaces, and financial outputs are tied to the live Google Solar building model for this property.
                 </p>
                 <div className="mt-4 flex flex-wrap gap-2">
                   <Pill label={`${roofData.confidence} confidence`} tone="cyan" />
-                  <Pill
-                    label={
-                      roofData.source === "solar-api"
-                        ? "Solar API source"
-                        : roofData.source === "vision-api"
-                          ? "Image analysis"
-                          : "Modeled source"
-                    }
-                  />
+                  <Pill label={`${roofData.rooftopConfidenceScore}/100 rooftop score`} />
                   <Pill label={`${metrics.orientationLabel} orientation`} />
                 </div>
                 <p className="mt-4 text-sm leading-6 text-slate-400">
@@ -613,17 +579,25 @@ export function SolarAnalysis({
                 </p>
               </SidebarPanel>
 
+              <PanelSelectionSlider
+                value={metrics.selectedPanelCount}
+                max={Math.max(roofData.panelCount, roofData.solarPanels.length)}
+                onChange={setSelectedPanelCount}
+                canRenderPanels={roofData.solarPanels.length > 0}
+              />
+              <RoofStatsPanel roofData={roofData} metrics={metrics} />
+              <FinancialSnapshot metrics={metrics} />
               <SegmentationPanel roofData={roofData} />
 
-              <SidebarPanel className="bg-[linear-gradient(180deg,rgba(103,232,249,0.1),rgba(255,255,255,0.02))]">
+              <SidebarPanel className="bg-[linear-gradient(180deg,rgba(103,232,249,0.08),rgba(255,255,255,0.02))]">
                 <p className="text-[0.62rem] font-semibold uppercase tracking-[0.34em] text-cyan-300">
-                  Report delivery
+                  Next step
                 </p>
                 <h3 className="mt-3 text-xl font-semibold tracking-tight text-white">
-                  Convert this analysis into a homeowner report.
+                  Turn this roof model into a proposal.
                 </h3>
                 <p className="mt-3 text-sm leading-7 text-slate-300">
-                  Capture the property details, measured savings, and installation recommendation in a shareable solar proposal.
+                  Save the verified roof geometry, selected panel count, and modeled economics into a homeowner-ready solar report.
                 </p>
                 <div className="mt-5 grid gap-3">
                   <ButtonLink href="#contact" variant="primary" className="w-full">
@@ -636,6 +610,24 @@ export function SolarAnalysis({
               </SidebarPanel>
             </aside>
           </div>
+
+          <section className="grid gap-4 lg:grid-cols-3">
+            <IntelligenceCard
+              eyebrow="Site findings"
+              title="Rooftop analysis summary"
+              body={`The primary roof plane faces ${metrics.orientationLabel} with ${metrics.selectedPanelCount} selected modules across usable roof surfaces. The current analysis marks ${roofData.usablePctRoof}% of the roof as solar-ready with ${roofData.shadingRisk} shading exposure.`}
+            />
+            <IntelligenceCard
+              eyebrow="Environmental impact"
+              title={`${metrics.carbonOffsetTons.toFixed(1)} tons of annual carbon avoided`}
+              body={`That is roughly ${metrics.treesEquivalent} mature trees worth of yearly carbon offset, driven by an estimated ${metrics.selectedAnnualKwh.toLocaleString()} kWh of annual solar production.`}
+            />
+            <IntelligenceCard
+              eyebrow="Install strategy"
+              title="Recommended installation approach"
+              body={`Prioritize the ${metrics.recommendedSegment?.label ?? "primary"} roof segment first, hold lower-performing planes for optional expansion, and keep conduit routing tight to reduce visible clutter on the front elevation.`}
+            />
+          </section>
         </div>
       ) : null}
     </section>
@@ -659,7 +651,7 @@ function ViewportHeader({
             Rooftop analysis
           </p>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
-            Roof geometry, usable area, and irradiance data are aligned to the detected roof footprint.
+            Building insights, irradiance, and panel geometry are aligned to the detected roof footprint and live Solar API roof segments.
           </p>
         </div>
         <div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-slate-300">
@@ -695,6 +687,7 @@ function ViewportCanvas({
   roofData,
   overlay,
   viewMode,
+  selectedPanelCount,
 }: {
   satelliteImage: string | null;
   annualFluxUrl: string | null;
@@ -710,6 +703,7 @@ function ViewportCanvas({
     measurements: MeasurementLine[];
   };
   viewMode: ViewMode;
+  selectedPanelCount: number;
 }) {
   const footprintPoints = pointsToString(overlay.footprint);
   const usablePoints = pointsToString(overlay.usable);
@@ -825,17 +819,17 @@ function ViewportCanvas({
               </g>
             ))}
           {showPanels
-            ? overlay.panels.map((panel) => (
+            ? overlay.panels.slice(0, selectedPanelCount).map((panel) => (
                 <rect
                   key={panel.id}
                   x={panel.x}
                   y={panel.y}
                   width={panel.width}
                   height={panel.height}
-                  rx="0.22"
-                  fill={viewMode === "panels" ? "rgba(252, 211, 77, 0.9)" : "rgba(37, 99, 235, 0.76)"}
-                  stroke="rgba(255,255,255,0.7)"
-                  strokeWidth="0.14"
+                  rx="0.14"
+                  fill="rgba(43, 112, 255, 0.72)"
+                  stroke="rgba(255,255,255,0.72)"
+                  strokeWidth="0.12"
                   transform={`rotate(${panel.rotation} ${panel.x + panel.width / 2} ${
                     panel.y + panel.height / 2
                   })`}
@@ -1042,10 +1036,12 @@ function PanelSelectionSlider({
   value,
   max,
   onChange,
+  canRenderPanels,
 }: {
   value: number;
   max: number;
   onChange: (value: number) => void;
+  canRenderPanels: boolean;
 }) {
   const safeMax = Math.max(1, max);
 
@@ -1057,7 +1053,7 @@ function PanelSelectionSlider({
             Panel selection
           </p>
           <p className="mt-2 text-sm leading-6 text-slate-300">
-            Set the live panel count against the detected roof geometry.
+            Adjust the active module count against the Solar API roof model.
           </p>
         </div>
         <div className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs font-semibold text-white">
@@ -1076,6 +1072,11 @@ function PanelSelectionSlider({
         <span>1 panel</span>
         <span>{safeMax} panels</span>
       </div>
+      {!canRenderPanels ? (
+        <p className="mt-3 text-xs leading-5 text-slate-400">
+          Google Solar did not return individual module coordinates for this property, so the map keeps the roof surfaces visible without synthetic panel overlays.
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -1195,6 +1196,7 @@ function RoofStatsPanel({
         <MetricRow label="Average roof pitch" value={`${metrics.averageRoofPitch.toFixed(1)}°`} />
         <MetricRow label="Primary orientation" value={metrics.orientationLabel} />
         <MetricRow label="Panel count" value={`${metrics.selectedPanelCount}`} />
+        <MetricRow label="Rooftop score" value={`${roofData.rooftopConfidenceScore}/100`} />
         <MetricRow label="Estimated payback" value={`${metrics.roiYears.toFixed(1)} yrs`} />
       </div>
 
@@ -1522,111 +1524,67 @@ function buildMeasurementLines(
   ];
 }
 
-function buildPanelLayout(analysis: RoofAnalysis, polygon: Point[]): PanelRect[] {
-  const usableSegments = analysis.roofSegments
-    .filter((segment) => segment.usable && segment.outline.length >= 3)
-    .sort((left, right) => right.panelsFit - left.panelsFit);
+function projectSolarPanels(analysis: RoofAnalysis): PanelRect[] {
+  const roofBounds = analysis.roofBounds;
 
-  if (!usableSegments.length || analysis.panelCount <= 0) {
+  if (!roofBounds || analysis.solarPanels.length === 0) {
     return [];
   }
 
-  const panels: PanelRect[] = [];
-  let placedPanels = 0;
+  const latSpan = Math.max(
+    roofBounds.northeast.lat - roofBounds.southwest.lat,
+    0.000001
+  );
+  const lngSpan = Math.max(
+    roofBounds.northeast.lng - roofBounds.southwest.lng,
+    0.000001
+  );
+  const panelWidthPct = Math.max(
+    0.9,
+    (analysis.panelWidthMeters / Math.max(analysis.widthM, analysis.panelWidthMeters)) * 100
+  );
+  const panelHeightPct = Math.max(
+    1.2,
+    (analysis.panelHeightMeters / Math.max(analysis.depthM, analysis.panelHeightMeters)) * 100
+  );
 
-  usableSegments.forEach((segment, segmentIndex) => {
-    const segmentBounds = getBounds(segment.outline);
-    const segmentWidth = Math.max(segmentBounds.maxX - segmentBounds.minX - 3.2, 8);
-    const segmentHeight = Math.max(segmentBounds.maxY - segmentBounds.minY - 3, 6);
-    const targetPanels = Math.min(
-      segment.panelsFit,
-      Math.max(0, analysis.panelCount - placedPanels)
-    );
-
-    if (targetPanels <= 0) {
-      return;
-    }
-
-    const columns = Math.max(2, Math.min(6, Math.round(Math.sqrt(targetPanels * 1.2))));
-    const rows = Math.max(1, Math.ceil(targetPanels / columns));
-    const gap = 0.7;
-    const panelWidth = Math.max(
-      2.2,
-      Math.min(5.2, (segmentWidth - gap * (columns - 1)) / columns)
-    );
-    const panelHeight = Math.max(
-      2.5,
-      Math.min(4.4, (segmentHeight - gap * (rows - 1)) / rows)
-    );
-    const rotation = clampNumber((segment.azimuthDeg - 180) / 10, -18, 18);
-    const segmentCenter = getPolygonCenter(segment.outline);
-    const localPolygon = toLocalPolygon(segment.outline, segmentCenter, rotation);
-    const localBounds = getBounds(localPolygon);
-    const startX = localBounds.minX + panelWidth / 2 + 0.8;
-    const startY = localBounds.minY + panelHeight / 2 + 0.8;
-    let segmentPlaced = 0;
-
-    for (let index = 0; index < targetPanels * 3 && segmentPlaced < targetPanels; index += 1) {
-      const column = index % columns;
-      const row = Math.floor(index / columns);
-      const localX = startX + column * (panelWidth + gap);
-      const localY = startY + row * (panelHeight + gap * 0.9);
-      const worldPosition = fromLocalPoint(
-        { x: localX, y: localY },
-        segmentCenter,
-        rotation
-      );
-      const panel = {
-        id: `panel-${segment.label}-${segmentIndex}-${segmentPlaced}`,
-        x: worldPosition.x - panelWidth / 2,
-        y: worldPosition.y - panelHeight / 2,
-        width: panelWidth,
-        height: panelHeight,
+  return analysis.solarPanels
+    .map((panel, index) => {
+      const x =
+        ((panel.center.lng - roofBounds.southwest.lng) / lngSpan) * 100;
+      const y =
+        ((roofBounds.northeast.lat - panel.center.lat) / latSpan) * 100;
+      const segment = analysis.roofSegments[panel.segmentIndex] ?? analysis.roofSegments[0];
+      const rotation = segment
+        ? normalizePanelRotation(segment.azimuthDeg)
+        : normalizePanelRotation(analysis.primaryRoofAzimuth);
+      const width =
+        panel.orientation === "LANDSCAPE" ? panelHeightPct : panelWidthPct;
+      const height =
+        panel.orientation === "LANDSCAPE" ? panelWidthPct : panelHeightPct;
+      const panelRect: PanelRect = {
+        id: `panel-${index}`,
+        x: x - width / 2,
+        y: y - height / 2,
+        width,
+        height,
         rotation,
       };
 
-      if (!panelFitsOutline(panel, segment.outline)) {
-        continue;
+      const segmentOutline = segment?.outline?.length ? segment.outline : analysis.usableOutline;
+
+      if (
+        !Number.isFinite(x) ||
+        !Number.isFinite(y) ||
+        !pointInPolygon({ x, y }, analysis.roofOutline) ||
+        (segmentOutline.length >= 3 && !panelFitsOutline(panelRect, segmentOutline))
+      ) {
+        return null;
       }
 
-      panels.push({
-        ...panel,
-      });
-      segmentPlaced += 1;
-    }
-
-    placedPanels += segmentPlaced;
-  });
-
-  if (panels.length > 0) {
-    return panels;
-  }
-
-  const bounds = getBounds(polygon);
-  const usableWidth = Math.max(bounds.maxX - bounds.minX - 6, 12);
-  const usableHeight = Math.max(bounds.maxY - bounds.minY - 6, 10);
-  const columns = Math.max(2, Math.min(8, Math.ceil(Math.sqrt(analysis.panelCount * 1.15))));
-  const rows = Math.max(1, Math.ceil(analysis.panelCount / columns));
-  const gap = 0.75;
-  const panelWidth = (usableWidth - gap * (columns - 1)) / columns;
-  const panelHeight = Math.min(4.2, Math.max(2.8, usableHeight / (rows + 1.6)));
-  const startX = bounds.minX + 3;
-  const startY = bounds.minY + 3;
-  const rotation = clampNumber((analysis.primaryRoofAzimuth - 180) / 10, -16, 16);
-
-  return Array.from({ length: analysis.panelCount }, (_, index) => {
-    const column = index % columns;
-    const row = Math.floor(index / columns);
-
-    return {
-      id: `panel-${index}`,
-      x: startX + column * (panelWidth + gap),
-      y: startY + row * (panelHeight + gap * 0.9),
-      width: panelWidth,
-      height: panelHeight,
-      rotation,
-    };
-  });
+      return panelRect;
+    })
+    .filter((panel): panel is PanelRect => Boolean(panel));
 }
 
 function pointsToString(points: Point[]) {
@@ -1710,24 +1668,10 @@ function rotatePoint(point: Point, rotationDeg: number) {
   };
 }
 
-function toLocalPolygon(points: Point[], center: Point, rotationDeg: number) {
-  return points.map((point) =>
-    rotatePoint(
-      {
-        x: point.x - center.x,
-        y: point.y - center.y,
-      },
-      -rotationDeg
-    )
-  );
-}
-
-function fromLocalPoint(point: Point, center: Point, rotationDeg: number) {
-  const rotated = rotatePoint(point, rotationDeg);
-  return {
-    x: rotated.x + center.x,
-    y: rotated.y + center.y,
-  };
+function normalizePanelRotation(azimuthDeg: number) {
+  const normalized = ((azimuthDeg % 360) + 360) % 360;
+  const rotation = normalized > 180 ? normalized - 360 : normalized;
+  return clampNumber(rotation - 180, -90, 90);
 }
 
 function formatAzimuth(value: number) {

@@ -2,6 +2,7 @@ import {
   buildInvalidRoofAnalysis,
   insetPolygon,
   normalizeRoofAnalysis,
+  type RoofGeoBounds,
   type RoofAnalysis,
   type RoofPlaneLabel,
   type RoofPoint,
@@ -22,6 +23,8 @@ export type GeocodedAddress = {
   formattedAddress: string;
   lat: number;
   lng: number;
+  types: string[];
+  locationType?: string;
   viewport?: {
     northeast: {
       lat: number;
@@ -154,6 +157,7 @@ export async function geocodeAddress(
           lat?: number;
           lng?: number;
         };
+        location_type?: string;
         viewport?: GeocodeViewport;
       };
       types?: string[];
@@ -179,8 +183,37 @@ export async function geocodeAddress(
     formattedAddress: result.formatted_address ?? address,
     lat: Number(location.lat),
     lng: Number(location.lng),
+    types: result.types ?? [],
+    locationType: result.geometry?.location_type,
     viewport: result.geometry?.viewport,
   };
+}
+
+export function validateGeocodedResidentialSite(geocoded: GeocodedAddress) {
+  const disallowedTypes = new Set([
+    "route",
+    "intersection",
+    "plus_code",
+    "point_of_interest",
+    "airport",
+    "park",
+    "natural_feature",
+    "premise",
+    "subpremise",
+  ]);
+  const hasResidentialAddressSignal = geocoded.types.some((type) =>
+    ["street_address", "premise"].includes(type)
+  );
+
+  if (geocoded.locationType === "APPROXIMATE") {
+    return "This location is too approximate for rooftop analysis. Please choose a full residential address.";
+  }
+
+  if (geocoded.types.some((type) => disallowedTypes.has(type)) && !hasResidentialAddressSignal) {
+    return "This location does not look like a residential rooftop. Please choose a detached home address.";
+  }
+
+  return null;
 }
 
 export async function fetchSolarBuildingInsights(
@@ -306,8 +339,12 @@ export function buildSolarRoofAnalysis(params: {
       (right.panelsCount ?? 0) - (left.panelsCount ?? 0)
   );
   const bestConfig = solarPanelConfigs[0];
+  const recommendedPanelCount = Math.max(
+    0,
+    Math.round(bestConfig?.panelsCount ?? maxArrayPanelsCount)
+  );
   const annualKwh =
-    Math.round(bestConfig?.yearlyEnergyDcKwh ?? maxArrayPanelsCount * panelCapacityWatts * 4.8);
+    Math.round(bestConfig?.yearlyEnergyDcKwh ?? recommendedPanelCount * panelCapacityWatts * 4.8);
   const annualSavingsUSD = Math.round(annualKwh * AZ_RATE_PER_KWH);
   const roofSegments = [...(solarPotential.roofSegmentStats ?? [])].sort(
     (left, right) =>
@@ -315,6 +352,7 @@ export function buildSolarRoofAnalysis(params: {
       (left.stats?.areaMeters2 ?? left.stats?.groundAreaMeters2 ?? 0)
   );
   const roofBox = params.insights.boundingBox;
+  const roofBounds = toRoofGeoBounds(roofBox);
   const solarPanels = (solarPotential.solarPanels ?? []).map((panel) =>
     normalizeSolarPanel(panel)
   );
@@ -348,34 +386,76 @@ export function buildSolarRoofAnalysis(params: {
     359
   );
   const pitchDeg = roundTo(primarySegment?.pitchDegrees ?? 0, 1);
-  const widthM = roundTo(
-    estimateLongitudeSpanMeters(roofBox) || Math.sqrt(Math.max(roofAreaM2, 0)),
-    1
-  );
-  const depthM = roundTo(
-    estimateLatitudeSpanMeters(roofBox) || Math.sqrt(Math.max(roofAreaM2, 0)),
-    1
-  );
+  const rawWidthM = estimateLongitudeSpanMeters(roofBox);
+  const rawDepthM = estimateLatitudeSpanMeters(roofBox);
+  const inferredFootprint = inferRoofDimensions({
+    roofAreaM2,
+    rawWidthM,
+    rawDepthM,
+  });
+  const widthM = inferredFootprint.widthM;
+  const depthM = inferredFootprint.depthM;
   const shadingRisk = classifyShadingRisk(solarPotential, roofSegments);
   const obstructionOutlines = buildObstructionOutlines(roofSegments, roofBox, shadingRisk);
-  const panelCount = maxArrayPanelsCount;
+  const panelCount = Math.min(
+    recommendedPanelCount || maxArrayPanelsCount,
+    maxArrayPanelsCount || recommendedPanelCount
+  );
   const roofSegmentsOut = buildRoofSegmentOutlines(
     roofSegments,
     roofBox,
+    bestConfig?.roofSegmentSummaries ?? [],
     panelCount,
     pitchDeg,
     primaryRoofAzimuth
   );
+  const propertyType = inferPropertyType({
+    roofAreaM2,
+    panelCount,
+    widthM,
+    depthM,
+    roofSegments,
+    imageryQuality: params.insights.imageryQuality,
+  });
   const confidence =
     String(params.insights.imageryQuality ?? "").toUpperCase() === "HIGH"
       ? "high"
       : roofSegments.length > 0
         ? "medium"
         : "low";
+  const rooftopConfidenceScore = computeRooftopConfidenceScore({
+    roofAreaM2,
+    panelCount,
+    roofSegmentsCount: roofSegments.length,
+    imageryQuality: params.insights.imageryQuality,
+    usablePctRoof,
+    roofBounds,
+  });
+
+  if (
+    propertyType !== "residential" ||
+    !roofBounds ||
+    panelCount < 4 ||
+    roofAreaM2 < 25 ||
+    roofSegmentsOut.length === 0 ||
+    rooftopConfidenceScore < 55
+  ) {
+    return buildInvalidRoofAnalysis({
+      propertyType,
+      invalidReason:
+        propertyType === "residential"
+          ? "A usable residential roof was not confidently confirmed for this property."
+          : "This property does not appear to be a detached residential rooftop.",
+      confidenceNote: buildConfidenceNote(
+        params.insights.imageryQuality ?? "UNKNOWN",
+        roofSegments.length
+      ),
+    });
+  }
 
   return normalizeRoofAnalysis(
     {
-      propertyType: "residential",
+      propertyType,
       rooftopDetected: true,
       validSite: true,
       invalidReason: null,
@@ -395,9 +475,11 @@ export function buildSolarRoofAnalysis(params: {
       annualSunlightHours: Math.round(solarPotential.maxSunshineHoursPerYear ?? 1800),
       shadingRisk,
       shadeNote: buildShadeNote(shadingRisk, roofSegments.length),
+      rooftopConfidenceScore,
       roofOutline,
       usableOutline,
       obstructionOutlines,
+      roofBounds,
       roofSegments: roofSegmentsOut,
       solarPanels,
       confidence,
@@ -519,6 +601,7 @@ function buildConfidenceNote(imageryQuality: string, segmentCount: number) {
 function buildRoofSegmentOutlines(
   segments: RoofSegmentStats[],
   roofBox: LatLngBox,
+  segmentSummaries: NonNullable<SolarPanelConfig["roofSegmentSummaries"]>,
   totalPanels: number,
   defaultPitch: number,
   defaultAzimuth: number
@@ -535,10 +618,20 @@ function buildRoofSegmentOutlines(
 
   return segments.slice(0, 3).map((segment, index) => {
     const areaM2 = segment.stats?.areaMeters2 ?? segment.stats?.groundAreaMeters2 ?? 0;
+    const summary = segmentSummaries.find(
+      (entry) => Number(entry.segmentIndex ?? index) === index
+    );
     const share = roofArea > 0 ? areaM2 / roofArea : 1 / Math.max(segments.length, 1);
-    const panelsFit = Math.max(1, Math.round(totalPanels * share));
+    const panelsFit = Math.max(
+      0,
+      Math.round(summary?.panelsCount ?? totalPanels * share)
+    );
     const label = fallbackOutlines[index]?.label ?? "primary";
     const outline = segment.boundingBox ? boxToOutline(segment.boundingBox, roofBox) : buildFallbackSegmentOutline(index);
+    const sunshineScore = medianSunshine(segment.stats?.sunshineQuantiles ?? []);
+    const usable =
+      areaM2 >= 8 &&
+      (panelsFit > 0 || !Number.isFinite(sunshineScore) || sunshineScore >= 1450);
 
     return {
       label,
@@ -546,8 +639,9 @@ function buildRoofSegmentOutlines(
       azimuthDeg: clamp(Math.round(segment.azimuthDegrees ?? defaultAzimuth), 0, 359),
       areaM2: roundTo(areaM2, 1),
       panelsFit,
-      usable: true,
+      usable,
       outline,
+      bounds: toRoofGeoBounds(segment.boundingBox),
     };
   });
 }
@@ -677,6 +771,90 @@ function boxToOutline(box: LatLngBox, rootBox?: LatLngBox): RoofPoint[] {
   return [nw, ne, se, sw];
 }
 
+function toRoofGeoBounds(box?: LatLngBox): RoofGeoBounds | null {
+  if (!box?.sw || !box?.ne) {
+    return null;
+  }
+
+  return {
+    southwest: {
+      lat: Number(box.sw.latitude ?? 0),
+      lng: Number(box.sw.longitude ?? 0),
+    },
+    northeast: {
+      lat: Number(box.ne.latitude ?? 0),
+      lng: Number(box.ne.longitude ?? 0),
+    },
+  };
+}
+
+function inferPropertyType(params: {
+  roofAreaM2: number;
+  panelCount: number;
+  widthM: number;
+  depthM: number;
+  roofSegments: RoofSegmentStats[];
+  imageryQuality?: string;
+}): RoofAnalysis["propertyType"] {
+  if (params.roofSegments.length === 0 || params.roofAreaM2 <= 0) {
+    return "unknown";
+  }
+
+  if (params.roofAreaM2 < 20 || params.panelCount < 2) {
+    return "road";
+  }
+
+  if (params.roofAreaM2 > 650 || params.widthM > 40 || params.depthM > 40) {
+    return "commercial";
+  }
+
+  if (
+    String(params.imageryQuality ?? "").toUpperCase() !== "HIGH" &&
+    params.panelCount < 6
+  ) {
+    return "unknown";
+  }
+
+  return "residential";
+}
+
+function computeRooftopConfidenceScore(params: {
+  roofAreaM2: number;
+  panelCount: number;
+  roofSegmentsCount: number;
+  imageryQuality?: string;
+  usablePctRoof: number;
+  roofBounds: RoofGeoBounds | null;
+}) {
+  let score = 30;
+
+  if (String(params.imageryQuality ?? "").toUpperCase() === "HIGH") {
+    score += 18;
+  }
+
+  if (params.roofBounds) {
+    score += 10;
+  }
+
+  if (params.roofAreaM2 >= 35) {
+    score += 12;
+  }
+
+  if (params.panelCount >= 8) {
+    score += 12;
+  }
+
+  if (params.roofSegmentsCount >= 1) {
+    score += 10;
+  }
+
+  if (params.usablePctRoof >= 40) {
+    score += 8;
+  }
+
+  return clamp(Math.round(score), 0, 100);
+}
+
 function toNormalizedPoint(
   point: { latitude: number; longitude: number },
   rootBox: LatLngBox
@@ -720,6 +898,26 @@ function estimateLongitudeSpanMeters(box: LatLngBox) {
     latitude,
     box.ne.longitude ?? 0
   );
+}
+
+function inferRoofDimensions(params: {
+  roofAreaM2: number;
+  rawWidthM: number;
+  rawDepthM: number;
+}) {
+  const safeArea = Math.max(params.roofAreaM2, 1);
+  const rawAspect =
+    params.rawWidthM > 0 && params.rawDepthM > 0
+      ? params.rawWidthM / params.rawDepthM
+      : 1.25;
+  const aspect = clamp(rawAspect, 0.65, 2.4);
+  const widthM = roundTo(Math.sqrt(safeArea * aspect), 1);
+  const depthM = roundTo(safeArea / Math.max(widthM, 1), 1);
+
+  return {
+    widthM,
+    depthM,
+  };
 }
 
 function haversineMeters(

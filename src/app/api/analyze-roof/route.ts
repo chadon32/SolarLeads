@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
-import { geocodeAddress, fetchSolarBuildingInsights, buildSolarRoofAnalysis } from "@/lib/google-solar";
+import {
+  geocodeAddress,
+  fetchSolarBuildingInsights,
+  buildSolarRoofAnalysis,
+  validateGeocodedResidentialSite,
+} from "@/lib/google-solar";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { getCachedRoofAnalysis, saveCachedRoofAnalysis } from "@/lib/roof-analysis-cache";
 import { buildFallbackRoofAnalysis, buildInvalidRoofAnalysis } from "@/lib/roof-analysis";
@@ -42,6 +47,24 @@ export async function POST(request: Request) {
     }
 
     const geocoded = await geocodeAddress(inputAddress);
+    const geocodeValidation = validateGeocodedResidentialSite(geocoded);
+
+    if (geocodeValidation) {
+      const invalidAnalysis = buildInvalidRoofAnalysis({
+        propertyType: "unknown",
+        invalidReason: geocodeValidation,
+        confidenceNote: geocodeValidation,
+      });
+
+      return NextResponse.json(
+        {
+          analysis: invalidAnalysis,
+          message: geocodeValidation,
+        },
+        { status: 422 }
+      );
+    }
+
     const fallback = buildFallbackRoofAnalysis({
       address: geocoded.formattedAddress,
       lat: geocoded.lat,

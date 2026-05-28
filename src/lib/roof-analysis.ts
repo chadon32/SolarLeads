@@ -21,6 +21,17 @@ export type RoofPoint = {
 
 export type RoofPlaneLabel = "primary" | "secondary" | "garage";
 
+export type RoofGeoBounds = {
+  northeast: {
+    lat: number;
+    lng: number;
+  };
+  southwest: {
+    lat: number;
+    lng: number;
+  };
+};
+
 export type RoofSegment = {
   label: RoofPlaneLabel;
   pitchDeg: number;
@@ -29,6 +40,7 @@ export type RoofSegment = {
   panelsFit: number;
   usable: boolean;
   outline: RoofPoint[];
+  bounds: RoofGeoBounds | null;
 };
 
 export type SolarPanelPlacement = {
@@ -62,9 +74,11 @@ export type RoofAnalysis = {
   annualSunlightHours: number;
   shadingRisk: ShadingRisk;
   shadeNote: string;
+  rooftopConfidenceScore: number;
   roofOutline: RoofPoint[];
   usableOutline: RoofPoint[];
   obstructionOutlines: RoofPoint[][];
+  roofBounds: RoofGeoBounds | null;
   roofSegments: RoofSegment[];
   solarPanels: SolarPanelPlacement[];
   confidence: AnalysisConfidence;
@@ -122,6 +136,7 @@ export function buildFallbackRoofAnalysis(params: {
       panelsFit: Math.max(Math.round(panelCount * 0.52), 8),
       usable: true,
       outline: defaultSegments.primary,
+      bounds: null,
     },
     {
       label: "secondary",
@@ -131,6 +146,7 @@ export function buildFallbackRoofAnalysis(params: {
       panelsFit: Math.max(Math.round(panelCount * 0.22), 3),
       usable: true,
       outline: defaultSegments.secondary,
+      bounds: null,
     },
     {
       label: "garage",
@@ -140,6 +156,7 @@ export function buildFallbackRoofAnalysis(params: {
       panelsFit: Math.max(panelCount - Math.round(panelCount * 0.74), 2),
       usable: true,
       outline: defaultSegments.garage,
+      bounds: null,
     },
   ];
 
@@ -164,9 +181,11 @@ export function buildFallbackRoofAnalysis(params: {
     annualSunlightHours: 1800,
     shadingRisk: "low",
     shadeNote: "No significant shading detected.",
+    rooftopConfidenceScore: span < 0.005 ? 62 : 48,
     roofOutline,
     usableOutline,
     obstructionOutlines,
+    roofBounds: null,
     roofSegments,
     solarPanels: [],
     confidence: span < 0.005 ? "medium" : "low",
@@ -202,9 +221,11 @@ export function buildInvalidRoofAnalysis(params: {
     panelHeightMeters: fallback.panelHeightMeters,
     annualSunlightHours: fallback.annualSunlightHours,
     usablePctRoof: 0,
+    rooftopConfidenceScore: 0,
     roofOutline: [],
     usableOutline: [],
     obstructionOutlines: [],
+    roofBounds: null,
     roofSegments: [],
     solarPanels: [],
     confidence: "low",
@@ -295,6 +316,7 @@ export function normalizeRoofAnalysis(
     primaryRoofAzimuth,
     roofShape
   );
+  const roofBounds = normalizeBounds(input.roofBounds, fallback.roofBounds);
   const solarPanels = normalizeSolarPanels(
     input.solarPanels,
     fallback.solarPanels
@@ -351,9 +373,15 @@ export function normalizeRoofAnalysis(
     annualSunlightHours,
     shadingRisk: shadingRiskOrFallback(input.shadingRisk, fallback.shadingRisk),
     shadeNote: stringOrFallback(input.shadeNote, fallback.shadeNote),
+    rooftopConfidenceScore: clamp(
+      Math.round(numberOrFallback(input.rooftopConfidenceScore, fallback.rooftopConfidenceScore)),
+      0,
+      100
+    ),
     roofOutline,
     usableOutline,
     obstructionOutlines,
+    roofBounds,
     roofSegments,
     solarPanels,
     confidence: confidenceOrFallback(input.confidence, fallback.confidence),
@@ -471,11 +499,11 @@ function normalizeRoofSegments(
   defaultPitchDeg: number,
   defaultAzimuth: number,
   roofShape: RoofShape
-) {
+): RoofSegment[] {
   const defaultOutlines = getDefaultSegmentOutlines(roofShape);
 
   if (!Array.isArray(value) || value.length === 0) {
-    return fallback.map((segment) => ({
+    return fallback.map((segment): RoofSegment => ({
       ...segment,
       outline: segment.outline.length
         ? segment.outline
@@ -545,6 +573,7 @@ function normalizeRoofSegments(
             ? fallbackSegment.outline
             : defaultOutlines[label]
         ),
+        bounds: normalizeBounds(input.bounds, fallbackSegment?.bounds ?? null),
       } satisfies RoofSegment;
     })
     .filter((segment): segment is RoofSegment => Boolean(segment));
@@ -591,6 +620,37 @@ function normalizeSolarPanels(value: unknown, fallback: SolarPanelPlacement[]) {
       } satisfies SolarPanelPlacement;
     })
     .filter((panel): panel is SolarPanelPlacement => Boolean(panel));
+}
+
+function normalizeBounds(
+  value: unknown,
+  fallback: RoofGeoBounds | null
+): RoofGeoBounds | null {
+  if (!value || typeof value !== "object") {
+    return fallback;
+  }
+
+  const input = value as Record<string, unknown>;
+  const northeast = input.northeast as Record<string, unknown> | undefined;
+  const southwest = input.southwest as Record<string, unknown> | undefined;
+  const neLat = numberOrFallback(northeast?.lat, Number.NaN);
+  const neLng = numberOrFallback(northeast?.lng, Number.NaN);
+  const swLat = numberOrFallback(southwest?.lat, Number.NaN);
+  const swLng = numberOrFallback(southwest?.lng, Number.NaN);
+
+  if (
+    !Number.isFinite(neLat) ||
+    !Number.isFinite(neLng) ||
+    !Number.isFinite(swLat) ||
+    !Number.isFinite(swLng)
+  ) {
+    return fallback;
+  }
+
+  return {
+    northeast: { lat: neLat, lng: neLng },
+    southwest: { lat: swLat, lng: swLng },
+  };
 }
 
 function getDefaultSegmentOutlines(shape: RoofShape): Record<RoofPlaneLabel, RoofPoint[]> {

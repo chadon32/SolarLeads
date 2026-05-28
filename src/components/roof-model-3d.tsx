@@ -361,6 +361,7 @@ function addPanels(
           panelsFit: roofData.panelCount,
           usable: true,
           outline: [],
+          bounds: null,
         } satisfies RoofSegment,
       ];
 
