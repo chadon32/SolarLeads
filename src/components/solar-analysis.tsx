@@ -508,15 +508,15 @@ export function SolarAnalysis({
       ) : null}
 
       {stage === "done" && roofData && overlay && metrics ? (
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.55fr)_22rem]">
-          <div className="space-y-6">
-            <article className="overflow-hidden rounded-[1.95rem] border border-white/10 bg-slate-950/78 shadow-[0_14px_44px_rgba(2,8,20,0.36)]">
-              <ViewportHeader
-                address={resolvedProperty?.address ?? address}
-                viewMode={viewMode}
-                onSelectView={setViewMode}
-              />
-              <div className="grid border-t border-white/8 lg:grid-cols-[minmax(0,1fr)_17rem]">
+        <div className="space-y-6">
+          <article className="overflow-hidden rounded-[1.95rem] border border-white/10 bg-slate-950/78 shadow-[0_14px_44px_rgba(2,8,20,0.36)]">
+            <ViewportHeader
+              address={resolvedProperty?.address ?? address}
+              viewMode={viewMode}
+              onSelectView={setViewMode}
+            />
+            <div className="border-t border-white/8 p-4 sm:p-5">
+              <div className="relative overflow-hidden rounded-[1.7rem] border border-white/8">
                 <ViewportCanvas
                   satelliteImage={satelliteImage}
                   annualFluxUrl={annualFluxUrl}
@@ -525,139 +525,99 @@ export function SolarAnalysis({
                   overlay={overlay}
                   viewMode={viewMode}
                 />
-                <div className="border-t border-white/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.02))] p-4 lg:border-l lg:border-t-0">
-                  <PanelSelectionSlider
-                    value={metrics.selectedPanelCount}
-                    max={roofData.panelCount}
-                    onChange={setSelectedPanelCount}
+                <div className="absolute left-4 top-4 z-10 w-[24rem] max-w-[calc(100%-2rem)]">
+                  <SunroofSummaryCard
+                    address={resolvedProperty?.address ?? address}
+                    metrics={metrics}
                   />
-                  <RoofStatsPanel roofData={roofData} metrics={metrics} />
                 </div>
               </div>
-            </article>
 
-            <section className="grid gap-4 lg:grid-cols-3">
-              <IntelligenceCard
-                eyebrow="Site findings"
-                title="Rooftop analysis summary"
-                body={`The primary roof plane faces ${metrics.orientationLabel} with about ${metrics.selectedPanelCount} modules selected across the detected roof planes. The current analysis reads ${roofData.usablePctRoof}% of the roof as usable for solar with ${roofData.shadingRisk} shading exposure.`}
-              />
-              <IntelligenceCard
-                eyebrow="Environmental impact"
-                title={`${metrics.carbonOffsetTons.toFixed(1)} tons of annual carbon avoided`}
-                body={`That is roughly ${metrics.treesEquivalent} mature trees worth of yearly carbon offset, driven by an estimated ${metrics.selectedAnnualKwh.toLocaleString()} kWh of solar production.`}
-              />
-              <IntelligenceCard
-                eyebrow="Install strategy"
-                title="Recommended installation approach"
-                body={`Prioritize the ${metrics.recommendedSegment?.label ?? "primary"} roof segment first, reserve lower-performing planes for optional expansion, and keep conduit routing tight to reduce visible clutter on the front elevation.`}
-              />
-            </section>
-          </div>
-
-          <aside className="space-y-4">
-            <SidebarPanel>
-              <p className="text-[0.62rem] font-semibold uppercase tracking-[0.34em] text-cyan-300">
-                Analysis summary
-              </p>
-              <h3 className="mt-3 text-2xl font-semibold tracking-tight text-white">
-                Analysis complete.
-              </h3>
-              <p className="mt-3 text-sm leading-7 text-slate-300">
-                The platform mapped roof geometry, candidate panel zones, obstructions, and projected savings from the rooftop image.
-              </p>
-              <div className="mt-4 flex flex-wrap gap-2">
-                <Pill label={`${roofData.confidence} confidence`} tone="cyan" />
-                <Pill
-                  label={
-                    roofData.source === "solar-api"
-                      ? "Solar API source"
-                      : roofData.source === "vision-api"
-                        ? "Image analysis"
-                        : "Modeled source"
-                  }
+              <div className="mt-4 grid gap-4 lg:grid-cols-3">
+                <PanelSelectionSlider
+                  value={metrics.selectedPanelCount}
+                  max={roofData.panelCount}
+                  onChange={setSelectedPanelCount}
                 />
-                <Pill label={`${metrics.orientationLabel} orientation`} />
+                <RoofStatsPanel roofData={roofData} metrics={metrics} />
+                <FinancialSnapshot metrics={metrics} />
               </div>
-              <p className="mt-4 text-sm leading-6 text-slate-400">
-                {notice ?? roofData.confidenceNote}
-              </p>
-            </SidebarPanel>
+            </div>
+          </article>
 
-            <SidebarPanel>
-              <p className="text-[0.62rem] font-semibold uppercase tracking-[0.34em] text-cyan-300">
-                Financial model
-              </p>
-              <div className="mt-4 grid gap-3">
-                <MetricRow label="Estimated system size" value={`${metrics.selectedSystemKw.toFixed(1)} kW`} />
-                <MetricRow label="Estimated panel count" value={`${metrics.selectedPanelCount}`} />
-                <MetricRow label="Monthly savings" value={`$${metrics.monthlySavings.toLocaleString()}`} />
-                <MetricRow label="Yearly savings" value={`$${metrics.selectedAnnualSavingsUSD.toLocaleString()}`} />
-                <MetricRow label="ROI estimate" value={`${metrics.roiYears.toFixed(1)} yrs`} />
-                <MetricRow label="Financing from" value={`$${metrics.financingFrom}/mo`} />
-              </div>
-            </SidebarPanel>
+          <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_20rem]">
+            <div className="space-y-6">
+              <section className="grid gap-4 lg:grid-cols-3">
+                <IntelligenceCard
+                  eyebrow="Site findings"
+                  title="Rooftop analysis summary"
+                  body={`The primary roof plane faces ${metrics.orientationLabel} with about ${metrics.selectedPanelCount} modules selected across the detected roof planes. The current analysis reads ${roofData.usablePctRoof}% of the roof as usable for solar with ${roofData.shadingRisk} shading exposure.`}
+                />
+                <IntelligenceCard
+                  eyebrow="Environmental impact"
+                  title={`${metrics.carbonOffsetTons.toFixed(1)} tons of annual carbon avoided`}
+                  body={`That is roughly ${metrics.treesEquivalent} mature trees worth of yearly carbon offset, driven by an estimated ${metrics.selectedAnnualKwh.toLocaleString()} kWh of solar production.`}
+                />
+                <IntelligenceCard
+                  eyebrow="Install strategy"
+                  title="Recommended installation approach"
+                  body={`Prioritize the ${metrics.recommendedSegment?.label ?? "primary"} roof segment first, reserve lower-performing planes for optional expansion, and keep conduit routing tight to reduce visible clutter on the front elevation.`}
+                />
+              </section>
+            </div>
 
-            <SidebarPanel>
-              <p className="text-[0.62rem] font-semibold uppercase tracking-[0.34em] text-cyan-300">
-                Roof segmentation
-              </p>
-              <div className="mt-4 space-y-3">
-                {roofData.roofSegments.slice(0, 3).map((segment) => (
-                  <div key={segment.label} className="rounded-[1.15rem] border border-white/8 bg-white/[0.03] p-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-sm font-semibold capitalize text-white">
-                        {segment.label}
-                      </p>
-                      <p className="text-[0.65rem] uppercase tracking-[0.24em] text-slate-400">
-                        {segment.panelsFit} panels
-                      </p>
-                    </div>
-                    <div className="mt-3 h-2 rounded-full bg-white/10">
-                      <div
-                        className="h-full rounded-full bg-[linear-gradient(90deg,#67e8f9,#38bdf8)]"
-                        style={{
-                          width: `${Math.max(
-                            22,
-                            Math.min(
-                              100,
-                              Math.round(
-                                (segment.panelsFit / Math.max(roofData.panelCount, 1)) * 100
-                              )
-                            )
-                          )}%`,
-                        }}
-                      />
-                    </div>
-                    <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-400">
-                      <span>{segment.areaM2.toFixed(1)} m²</span>
-                      <span>{formatAzimuth(segment.azimuthDeg)}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </SidebarPanel>
+            <aside className="space-y-4">
+              <SidebarPanel>
+                <p className="text-[0.62rem] font-semibold uppercase tracking-[0.34em] text-cyan-300">
+                  Analysis summary
+                </p>
+                <h3 className="mt-3 text-2xl font-semibold tracking-tight text-white">
+                  Analysis complete.
+                </h3>
+                <p className="mt-3 text-sm leading-7 text-slate-300">
+                  Roof geometry, candidate panel zones, solar exposure, and projected savings are aligned to the detected structure.
+                </p>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <Pill label={`${roofData.confidence} confidence`} tone="cyan" />
+                  <Pill
+                    label={
+                      roofData.source === "solar-api"
+                        ? "Solar API source"
+                        : roofData.source === "vision-api"
+                          ? "Image analysis"
+                          : "Modeled source"
+                    }
+                  />
+                  <Pill label={`${metrics.orientationLabel} orientation`} />
+                </div>
+                <p className="mt-4 text-sm leading-6 text-slate-400">
+                  {notice ?? roofData.confidenceNote}
+                </p>
+              </SidebarPanel>
 
-            <SidebarPanel className="bg-[linear-gradient(180deg,rgba(103,232,249,0.1),rgba(255,255,255,0.02))]">
-              <p className="text-[0.62rem] font-semibold uppercase tracking-[0.34em] text-cyan-300">
-                Report delivery
-              </p>
-              <h3 className="mt-3 text-xl font-semibold tracking-tight text-white">
-                Convert this analysis into a homeowner report.
-              </h3>
-              <p className="mt-3 text-sm leading-7 text-slate-300">
-                Capture the property details, modeled savings, and installation recommendation in a shareable solar proposal.
-              </p>
-              <div className="mt-5 grid gap-3">
-                <ButtonLink href="#contact" variant="primary" className="w-full">
-                  Generate full report
-                </ButtonLink>
-                <ButtonLink href="tel:+16025550100" variant="secondary" className="w-full">
-                  Talk to a solar advisor
-                </ButtonLink>
-              </div>
-            </SidebarPanel>
-          </aside>
+              <SegmentationPanel roofData={roofData} />
+
+              <SidebarPanel className="bg-[linear-gradient(180deg,rgba(103,232,249,0.1),rgba(255,255,255,0.02))]">
+                <p className="text-[0.62rem] font-semibold uppercase tracking-[0.34em] text-cyan-300">
+                  Report delivery
+                </p>
+                <h3 className="mt-3 text-xl font-semibold tracking-tight text-white">
+                  Convert this analysis into a homeowner report.
+                </h3>
+                <p className="mt-3 text-sm leading-7 text-slate-300">
+                  Capture the property details, measured savings, and installation recommendation in a shareable solar proposal.
+                </p>
+                <div className="mt-5 grid gap-3">
+                  <ButtonLink href="#contact" variant="primary" className="w-full">
+                    Generate full report
+                  </ButtonLink>
+                  <ButtonLink href="tel:+16025550100" variant="secondary" className="w-full">
+                    Talk to a solar advisor
+                  </ButtonLink>
+                </div>
+              </SidebarPanel>
+            </aside>
+          </div>
         </div>
       ) : null}
     </section>
@@ -677,12 +637,12 @@ function ViewportHeader({
     <div className="flex flex-col gap-4 px-4 py-4 sm:px-5">
       <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
         <div>
-              <p className="text-[0.62rem] font-semibold uppercase tracking-[0.34em] text-cyan-300">
-                Rooftop analysis
-              </p>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
+          <p className="text-[0.62rem] font-semibold uppercase tracking-[0.34em] text-cyan-300">
+            Rooftop analysis
+          </p>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
             Roof geometry, usable area, and irradiance data are aligned to the detected roof footprint.
-              </p>
+          </p>
         </div>
         <div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-slate-300">
           {address}
@@ -733,11 +693,11 @@ function ViewportCanvas({
 }) {
   const footprintPoints = pointsToString(overlay.footprint);
   const usablePoints = pointsToString(overlay.usable);
-  const showPanels = viewMode === "overview" || viewMode === "panels";
+  const showPanels = viewMode === "panels";
   const showObstructions = viewMode === "overview" || viewMode === "irradiance";
 
   return (
-    <div className="relative min-h-[34rem] overflow-hidden bg-slate-950">
+    <div className="relative min-h-[36rem] overflow-hidden bg-slate-950 lg:min-h-[43rem]">
       {satelliteImage ? (
         <Image
           src={satelliteImage}
@@ -921,7 +881,7 @@ function AnnualFluxCanvasOverlay({
     let cancelled = false;
     const canvas = canvasRef.current;
 
-    if (!canvas || !annualFluxUrl || viewMode !== "irradiance") {
+    if (!canvas || !annualFluxUrl || (viewMode !== "overview" && viewMode !== "irradiance")) {
       const context = canvas?.getContext("2d");
       if (canvas && context) {
         context.clearRect(0, 0, canvas.width, canvas.height);
@@ -1061,6 +1021,86 @@ function PanelSelectionSlider({
   );
 }
 
+function SunroofSummaryCard({
+  address,
+  metrics,
+}: {
+  address: string;
+  metrics: AnalysisMetrics;
+}) {
+  const usableAreaSqFt = metrics.usableArea * 10.7639;
+  const twentyYearSavings = metrics.selectedAnnualSavingsUSD * 20;
+
+  return (
+    <div className="overflow-hidden rounded-[1.15rem] border border-black/10 bg-white/95 text-slate-900 shadow-[0_18px_40px_rgba(15,23,42,0.22)] backdrop-blur">
+      <div className="flex items-center gap-2 border-b border-slate-200 px-4 py-3">
+        <div className="min-w-0 flex-1 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+          <span className="truncate">{address}</span>
+        </div>
+        <span className="text-sm font-semibold text-slate-700">GO</span>
+      </div>
+
+      <div className="border-b border-slate-200 px-4 py-3 text-sm text-slate-700">
+        <div className="flex items-center gap-2">
+          <span className="text-emerald-600">✓</span>
+          <span>Analysis complete. Your roof has:</span>
+        </div>
+      </div>
+
+      <div className="space-y-0">
+        <SummaryMetric
+          tone="sun"
+          value={`${metrics.annualSunlightHours.toLocaleString()} hours of usable sunlight per year`}
+          detail="Estimated from live annual flux and roof orientation data"
+        />
+        <SummaryMetric
+          tone="area"
+          value={`${Math.round(usableAreaSqFt).toLocaleString()} sq ft available for solar panels`}
+          detail="Based on detected usable roof area and setback-adjusted panel fit"
+        />
+      </div>
+
+      <div className="border-t-4 border-sky-500 bg-slate-50 px-4 py-3">
+        <p className="text-[2rem] font-light tracking-tight text-slate-900">
+          ${twentyYearSavings.toLocaleString()}
+        </p>
+        <p className="text-sm text-slate-600">
+          Estimated net savings for your roof over 20 years
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function SummaryMetric({
+  tone,
+  value,
+  detail,
+}: {
+  tone: "sun" | "area";
+  value: string;
+  detail: string;
+}) {
+  const iconClass =
+    tone === "sun"
+      ? "bg-amber-100 text-amber-500"
+      : "bg-fuchsia-100 text-fuchsia-500";
+
+  return (
+    <div className="flex items-start gap-4 border-b border-slate-200 px-4 py-4 last:border-b-0">
+      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${iconClass}`}>
+        <span
+          className={`h-3 w-3 rounded-full ${tone === "sun" ? "bg-amber-500" : "bg-fuchsia-500"}`}
+        />
+      </div>
+      <div>
+        <p className="text-[1.05rem] leading-6 text-slate-900">{value}</p>
+        <p className="mt-1 text-sm leading-5 text-slate-500">{detail}</p>
+      </div>
+    </div>
+  );
+}
+
 function RoofStatsPanel({
   roofData,
   metrics,
@@ -1131,15 +1171,15 @@ function RoofStatsPanel({
 }
 
 function fluxColor(value: number) {
-  const blue = { r: 37, g: 99, b: 235 };
-  const yellow = { r: 250, g: 204, b: 21 };
-  const red = { r: 239, g: 68, b: 68 };
+  const shade = { r: 88, g: 54, b: 123 };
+  const warm = { r: 244, g: 128, b: 36 };
+  const sunny = { r: 255, g: 230, b: 38 };
 
   if (value <= 0.5) {
-    return blendColor(blue, yellow, value / 0.5);
+    return blendColor(shade, warm, value / 0.5);
   }
 
-  return blendColor(yellow, red, (value - 0.5) / 0.5);
+  return blendColor(warm, sunny, (value - 0.5) / 0.5);
 }
 
 function blendColor(
@@ -1248,6 +1288,65 @@ function MetricRow({ label, value }: { label: string; value: string }) {
       <span className="text-slate-400">{label}</span>
       <span className="font-semibold text-white">{value}</span>
     </div>
+  );
+}
+
+function FinancialSnapshot({ metrics }: { metrics: AnalysisMetrics }) {
+  return (
+    <div className="rounded-[1.45rem] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.025))] p-4 shadow-[0_10px_28px_rgba(2,8,20,0.18)]">
+      <p className="text-[0.56rem] font-semibold uppercase tracking-[0.32em] text-cyan-300">
+        Savings model
+      </p>
+      <div className="mt-4 grid gap-3">
+        <MetricRow label="Estimated system size" value={`${metrics.selectedSystemKw.toFixed(1)} kW`} />
+        <MetricRow label="Monthly savings" value={`$${metrics.monthlySavings.toLocaleString()}`} />
+        <MetricRow label="Yearly savings" value={`$${metrics.selectedAnnualSavingsUSD.toLocaleString()}`} />
+        <MetricRow label="Estimated payback" value={`${metrics.roiYears.toFixed(1)} yrs`} />
+        <MetricRow label="Financing from" value={`$${metrics.financingFrom}/mo`} />
+      </div>
+    </div>
+  );
+}
+
+function SegmentationPanel({ roofData }: { roofData: RoofAnalysis }) {
+  return (
+    <SidebarPanel>
+      <p className="text-[0.62rem] font-semibold uppercase tracking-[0.34em] text-cyan-300">
+        Roof segmentation
+      </p>
+      <div className="mt-4 space-y-3">
+        {roofData.roofSegments.slice(0, 3).map((segment) => (
+          <div key={segment.label} className="rounded-[1.15rem] border border-white/8 bg-white/[0.03] p-3">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm font-semibold capitalize text-white">
+                {segment.label}
+              </p>
+              <p className="text-[0.65rem] uppercase tracking-[0.24em] text-slate-400">
+                {segment.panelsFit} panels
+              </p>
+            </div>
+            <div className="mt-3 h-2 rounded-full bg-white/10">
+              <div
+                className="h-full rounded-full bg-[linear-gradient(90deg,#67e8f9,#38bdf8)]"
+                style={{
+                  width: `${Math.max(
+                    22,
+                    Math.min(
+                      100,
+                      Math.round((segment.panelsFit / Math.max(roofData.panelCount, 1)) * 100)
+                    )
+                  )}%`,
+                }}
+              />
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-400">
+              <span>{segment.areaM2.toFixed(1)} m²</span>
+              <span>{formatAzimuth(segment.azimuthDeg)}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </SidebarPanel>
   );
 }
 
