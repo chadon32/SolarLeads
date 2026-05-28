@@ -166,6 +166,8 @@ const viewModes: Array<{ id: ViewMode; label: string }> = [
 ];
 
 const dsmPlaneExtractionCache = new Map<string, Promise<DsmPlaneExtraction | null>>();
+const PANEL_MODULE_GAP_METERS = 0.2032;
+const PANEL_COLLISION_EPSILON_METERS = 0.01;
 
 const azimuthLabels = [
   "N",
@@ -1221,6 +1223,7 @@ function buildPanelCornerLatLngPoints({
 function buildPanelCornerPoints(params: {
   centerLat: number;
   centerLng: number;
+  dimensionAdjustmentMeters?: number;
   orientation: "PORTRAIT" | "LANDSCAPE";
   rotationDeg: number;
   panelWidthMeters: number;
@@ -1228,8 +1231,17 @@ function buildPanelCornerPoints(params: {
 }) {
   const shortSide = Math.min(params.panelWidthMeters, params.panelHeightMeters);
   const longSide = Math.max(params.panelWidthMeters, params.panelHeightMeters);
-  const widthMeters = params.orientation === "LANDSCAPE" ? longSide : shortSide;
-  const heightMeters = params.orientation === "LANDSCAPE" ? shortSide : longSide;
+  const dimensionAdjustment = params.dimensionAdjustmentMeters ?? 0;
+  const baseWidthMeters = params.orientation === "LANDSCAPE" ? longSide : shortSide;
+  const baseHeightMeters = params.orientation === "LANDSCAPE" ? shortSide : longSide;
+  const widthMeters = Math.max(
+    baseWidthMeters * 0.62,
+    baseWidthMeters + dimensionAdjustment
+  );
+  const heightMeters = Math.max(
+    baseHeightMeters * 0.62,
+    baseHeightMeters + dimensionAdjustment
+  );
   const halfWidth = widthMeters / 2;
   const halfHeight = heightMeters / 2;
   const rotation = (params.rotationDeg * Math.PI) / 180;
@@ -1374,21 +1386,15 @@ function createPanelMapOverlays({
   roofData: RoofAnalysis;
   selectedPanelCount: number;
 }) {
-  const visiblePanels = roofData.solarPanels.slice(0, selectedPanelCount);
+  const panelLayout = buildProfessionalPanelLayout({
+    roofData,
+    selectedPanelCount,
+  });
 
-  return visiblePanels.map((panel) => {
-      const segment = roofData.roofSegments[panel.segmentIndex];
-      const azimuth = Number.isFinite(panel.azimuthDeg)
-        ? panel.azimuthDeg
-        : segment?.azimuthDeg ?? roofData.primaryRoofAzimuth;
-      const path = buildPanelPath(googleApi, {
-        centerLat: panel.center.lat,
-        centerLng: panel.center.lng,
-        orientation: panel.orientation,
-        rotationDeg: inferPanelRotationDeg(panel, visiblePanels, azimuth),
-        panelWidthMeters: roofData.panelWidthMeters,
-        panelHeightMeters: roofData.panelHeightMeters,
-      });
+  return panelLayout.map((panel) => {
+      const path = panel.displayPath.map(
+        (point) => new googleApi.maps.LatLng(point.lat, point.lng)
+      );
 
       return new googleApi.maps.Polygon({
         clickable: false,
@@ -1401,6 +1407,276 @@ function createPanelMapOverlays({
         strokeWeight: 1,
       });
     });
+}
+
+type PanelLayoutPlacement = {
+  collisionPathMeters: MeterPoint[];
+  displayPath: LatLngPoint[];
+};
+
+type MeterPoint = {
+  x: number;
+  y: number;
+};
+
+function buildProfessionalPanelLayout({
+  roofData,
+  selectedPanelCount,
+}: {
+  roofData: RoofAnalysis;
+  selectedPanelCount: number;
+}): PanelLayoutPlacement[] {
+  const targetCount = clampNumber(
+    selectedPanelCount,
+    0,
+    roofData.solarPanels.length
+  );
+  const origin =
+    getRoofBoundsCenter(roofData.roofBounds) ??
+    roofData.solarPanels[0]?.center ??
+    null;
+
+  if (!origin || targetCount <= 0) {
+    return [];
+  }
+
+  const placedPanels: PanelLayoutPlacement[] = [];
+  const orderedPanels = getOrderedPanelCandidates(roofData);
+
+  for (const panel of orderedPanels) {
+    const segment = roofData.roofSegments[panel.segmentIndex];
+    const azimuth = Number.isFinite(panel.azimuthDeg)
+      ? panel.azimuthDeg
+      : segment?.azimuthDeg ?? roofData.primaryRoofAzimuth;
+    const rotationDeg = inferPanelRotationDeg(panel, orderedPanels, azimuth);
+    const boundary = getPanelBoundaryPolygon(panel, roofData);
+    const displayPath = buildPanelCornerPoints({
+      centerLat: panel.center.lat,
+      centerLng: panel.center.lng,
+      dimensionAdjustmentMeters: -PANEL_MODULE_GAP_METERS,
+      orientation: panel.orientation,
+      panelHeightMeters: roofData.panelHeightMeters,
+      panelWidthMeters: roofData.panelWidthMeters,
+      rotationDeg,
+    });
+
+    if (!isPanelInsideBoundary(displayPath, boundary)) {
+      continue;
+    }
+
+    const collisionPathMeters = buildPanelCornerPoints({
+      centerLat: panel.center.lat,
+      centerLng: panel.center.lng,
+      dimensionAdjustmentMeters: 0,
+      orientation: panel.orientation,
+      panelHeightMeters: roofData.panelHeightMeters,
+      panelWidthMeters: roofData.panelWidthMeters,
+      rotationDeg,
+    }).map((point) => latLngToLocalMeters(point, origin));
+    const hasCollision = placedPanels.some((placedPanel) =>
+      convexPolygonsOverlap(
+        collisionPathMeters,
+        placedPanel.collisionPathMeters,
+        PANEL_COLLISION_EPSILON_METERS
+      )
+    );
+
+    if (hasCollision) {
+      continue;
+    }
+
+    placedPanels.push({
+      collisionPathMeters,
+      displayPath,
+    });
+
+    if (placedPanels.length >= targetCount) {
+      break;
+    }
+  }
+
+  return placedPanels;
+}
+
+function getOrderedPanelCandidates(roofData: RoofAnalysis) {
+  const segmentRank = new Map(
+    roofData.roofSegments
+      .map((segment, index) => ({ index, segment }))
+      .sort((left, right) => {
+        if (left.segment.usable !== right.segment.usable) {
+          return left.segment.usable ? -1 : 1;
+        }
+
+        return (
+          right.segment.areaM2 - left.segment.areaM2 ||
+          right.segment.panelsFit - left.segment.panelsFit ||
+          left.index - right.index
+        );
+      })
+      .map((entry, rank) => [entry.index, rank])
+  );
+
+  return [...roofData.solarPanels].sort((left, right) => {
+    const leftRank = segmentRank.get(left.segmentIndex) ?? Number.MAX_SAFE_INTEGER;
+    const rightRank = segmentRank.get(right.segmentIndex) ?? Number.MAX_SAFE_INTEGER;
+
+    return (
+      leftRank - rightRank ||
+      nullableSortValue(left.rowIndex) - nullableSortValue(right.rowIndex) ||
+      nullableSortValue(left.columnIndex) - nullableSortValue(right.columnIndex) ||
+      right.yearlyEnergyDcKwh - left.yearlyEnergyDcKwh
+    );
+  });
+}
+
+function nullableSortValue(value: number | null) {
+  return value === null ? Number.MAX_SAFE_INTEGER : value;
+}
+
+function getPanelBoundaryPolygon(
+  panel: RoofAnalysis["solarPanels"][number],
+  roofData: RoofAnalysis
+) {
+  const segment = roofData.roofSegments[panel.segmentIndex];
+  const segmentPolygon = segment
+    ? outlineToLatLngPoints(segment.outline, roofData.roofBounds)
+    : [];
+
+  if (segmentPolygon.length >= 3) {
+    return segmentPolygon;
+  }
+
+  const usablePolygon = outlineToLatLngPoints(
+    roofData.usableOutline,
+    roofData.roofBounds
+  );
+
+  if (usablePolygon.length >= 3) {
+    return usablePolygon;
+  }
+
+  return outlineToLatLngPoints(roofData.roofOutline, roofData.roofBounds);
+}
+
+function isPanelInsideBoundary(
+  panelPath: LatLngPoint[],
+  boundary: LatLngPoint[]
+) {
+  if (boundary.length < 3) {
+    return true;
+  }
+
+  return panelPath.every((point) => isLatLngPointInPolygon(point, boundary));
+}
+
+function isLatLngPointInPolygon(point: LatLngPoint, polygon: LatLngPoint[]) {
+  let inside = false;
+  const x = point.lng;
+  const y = point.lat;
+
+  for (
+    let currentIndex = 0, previousIndex = polygon.length - 1;
+    currentIndex < polygon.length;
+    previousIndex = currentIndex, currentIndex += 1
+  ) {
+    const current = polygon[currentIndex];
+    const previous = polygon[previousIndex];
+
+    if (!current || !previous) {
+      continue;
+    }
+
+    const crossesLatitude = (current.lat > y) !== (previous.lat > y);
+
+    if (!crossesLatitude) {
+      continue;
+    }
+
+    const intersectionX =
+      ((previous.lng - current.lng) * (y - current.lat)) /
+        (previous.lat - current.lat || Number.EPSILON) +
+      current.lng;
+
+    if (x < intersectionX) {
+      inside = !inside;
+    }
+  }
+
+  return inside;
+}
+
+function latLngToLocalMeters(point: LatLngPoint, origin: LatLngPoint): MeterPoint {
+  const metersPerDegreeLat = 111_320;
+  const metersPerDegreeLng =
+    metersPerDegreeLat * Math.max(Math.cos((origin.lat * Math.PI) / 180), 0.01);
+
+  return {
+    x: (point.lng - origin.lng) * metersPerDegreeLng,
+    y: (point.lat - origin.lat) * metersPerDegreeLat,
+  };
+}
+
+function convexPolygonsOverlap(
+  left: MeterPoint[],
+  right: MeterPoint[],
+  epsilon: number
+) {
+  const axes = [...getPolygonAxes(left), ...getPolygonAxes(right)];
+
+  return axes.every((axis) => {
+    const leftProjection = projectPolygon(left, axis);
+    const rightProjection = projectPolygon(right, axis);
+
+    return !(
+      leftProjection.max <= rightProjection.min + epsilon ||
+      rightProjection.max <= leftProjection.min + epsilon
+    );
+  });
+}
+
+function getPolygonAxes(points: MeterPoint[]) {
+  const axes: MeterPoint[] = [];
+
+  for (let index = 0; index < points.length; index += 1) {
+    const current = points[index];
+    const next = points[(index + 1) % points.length];
+
+    if (!current || !next) {
+      continue;
+    }
+
+    const edgeX = next.x - current.x;
+    const edgeY = next.y - current.y;
+    const length = Math.hypot(edgeX, edgeY);
+
+    if (length <= Number.EPSILON) {
+      continue;
+    }
+
+    axes.push({
+      x: -edgeY / length,
+      y: edgeX / length,
+    });
+  }
+
+  return axes;
+}
+
+function projectPolygon(points: MeterPoint[], axis: MeterPoint) {
+  return points.reduce(
+    (projection, point) => {
+      const value = point.x * axis.x + point.y * axis.y;
+
+      return {
+        max: Math.max(projection.max, value),
+        min: Math.min(projection.min, value),
+      };
+    },
+    {
+      max: Number.NEGATIVE_INFINITY,
+      min: Number.POSITIVE_INFINITY,
+    }
+  );
 }
 
 async function createAnnualFluxMapOverlay({
@@ -1806,47 +2082,6 @@ function pixelCross(
   right: { x: number; y: number }
 ) {
   return (left.x - origin.x) * (right.y - origin.y) - (left.y - origin.y) * (right.x - origin.x);
-}
-
-function buildPanelPath(
-  googleApi: GoogleMapsApi,
-  params: {
-    centerLat: number;
-    centerLng: number;
-    orientation: "PORTRAIT" | "LANDSCAPE";
-    rotationDeg: number;
-    panelWidthMeters: number;
-    panelHeightMeters: number;
-  }
-) {
-  const shortSide = Math.min(params.panelWidthMeters, params.panelHeightMeters);
-  const longSide = Math.max(params.panelWidthMeters, params.panelHeightMeters);
-  const widthMeters = params.orientation === "LANDSCAPE" ? longSide : shortSide;
-  const heightMeters = params.orientation === "LANDSCAPE" ? shortSide : longSide;
-  const halfWidth = widthMeters / 2;
-  const halfHeight = heightMeters / 2;
-  const rotation = (params.rotationDeg * Math.PI) / 180;
-  const corners = [
-    { east: -halfWidth, north: -halfHeight },
-    { east: halfWidth, north: -halfHeight },
-    { east: halfWidth, north: halfHeight },
-    { east: -halfWidth, north: halfHeight },
-  ];
-
-  return corners.map((corner) => {
-    const rotatedEast =
-      corner.east * Math.cos(rotation) + corner.north * Math.sin(rotation);
-    const rotatedNorth =
-      -corner.east * Math.sin(rotation) + corner.north * Math.cos(rotation);
-    const latLng = offsetLatLngMeters({
-      lat: params.centerLat,
-      lng: params.centerLng,
-      eastMeters: rotatedEast,
-      northMeters: rotatedNorth,
-    });
-
-    return new googleApi.maps.LatLng(latLng.lat, latLng.lng);
-  });
 }
 
 function inferPanelRotationDeg(
