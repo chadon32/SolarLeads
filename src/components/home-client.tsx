@@ -250,7 +250,6 @@ export function HomeClient() {
                   address={selectedAddress}
                   location={selectedLocation}
                   onAnalysisChange={setRoofAnalysis}
-                  onPropertyResolved={setSelectedLocation}
                 />
               </div>
             </div>

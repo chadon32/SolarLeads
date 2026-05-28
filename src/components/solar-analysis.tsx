@@ -24,7 +24,6 @@ type SolarAnalysisProps = {
     lng?: number;
   } | null;
   onAnalysisChange?: (analysis: RoofAnalysis | null) => void;
-  onPropertyResolved?: (property: ResolvedProperty | null) => void;
 };
 
 type SatellitePreviewPayload = {
@@ -51,7 +50,6 @@ export function SolarAnalysis({
   address,
   location,
   onAnalysisChange,
-  onPropertyResolved,
 }: SolarAnalysisProps) {
   const [stage, setStage] = useState<
     "idle" | "resolving" | "fetching" | "analyzing" | "done" | "error"
@@ -76,7 +74,6 @@ export function SolarAnalysis({
         setNotice(null);
         setErrorMessage("");
         onAnalysisChange?.(null);
-        onPropertyResolved?.(null);
       });
 
       return () => window.cancelAnimationFrame(resetHandle);
@@ -104,7 +101,6 @@ export function SolarAnalysis({
         }
 
         setResolvedProperty(property);
-        onPropertyResolved?.(property);
         setStage("fetching");
 
         const imageResponse = await fetch(
@@ -187,7 +183,7 @@ export function SolarAnalysis({
       cancelled = true;
       controller.abort();
     };
-  }, [address, location, onAnalysisChange, onPropertyResolved]);
+  }, [address, location, onAnalysisChange]);
 
   const cards = useMemo(() => {
     if (!roofData) {
