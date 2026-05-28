@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { ArrowRight, MapPin } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 type Prediction = {
   description: string;
@@ -169,6 +170,7 @@ export function AddressSearch({
   const [activeIndex, setActiveIndex] = useState(-1);
   const [searching, setSearching] = useState(false);
   const [addressError, setAddressError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   const selectPrediction = useCallback(
     async (prediction: Prediction) => {
@@ -348,7 +350,7 @@ export function AddressSearch({
   }, [open, query, selectPrediction]);
 
   const helperText =
-    "Type your address below and pick the matching suggestion. Once the address is selected, the roof analysis will start automatically.";
+    "Pick the matching address to start the solar report workflow.";
 
   const exactPredictionMatch = predictions.find(
     (prediction) =>
@@ -362,81 +364,112 @@ export function AddressSearch({
       ? `address-option-${predictions[activeIndex].place_id}`
       : undefined;
 
+  const submitCurrentAddress = () => {
+    const prediction = exactPredictionMatch ?? predictions[activeIndex] ?? predictions[0];
+
+    if (prediction) {
+      void selectPrediction(prediction);
+      return;
+    }
+
+    setOpen(true);
+    inputRef.current?.focus();
+  };
+
   return (
     <div className="relative w-full">
-      <label className="mb-3 block text-xs font-semibold uppercase tracking-[0.34em] text-cyan-300">
-        Address input
+      <label className="mb-3 block text-xs font-semibold uppercase tracking-[0.34em] text-cyan-100/90">
+        Enter your Arizona address
       </label>
       <div className="relative">
-        <input
-          type="text"
-          value={query}
-          role="combobox"
-          aria-autocomplete="list"
-          aria-haspopup="listbox"
-          aria-controls={showPredictions ? "address-suggestions" : undefined}
-          aria-expanded={showPredictions}
-          aria-activedescendant={activePredictionId}
-          onChange={(event) => {
-            setQuery(event.target.value);
-            setOpen(true);
-            setActiveIndex(-1);
-            setAddressError(null);
-          }}
-          onFocus={() => setOpen(true)}
-          onKeyDown={(event) => {
-            if (!predictions.length) return;
-
-            if (event.key === "ArrowDown") {
-              event.preventDefault();
+        <div className="relative">
+          <MapPin
+            className="pointer-events-none absolute left-4 top-1/2 z-10 h-5 w-5 -translate-y-1/2 text-cyan-100/80"
+            aria-hidden="true"
+          />
+          <input
+            ref={inputRef}
+            type="text"
+            value={query}
+            role="combobox"
+            aria-autocomplete="list"
+            aria-haspopup="listbox"
+            aria-controls={showPredictions ? "address-suggestions" : undefined}
+            aria-expanded={showPredictions}
+            aria-activedescendant={activePredictionId}
+            onChange={(event) => {
+              setQuery(event.target.value);
               setOpen(true);
-              setActiveIndex((current) =>
-                Math.min(current + 1, predictions.length - 1)
-              );
-              return;
-            }
+              setActiveIndex(-1);
+              setAddressError(null);
+            }}
+            onFocus={() => setOpen(true)}
+            onKeyDown={(event) => {
+              if (!predictions.length) return;
 
-            if (event.key === "ArrowUp") {
-              event.preventDefault();
-              setOpen(true);
-              setActiveIndex((current) => Math.max(current - 1, 0));
-              return;
-            }
+              if (event.key === "ArrowDown") {
+                event.preventDefault();
+                setOpen(true);
+                setActiveIndex((current) =>
+                  Math.min(current + 1, predictions.length - 1)
+                );
+                return;
+              }
 
-            if (event.key === "Enter" && activeIndex >= 0) {
-              event.preventDefault();
-              void selectPrediction(predictions[activeIndex]);
-              return;
-            }
+              if (event.key === "ArrowUp") {
+                event.preventDefault();
+                setOpen(true);
+                setActiveIndex((current) => Math.max(current - 1, 0));
+                return;
+              }
 
-            if (
-              event.key === "Enter" &&
-              activeIndex < 0 &&
-              (exactPredictionMatch || predictions[0])
-            ) {
-              event.preventDefault();
-              void selectPrediction(exactPredictionMatch ?? predictions[0]);
-              return;
-            }
+              if (event.key === "Enter" && activeIndex >= 0) {
+                event.preventDefault();
+                void selectPrediction(predictions[activeIndex]);
+                return;
+              }
 
-            if (event.key === "Escape") {
-              event.preventDefault();
-              setOpen(false);
-            }
-          }}
-          onBlur={() => {
-            window.setTimeout(() => setOpen(false), 140);
-          }}
-          placeholder="Start typing your Arizona address..."
-          className={`w-full rounded-[1.35rem] border bg-slate-950/45 px-5 py-4 text-base text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/35 focus:bg-slate-950/65 ${
-            addressError ? "border-rose-400/45" : "border-white/10"
-          }`}
-        />
+              if (
+                event.key === "Enter" &&
+                activeIndex < 0 &&
+                (exactPredictionMatch || predictions[0])
+              ) {
+                event.preventDefault();
+                void selectPrediction(exactPredictionMatch ?? predictions[0]);
+                return;
+              }
 
-        <div className="mt-3 flex items-center justify-between gap-4 text-xs text-slate-400">
-          <span>{status}</span>
-          <span>{placesReady ? "Google Places" : "Local fallback"}</span>
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setOpen(false);
+              }
+            }}
+            onBlur={() => {
+              window.setTimeout(() => setOpen(false), 140);
+            }}
+            placeholder="Enter your Arizona address..."
+            className={`w-full rounded-full border bg-black/24 py-4 pl-12 pr-16 text-base text-white outline-none transition placeholder:text-white/45 focus:border-cyan-200/50 focus:bg-black/32 ${
+              addressError ? "border-rose-300/55" : "border-white/12"
+            }`}
+          />
+          <button
+            type="button"
+            aria-label="Use selected address"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={submitCurrentAddress}
+            className="absolute right-2 top-1/2 z-10 inline-flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white text-slate-950 shadow-[0_12px_30px_rgba(255,255,255,0.18)] transition hover:scale-105 hover:bg-cyan-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200"
+          >
+            <ArrowRight className="h-5 w-5" aria-hidden="true" />
+          </button>
         </div>
+
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-white/58">
+          <span>Search powered by Google Places.</span>
+          <span>{placesReady ? "Google Places active" : "Local fallback"}</span>
+        </div>
+        {status !== "Search powered by Google Places." ? (
+          <p className="mt-2 text-xs leading-5 text-white/45">{status}</p>
+        ) : null}
 
         {open && exactPredictionMatch ? (
           <p className="mt-2 text-xs text-cyan-200">
@@ -453,7 +486,7 @@ export function AddressSearch({
             id="address-suggestions"
             role="listbox"
             aria-label="Address suggestions"
-            className="absolute z-20 mt-3 max-h-72 w-full overflow-auto rounded-[1.3rem] border border-white/10 bg-slate-950/95 shadow-[0_24px_70px_rgba(2,8,20,0.55)] backdrop-blur-xl"
+            className="liquid-glass absolute z-20 mt-3 max-h-72 w-full overflow-auto rounded-[1.3rem] bg-black/72 shadow-[0_24px_70px_rgba(2,8,20,0.55)] backdrop-blur-xl"
           >
             {showLoadingShell
               ? Array.from({ length: 4 }).map((_, index) => (
@@ -479,7 +512,7 @@ export function AddressSearch({
                       role="option"
                       aria-selected={selected}
                       className={`flex w-full items-start gap-3 border-b border-white/6 px-4 py-3 text-left transition last:border-b-0 ${
-                        selected ? "bg-white/8" : "hover:bg-white/5"
+                        selected ? "bg-white/10" : "hover:bg-white/6"
                       }`}
                       onMouseDown={(event) => event.preventDefault()}
                       onClick={() => selectPrediction(prediction)}
@@ -501,13 +534,13 @@ export function AddressSearch({
           </div>
         )}
       </div>
-      <p className="mt-3 text-sm text-slate-400">
+      <p className="mt-3 text-sm text-white/58">
         Currently serving Arizona addresses only.
       </p>
       {addressError ? (
         <p className="mt-2 text-sm leading-6 text-rose-300">{addressError}</p>
       ) : null}
-      <p className="mt-3 text-sm leading-6 text-slate-400">{helperText}</p>
+      <p className="mt-3 text-sm leading-6 text-white/45">{helperText}</p>
     </div>
   );
 }
