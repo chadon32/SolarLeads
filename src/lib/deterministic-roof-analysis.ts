@@ -75,6 +75,7 @@ type BoundingBox = {
 
 const SAMPLE_SIZE = 160;
 const CACHE_TTL_MS = 1000 * 60 * 60 * 12;
+const DETERMINISTIC_ANALYSIS_VERSION = 5;
 const analysisCache = new Map<string, { createdAt: number; analysis: RoofAnalysis }>();
 
 export function analyzeRoofDeterministically(
@@ -82,7 +83,7 @@ export function analyzeRoofDeterministically(
 ): RoofAnalysis {
   const cacheKey = `${params.address}:${params.lat.toFixed(5)}:${params.lng.toFixed(
     5
-  )}`;
+  )}:v${DETERMINISTIC_ANALYSIS_VERSION}`;
   const cached = analysisCache.get(cacheKey);
 
   if (cached && Date.now() - cached.createdAt < CACHE_TTL_MS) {
@@ -830,41 +831,54 @@ function classifyPropertyType(
     );
   const multifamilyHint =
     /\b(apt|apartment|suite|ste|unit|#)\b/.test(normalizedAddress);
+  const commercialSignals = [
+    roofAreaM2 > 330 || widthM > 26 || depthM > 22 || areaShare > 0.28 || context.nearbyLargeRoofCount >= 2,
+    context.nearbyPavedRatio > 0.48 && context.nearbyVegetationRatio < 0.12,
+    context.nearbyRoofLikeRatio > 0.56 && context.nearbyRoofCount >= 4,
+    highTrafficAddress && context.nearbyPavedRatio > 0.34,
+    component.compactness < 0.28 && context.surroundingUniformity > 0.74,
+  ].filter(Boolean).length;
+  const residentialSignals = [
+    roofAreaM2 <= 260,
+    widthM <= 22,
+    depthM <= 18,
+    component.compactness >= 0.32,
+    context.nearbyVegetationRatio >= 0.1,
+  ].filter(Boolean).length;
+
+  if (widthM <= 20 && depthM <= 17 && roofAreaM2 <= 280 && !multifamilyHint) {
+    return "residential" as const;
+  }
 
   if (
-    roofAreaM2 > 360 ||
-    widthM > 27 ||
-    depthM > 24 ||
-    areaShare > 0.32 ||
-    context.nearbyLargeRoofCount >= 2
+    roofAreaM2 > 1200 ||
+    widthM > 40 ||
+    depthM > 32 ||
+    areaShare > 0.58 ||
+    context.nearbyLargeRoofCount >= 3
   ) {
     return "commercial" as const;
   }
 
   if (
-    (context.nearbyPavedRatio > 0.42 &&
-      context.nearbyVegetationRatio < 0.16 &&
-      context.surroundingUniformity > 0.62) ||
-    (highTrafficAddress &&
-      context.nearbyPavedRatio > 0.22 &&
-      context.nearbyVegetationRatio < 0.18) ||
-    (context.nearbyRoofLikeRatio > 0.44 && context.nearbyRoofCount >= 3) ||
-    (context.nearbyRoofCount >= 3 &&
-      context.nearbyPavedRatio > 0.3 &&
-      component.compactness < 0.58) ||
-    (roofAreaM2 > 210 && context.nearbyPavedRatio > 0.28)
+    commercialSignals >= 4 &&
+    (roofAreaM2 > 420 || widthM > 22 || depthM > 18 || areaShare > 0.24)
   ) {
     return "commercial" as const;
   }
 
   if (
-    roofAreaM2 < 48 ||
-    component.compactness < 0.22 ||
+    roofAreaM2 < 42 ||
+    component.compactness < 0.18 ||
     multifamilyHint ||
-    (context.nearbyPavedRatio > 0.52 && context.nearbyVegetationRatio < 0.1) ||
-    (context.nearbyRoofCount >= 4 && context.surroundingUniformity > 0.7)
+    (context.nearbyPavedRatio > 0.62 && context.nearbyVegetationRatio < 0.08) ||
+    (context.nearbyRoofCount >= 5 && context.surroundingUniformity > 0.82)
   ) {
     return "unknown" as const;
+  }
+
+  if (residentialSignals >= 3) {
+    return "residential" as const;
   }
 
   return "residential" as const;

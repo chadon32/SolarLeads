@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 type Prediction = {
   description: string;
@@ -74,6 +74,23 @@ function isArizonaAddress(address: string) {
 
 function normalizeAddress(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function shouldAutoSelectPrediction(query: string, prediction: Prediction) {
+  const normalizedQuery = normalizeAddress(query);
+  const normalizedDescription = normalizeAddress(prediction.description);
+  const normalizedMainText = normalizeAddress(
+    prediction.structured_formatting?.main_text ?? prediction.description
+  );
+
+  if (normalizedQuery.length < 10) {
+    return false;
+  }
+
+  return (
+    normalizedDescription.includes(normalizedQuery) ||
+    normalizedQuery.includes(normalizedMainText)
+  );
 }
 
 function isClearlyNonResidentialPlace(payload: PlaceDetailsPayload) {
@@ -153,6 +170,76 @@ export function AddressSearch({
   const [searching, setSearching] = useState(false);
   const [addressError, setAddressError] = useState<string | null>(null);
 
+  const selectPrediction = useCallback(
+    async (prediction: Prediction) => {
+      const address = prediction.description;
+
+      setQuery(address);
+      setPredictions([]);
+      setActiveIndex(-1);
+      setOpen(false);
+
+      if (
+        prediction.place_id.startsWith("demo-") ||
+        prediction.place_id.startsWith("manual-")
+      ) {
+        if (!isArizonaAddress(address)) {
+          setAddressError(
+            "We currently only serve Arizona homes. Please enter an AZ address."
+          );
+          onSelect({ address: "" });
+          setStatus("Arizona address required.");
+          return;
+        }
+
+        setStatus(`Selected: ${address}`);
+        setAddressError(null);
+        onSelect({ address });
+        return;
+      }
+
+      try {
+        const response = await fetch(
+          `/api/places/details?placeId=${encodeURIComponent(prediction.place_id)}`
+        );
+        const payload: PlaceDetailsPayload = await response.json().catch(() => ({}));
+        const formattedAddress =
+          response.ok && payload.formattedAddress ? payload.formattedAddress : address;
+
+        if (!isArizonaAddress(formattedAddress)) {
+          setAddressError(
+            "We currently only serve Arizona homes. Please enter an AZ address."
+          );
+          setStatus("Arizona address required.");
+          onSelect({ address: "" });
+          return;
+        }
+
+        if (isClearlyNonResidentialPlace(payload)) {
+          setAddressError(
+            "That address looks like a business or non-residential property. Please choose a detached home address."
+          );
+          setStatus("Residential home required.");
+          onSelect({ address: "" });
+          return;
+        }
+
+        setQuery(formattedAddress);
+        onSelect({
+          address: formattedAddress,
+          lat: payload.lat,
+          lng: payload.lng,
+        });
+        setAddressError(null);
+        setStatus(`Selected: ${formattedAddress}`);
+      } catch {
+        setAddressError(lookupUnavailableMessage);
+        onSelect({ address: "" });
+      }
+    },
+    [onSelect]
+  );
+
   useEffect(() => {
     const handle = window.requestAnimationFrame(() => {
       setQuery(selectedAddress ?? "");
@@ -210,6 +297,21 @@ export function AddressSearch({
         }
 
         const nextPredictions = payload.predictions ?? [];
+
+        if (
+          nextPredictions.length === 1 &&
+          shouldAutoSelectPrediction(trimmed, nextPredictions[0])
+        ) {
+          setPredictions(nextPredictions);
+          setActiveIndex(0);
+          setPlacesReady(true);
+          setStatus("Exact property match found. Starting roof scan...");
+          setAddressError(null);
+          setSearching(false);
+          void selectPrediction(nextPredictions[0]);
+          return;
+        }
+
         setPredictions(nextPredictions);
         setActiveIndex(nextPredictions.length ? 0 : -1);
         setPlacesReady(true);
@@ -243,7 +345,7 @@ export function AddressSearch({
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [open, query]);
+  }, [open, query, selectPrediction]);
 
   const helperText =
     "Type your address below and pick the matching suggestion. Once the address is selected, the roof analysis will start automatically.";
@@ -252,74 +354,6 @@ export function AddressSearch({
     (prediction) =>
       normalizeAddress(prediction.description) === normalizeAddress(query.trim())
   );
-
-  const selectPrediction = async (prediction: Prediction) => {
-    const address = prediction.description;
-
-    setQuery(address);
-    setPredictions([]);
-    setActiveIndex(-1);
-    setOpen(false);
-
-    if (
-      prediction.place_id.startsWith("demo-") ||
-      prediction.place_id.startsWith("manual-")
-    ) {
-      if (!isArizonaAddress(address)) {
-        setAddressError(
-          "We currently only serve Arizona homes. Please enter an AZ address."
-        );
-        onSelect({ address: "" });
-        setStatus("Arizona address required.");
-        return;
-      }
-
-      setStatus(`Selected: ${address}`);
-      setAddressError(null);
-      onSelect({ address });
-      return;
-    }
-
-    try {
-      const response = await fetch(
-        `/api/places/details?placeId=${encodeURIComponent(prediction.place_id)}`
-      );
-      const payload: PlaceDetailsPayload =
-        await response.json().catch(() => ({}));
-      const formattedAddress =
-        response.ok && payload.formattedAddress ? payload.formattedAddress : address;
-
-      if (!isArizonaAddress(formattedAddress)) {
-        setAddressError(
-          "We currently only serve Arizona homes. Please enter an AZ address."
-        );
-        setStatus("Arizona address required.");
-        onSelect({ address: "" });
-        return;
-      }
-
-      if (isClearlyNonResidentialPlace(payload)) {
-        setAddressError(
-          "That address looks like a business or non-residential property. Please choose a detached home address."
-        );
-        setStatus("Residential home required.");
-        onSelect({ address: "" });
-        return;
-      }
-
-      setQuery(formattedAddress);
-      onSelect({
-        address: formattedAddress,
-        lat: payload.lat,
-        lng: payload.lng,
-      });
-      setAddressError(null);
-      setStatus(`Selected: ${formattedAddress}`);
-    } catch {
-      setAddressError(lookupUnavailableMessage);
-      onSelect({ address: "" });
-    }
-  };
 
   const showPredictions = open && predictions.length > 0;
   const showLoadingShell = open && searching && predictions.length === 0;
