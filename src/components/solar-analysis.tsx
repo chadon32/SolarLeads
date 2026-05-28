@@ -6,6 +6,7 @@ import { ButtonLink } from "@/components/ui/button";
 import {
   getRoofAreaM2,
   getUsableAreaM2,
+  type RoofGeoBounds,
   type RoofAnalysis,
 } from "@/lib/roof-analysis";
 
@@ -34,6 +35,7 @@ type SatellitePreviewPayload = {
 type SatelliteImagePayload = {
   base64?: string;
   mimeType?: string;
+  bounds?: RoofGeoBounds | null;
   message?: string;
 };
 
@@ -144,6 +146,7 @@ export function SolarAnalysis({
   const [satelliteImage, setSatelliteImage] = useState<string | null>(null);
   const [annualFluxUrl, setAnnualFluxUrl] = useState<string | null>(null);
   const [solarMaskUrl, setSolarMaskUrl] = useState<string | null>(null);
+  const [imageBounds, setImageBounds] = useState<RoofGeoBounds | null>(null);
   const [roofData, setRoofData] = useState<RoofAnalysis | null>(null);
   const [resolvedProperty, setResolvedProperty] =
     useState<ResolvedProperty | null>(null);
@@ -161,6 +164,7 @@ export function SolarAnalysis({
         setSatelliteImage(null);
         setAnnualFluxUrl(null);
         setSolarMaskUrl(null);
+        setImageBounds(null);
         setRoofData(null);
         setSelectedPanelCount(0);
         setResolvedProperty(null);
@@ -227,6 +231,7 @@ export function SolarAnalysis({
 
         const dataUri = `data:${imagePayload.mimeType};base64,${imagePayload.base64}`;
         setSatelliteImage(dataUri);
+        setImageBounds(imagePayload.bounds ?? null);
         if (dataLayersResponse?.ok) {
           const dataLayersPayload: SolarDataLayersPayload = await dataLayersResponse
             .json()
@@ -327,24 +332,41 @@ export function SolarAnalysis({
       return null;
     }
 
-    const footprint =
-      roofData.roofOutline.length >= 3 ? roofData.roofOutline : [];
-    const usable =
-      roofData.usableOutline.length >= 3 ? roofData.usableOutline : footprint;
-    const panels = projectSolarPanels(roofData);
-    const obstructions = roofData.obstructionOutlines;
+    const footprint = projectPolygonToImage(
+      roofData.roofOutline,
+      roofData.roofBounds,
+      imageBounds
+    );
+    const usable = projectPolygonToImage(
+      roofData.usableOutline,
+      roofData.roofBounds,
+      imageBounds
+    );
+    const panels = projectSolarPanels(roofData, imageBounds);
+    const obstructions = roofData.obstructionOutlines.map((outline) =>
+      projectPolygonToImage(outline, roofData.roofBounds, imageBounds)
+    );
+    const segments = roofData.roofSegments.map((segment) => ({
+      ...segment,
+      outline: projectPolygonToImage(
+        segment.outline,
+        roofData.roofBounds,
+        imageBounds
+      ),
+    }));
     const bounds = getBounds(footprint);
     const measurements = buildMeasurementLines(footprint, bounds, roofData);
 
     return {
       footprint,
       usable,
+      segments,
       panels,
       obstructions,
       bounds,
       measurements,
     };
-  }, [roofData]);
+  }, [roofData, imageBounds]);
 
   const selectedPanels = useMemo(() => {
     if (!roofData) {
@@ -543,17 +565,24 @@ export function SolarAnalysis({
                     annualFluxUrl={annualFluxUrl}
                     solarMaskUrl={solarMaskUrl}
                     address={resolvedProperty?.address ?? address}
-                    roofData={roofData}
                     overlay={overlay}
                     viewMode={viewMode}
                     selectedPanelCount={metrics.selectedPanelCount}
                   />
-                  <div className="absolute left-4 top-4 z-10 w-[24rem] max-w-[calc(100%-2rem)]">
+                  <div className="absolute left-4 top-4 z-10 hidden w-[22rem] max-w-[calc(100%-2rem)] lg:block">
                     <SunroofSummaryCard
                       address={resolvedProperty?.address ?? address}
                       metrics={metrics}
+                      confidence={roofData.rooftopConfidenceScore}
                     />
                   </div>
+                </div>
+                <div className="mt-4 lg:hidden">
+                  <SunroofSummaryCard
+                    address={resolvedProperty?.address ?? address}
+                    metrics={metrics}
+                    confidence={roofData.rooftopConfidenceScore}
+                  />
                 </div>
               </div>
             </article>
@@ -564,10 +593,10 @@ export function SolarAnalysis({
                   Analysis status
                 </p>
                 <h3 className="mt-3 text-2xl font-semibold tracking-tight text-white">
-                  Rooftop model confirmed
+                  Solar roof model available
                 </h3>
                 <p className="mt-3 text-sm leading-7 text-slate-300">
-                  Solar geometry, usable roof surfaces, and financial outputs are tied to the live Google Solar building model for this property.
+                  Roof geometry, usable solar area, and financial outputs are tied to the live Google Solar building record returned for this property.
                 </p>
                 <div className="mt-4 flex flex-wrap gap-2">
                   <Pill label={`${roofData.confidence} confidence`} tone="cyan" />
@@ -581,7 +610,7 @@ export function SolarAnalysis({
 
               <PanelSelectionSlider
                 value={metrics.selectedPanelCount}
-                max={Math.max(roofData.panelCount, roofData.solarPanels.length)}
+                max={Math.max(1, roofData.panelCount)}
                 onChange={setSelectedPanelCount}
                 canRenderPanels={roofData.solarPanels.length > 0}
               />
@@ -651,7 +680,7 @@ function ViewportHeader({
             Rooftop analysis
           </p>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
-            Building insights, irradiance, and panel geometry are aligned to the detected roof footprint and live Solar API roof segments.
+            Roof measurements, annual flux, and panel geometry are projected from the current Solar API building model onto the rooftop image.
           </p>
         </div>
         <div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-slate-300">
@@ -684,7 +713,6 @@ function ViewportCanvas({
   annualFluxUrl,
   solarMaskUrl,
   address,
-  roofData,
   overlay,
   viewMode,
   selectedPanelCount,
@@ -693,10 +721,10 @@ function ViewportCanvas({
   annualFluxUrl: string | null;
   solarMaskUrl: string | null;
   address: string;
-  roofData: RoofAnalysis;
   overlay: {
     footprint: Point[];
     usable: Point[];
+    segments: RoofAnalysis["roofSegments"];
     panels: PanelRect[];
     obstructions: Point[][];
     bounds: Bounds;
@@ -709,9 +737,9 @@ function ViewportCanvas({
   const usablePoints = pointsToString(overlay.usable);
   const showPanels = viewMode === "panels";
   const showObstructions = viewMode === "panels" || viewMode === "irradiance";
-  const showMeasurements = viewMode !== "overview";
+  const showMeasurements = viewMode === "overview";
   const showSegmentLabels = viewMode !== "overview";
-  const showSegmentFills = viewMode !== "overview";
+  const showSegmentFills = viewMode === "panels";
 
   return (
     <div className="relative min-h-[36rem] overflow-hidden bg-slate-950 lg:min-h-[43rem]">
@@ -776,7 +804,7 @@ function ViewportCanvas({
         />
 
         <g clipPath="url(#usable-roof-zone)">
-          {roofData.roofSegments
+          {overlay.segments
             .filter((segment) => segment.outline.length >= 3)
             .map((segment) => (
               <g key={`segment-${segment.label}`}>
@@ -1026,7 +1054,8 @@ function AnnualFluxCanvasOverlay({
         clipPath,
         WebkitClipPath: clipPath,
         mixBlendMode: "screen",
-        filter: "saturate(1.45) brightness(1.1)",
+        filter: "saturate(1.25) brightness(1.04)",
+        opacity: viewMode === "overview" ? 0.78 : 0.64,
       }}
     />
   );
@@ -1053,7 +1082,7 @@ function PanelSelectionSlider({
             Panel selection
           </p>
           <p className="mt-2 text-sm leading-6 text-slate-300">
-            Adjust the active module count against the Solar API roof model.
+            Adjust the active module count against the current roof model and economics.
           </p>
         </div>
         <div className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs font-semibold text-white">
@@ -1084,26 +1113,30 @@ function PanelSelectionSlider({
 function SunroofSummaryCard({
   address,
   metrics,
+  confidence,
 }: {
   address: string;
   metrics: AnalysisMetrics;
+  confidence: number;
 }) {
   const usableAreaSqFt = metrics.usableArea * 10.7639;
   const twentyYearSavings = metrics.selectedAnnualSavingsUSD * 20;
 
   return (
-    <div className="overflow-hidden rounded-[1.15rem] border border-black/10 bg-white/95 text-slate-900 shadow-[0_18px_40px_rgba(15,23,42,0.22)] backdrop-blur">
-      <div className="flex items-center gap-2 border-b border-slate-200 px-4 py-3">
-        <div className="min-w-0 flex-1 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
-          <span className="truncate">{address}</span>
-        </div>
-        <span className="text-sm font-semibold text-slate-700">GO</span>
+    <div className="overflow-hidden rounded-[1.15rem] border border-black/10 bg-white/95 text-slate-900 shadow-[0_18px_40px_rgba(15,23,42,0.18)] backdrop-blur">
+      <div className="border-b border-slate-200 px-4 py-3">
+        <p className="text-[0.64rem] font-semibold uppercase tracking-[0.28em] text-slate-500">
+          Property analysis
+        </p>
+        <p className="mt-2 line-clamp-2 text-sm leading-5 text-slate-700">{address}</p>
       </div>
 
       <div className="border-b border-slate-200 px-4 py-3 text-sm text-slate-700">
-        <div className="flex items-center gap-2">
-          <span className="text-emerald-600">✓</span>
-          <span>Analysis complete. Your roof has:</span>
+        <div className="flex items-center justify-between gap-3">
+          <span>Solar suitability summary</span>
+          <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.18em] text-emerald-700">
+            {confidence}/100
+          </span>
         </div>
       </div>
 
@@ -1125,7 +1158,7 @@ function SunroofSummaryCard({
           ${twentyYearSavings.toLocaleString()}
         </p>
         <p className="text-sm text-slate-600">
-          Estimated net savings for your roof over 20 years
+          Projected 20-year savings using the current panel selection
         </p>
       </div>
     </div>
@@ -1489,6 +1522,10 @@ function buildMeasurementLines(
   bounds: Bounds,
   roofData: RoofAnalysis
 ): MeasurementLine[] {
+  if (!outline.length) {
+    return [];
+  }
+
   const topY = Math.max(8, bounds.minY - 5.4);
   const rightX = Math.min(94, bounds.maxX + 4.8);
   const topPoints = [...outline].sort((left, right) => left.y - right.y).slice(0, 2);
@@ -1524,20 +1561,17 @@ function buildMeasurementLines(
   ];
 }
 
-function projectSolarPanels(analysis: RoofAnalysis): PanelRect[] {
-  const roofBounds = analysis.roofBounds;
-
-  if (!roofBounds || analysis.solarPanels.length === 0) {
+function projectSolarPanels(
+  analysis: RoofAnalysis,
+  imageBounds: RoofGeoBounds | null
+): PanelRect[] {
+  if (!imageBounds || analysis.solarPanels.length === 0) {
     return [];
   }
-
-  const latSpan = Math.max(
-    roofBounds.northeast.lat - roofBounds.southwest.lat,
-    0.000001
-  );
-  const lngSpan = Math.max(
-    roofBounds.northeast.lng - roofBounds.southwest.lng,
-    0.000001
+  const projectedRoofOutline = projectPolygonToImage(
+    analysis.roofOutline,
+    analysis.roofBounds,
+    imageBounds
   );
   const panelWidthPct = Math.max(
     0.9,
@@ -1550,34 +1584,45 @@ function projectSolarPanels(analysis: RoofAnalysis): PanelRect[] {
 
   return analysis.solarPanels
     .map((panel, index) => {
-      const x =
-        ((panel.center.lng - roofBounds.southwest.lng) / lngSpan) * 100;
-      const y =
-        ((roofBounds.northeast.lat - panel.center.lat) / latSpan) * 100;
+      const centerPoint = latLngToViewportPoint(
+        panel.center.lat,
+        panel.center.lng,
+        imageBounds
+      );
+      if (!centerPoint) {
+        return null;
+      }
       const segment = analysis.roofSegments[panel.segmentIndex] ?? analysis.roofSegments[0];
       const rotation = segment
         ? normalizePanelRotation(segment.azimuthDeg)
         : normalizePanelRotation(analysis.primaryRoofAzimuth);
+      const projectedSegmentOutline =
+        segment?.outline?.length
+          ? projectPolygonToImage(segment.outline, analysis.roofBounds, imageBounds)
+          : projectPolygonToImage(
+              analysis.usableOutline,
+              analysis.roofBounds,
+              imageBounds
+            );
       const width =
         panel.orientation === "LANDSCAPE" ? panelHeightPct : panelWidthPct;
       const height =
         panel.orientation === "LANDSCAPE" ? panelWidthPct : panelHeightPct;
       const panelRect: PanelRect = {
         id: `panel-${index}`,
-        x: x - width / 2,
-        y: y - height / 2,
+        x: centerPoint.x - width / 2,
+        y: centerPoint.y - height / 2,
         width,
         height,
         rotation,
       };
 
-      const segmentOutline = segment?.outline?.length ? segment.outline : analysis.usableOutline;
-
       if (
-        !Number.isFinite(x) ||
-        !Number.isFinite(y) ||
-        !pointInPolygon({ x, y }, analysis.roofOutline) ||
-        (segmentOutline.length >= 3 && !panelFitsOutline(panelRect, segmentOutline))
+        !Number.isFinite(centerPoint.x) ||
+        !Number.isFinite(centerPoint.y) ||
+        !pointInPolygon(centerPoint, projectedRoofOutline) ||
+        (projectedSegmentOutline.length >= 3 &&
+          !panelFitsOutline(panelRect, projectedSegmentOutline))
       ) {
         return null;
       }
@@ -1589,6 +1634,54 @@ function projectSolarPanels(analysis: RoofAnalysis): PanelRect[] {
 
 function pointsToString(points: Point[]) {
   return points.map((point) => `${point.x},${point.y}`).join(" ");
+}
+
+function projectPolygonToImage(
+  polygon: Point[],
+  roofBounds: RoofGeoBounds | null,
+  imageBounds: RoofGeoBounds | null
+) {
+  if (!polygon.length || !roofBounds || !imageBounds) {
+    return polygon;
+  }
+
+  return polygon
+    .map((point) => {
+      const geo = viewportPointToLatLng(point, roofBounds);
+      return latLngToViewportPoint(geo.lat, geo.lng, imageBounds);
+    })
+    .filter((point): point is Point => Boolean(point));
+}
+
+function viewportPointToLatLng(point: Point, bounds: RoofGeoBounds) {
+  const lat =
+    bounds.northeast.lat -
+    ((point.y / 100) * (bounds.northeast.lat - bounds.southwest.lat));
+  const lng =
+    bounds.southwest.lng +
+    ((point.x / 100) * (bounds.northeast.lng - bounds.southwest.lng));
+
+  return { lat, lng };
+}
+
+function latLngToViewportPoint(
+  lat: number,
+  lng: number,
+  bounds: RoofGeoBounds
+): Point | null {
+  const latSpan = Math.max(bounds.northeast.lat - bounds.southwest.lat, 0.000001);
+  const lngSpan = Math.max(bounds.northeast.lng - bounds.southwest.lng, 0.000001);
+  const x = ((lng - bounds.southwest.lng) / lngSpan) * 100;
+  const y = ((bounds.northeast.lat - lat) / latSpan) * 100;
+
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return null;
+  }
+
+  return {
+    x,
+    y,
+  };
 }
 
 function polygonToCssClipPath(points: Point[]) {

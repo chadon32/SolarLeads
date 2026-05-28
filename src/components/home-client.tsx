@@ -62,7 +62,20 @@ export function HomeClient() {
     const onScroll = () => {
       const scrollY = window.scrollY;
       const contactTop = document.getElementById("contact")?.offsetTop ?? Number.POSITIVE_INFINITY;
-      setShowStickyCta(hasValidAnalysis && scrollY > 300 && scrollY < contactTop - 200);
+      const workspace = document.getElementById("solar-workspace");
+      const workspaceTop = workspace?.offsetTop ?? Number.POSITIVE_INFINITY;
+      const workspaceBottom =
+        workspaceTop + (workspace?.offsetHeight ?? 0);
+      const workspaceVisible =
+        scrollY + window.innerHeight > workspaceTop + 120 &&
+        scrollY < workspaceBottom - 120;
+
+      setShowStickyCta(
+        hasValidAnalysis &&
+          scrollY > 300 &&
+          scrollY < contactTop - 200 &&
+          !workspaceVisible
+      );
     };
 
     onScroll();
@@ -75,10 +88,10 @@ export function HomeClient() {
   const highlights = useMemo(
     () => [
       {
-        value: roofAnalysis ? `${roofAnalysis.panelCount}` : "18-28",
+        value: roofAnalysis ? `${roofAnalysis.annualSunlightHours.toLocaleString()} hrs` : "1,700-2,100 hrs",
         label: roofAnalysis
-          ? "Panels estimated for this roof"
-          : "Panels estimated for a typical Arizona roof",
+          ? "Annual usable sunlight estimated for the detected roof"
+          : "Typical annual rooftop sunlight for Arizona detached homes",
       },
       {
         value: roofAnalysis
@@ -90,11 +103,11 @@ export function HomeClient() {
       },
       {
         value: roofAnalysis
-          ? `${roofAnalysis.usablePctRoof}%`
-          : "68-84%",
+          ? `${roofAnalysis.rooftopConfidenceScore}/100`
+          : "High-confidence",
         label: roofAnalysis
-          ? "Usable roof area identified in the image analysis"
-          : "Typical usable roof area for Arizona homes",
+          ? "Rooftop confidence score from the current property analysis"
+          : "Expected rooftop suitability for detached Arizona homes",
       },
     ],
     [roofAnalysis]
@@ -248,7 +261,10 @@ export function HomeClient() {
             copy="Satellite imagery, roof segmentation, panel placement, and financial estimates are organized in one clear analysis surface."
           />
 
-          <section className="analysis-section relative mx-auto w-full max-w-7xl px-6 pb-10 md:px-10 lg:px-12">
+          <section
+            id="solar-workspace"
+            className="analysis-section relative mx-auto w-full max-w-7xl px-6 pb-10 md:px-10 lg:px-12"
+          >
             <div className="relative overflow-hidden rounded-[2rem] border border-white/10 bg-white/[0.04] p-3 shadow-[0_14px_44px_rgba(2,8,20,0.34)] backdrop-blur-xl">
               <SolarAnalysis
                 key={selectedAddress}

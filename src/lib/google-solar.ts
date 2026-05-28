@@ -332,6 +332,11 @@ export function buildSolarRoofAnalysis(params: {
     Number(solarPotential.panelHeightMeters ?? 1.7),
     1
   );
+  const panelFootprintM2 = Math.max(panelWidthMeters * panelHeightMeters, 0.5);
+  const usableRoofAreaM2 = Math.max(
+    Math.min(solarPotential.maxArrayAreaMeters2 ?? roofAreaM2, roofAreaM2),
+    0
+  );
   const solarPanelConfigs = [...(solarPotential.solarPanelConfigs ?? [])].sort(
     (left, right) =>
       (right.yearlyEnergyDcKwh ?? 0) -
@@ -339,20 +344,38 @@ export function buildSolarRoofAnalysis(params: {
       (right.panelsCount ?? 0) - (left.panelsCount ?? 0)
   );
   const bestConfig = solarPanelConfigs[0];
-  const recommendedPanelCount = Math.max(
+  const rawRecommendedPanelCount = Math.max(
     0,
     Math.round(bestConfig?.panelsCount ?? maxArrayPanelsCount)
   );
-  const annualKwh =
-    Math.round(bestConfig?.yearlyEnergyDcKwh ?? recommendedPanelCount * panelCapacityWatts * 4.8);
-  const annualSavingsUSD = Math.round(annualKwh * AZ_RATE_PER_KWH);
+  const physicalPanelLimit = Math.max(
+    0,
+    Math.floor(
+      usableRoofAreaM2 /
+        Math.max(panelFootprintM2 * 1.08, 0.5)
+    )
+  );
+  const practicalResidentialPanelLimit = Math.max(
+    0,
+    Math.floor((usableRoofAreaM2 * 0.46) / panelFootprintM2)
+  );
+  const recommendedPanelCount = Math.max(
+    0,
+    Math.min(
+      rawRecommendedPanelCount || maxArrayPanelsCount,
+      physicalPanelLimit || rawRecommendedPanelCount || maxArrayPanelsCount,
+      practicalResidentialPanelLimit ||
+        physicalPanelLimit ||
+        rawRecommendedPanelCount ||
+        maxArrayPanelsCount
+    )
+  );
   const roofSegments = [...(solarPotential.roofSegmentStats ?? [])].sort(
     (left, right) =>
       (right.stats?.areaMeters2 ?? right.stats?.groundAreaMeters2 ?? 0) -
       (left.stats?.areaMeters2 ?? left.stats?.groundAreaMeters2 ?? 0)
   );
   const roofBox = params.insights.boundingBox;
-  const roofBounds = toRoofGeoBounds(roofBox);
   const solarPanels = (solarPotential.solarPanels ?? []).map((panel) =>
     normalizeSolarPanel(panel)
   );
@@ -366,7 +389,17 @@ export function buildSolarRoofAnalysis(params: {
     });
   }
 
-  const roofOutline = buildDetectedRoofOutline(roofSegments, roofBox);
+  const renderBounds = buildRenderableRoofBounds(roofSegments, solarPanels, roofBox);
+  const roofBounds = toRoofGeoBounds(renderBounds);
+  const usableOutlineFromPanels = buildUsableOutlineFromPanels(
+    solarPanels,
+    renderBounds
+  );
+  const roofOutline = buildDetectedRoofOutline(
+    roofSegments,
+    renderBounds,
+    usableOutlineFromPanels
+  );
   const usablePctRoof = clamp(
     Math.round(
       roofAreaM2 > 0 ? (Math.min(solarPotential.maxArrayAreaMeters2 ?? 0, roofAreaM2) / roofAreaM2) * 100 : 0
@@ -374,10 +407,10 @@ export function buildSolarRoofAnalysis(params: {
     0,
     100
   );
-  const usableOutline = insetPolygon(
-    roofOutline,
-    10 - Math.min(usablePctRoof / 25, 3.5)
-  );
+  const usableOutline =
+    usableOutlineFromPanels.length >= 3
+      ? insetPolygon(usableOutlineFromPanels, 2.5)
+      : insetPolygon(roofOutline, 10 - Math.min(usablePctRoof / 25, 3.5));
   const roofShape = deriveRoofShape(roofSegments);
   const primarySegment = roofSegments[0];
   const primaryRoofAzimuth = clamp(
@@ -386,8 +419,8 @@ export function buildSolarRoofAnalysis(params: {
     359
   );
   const pitchDeg = roundTo(primarySegment?.pitchDegrees ?? 0, 1);
-  const rawWidthM = estimateLongitudeSpanMeters(roofBox);
-  const rawDepthM = estimateLatitudeSpanMeters(roofBox);
+  const rawWidthM = estimateLongitudeSpanMeters(renderBounds);
+  const rawDepthM = estimateLatitudeSpanMeters(renderBounds);
   const inferredFootprint = inferRoofDimensions({
     roofAreaM2,
     rawWidthM,
@@ -396,14 +429,29 @@ export function buildSolarRoofAnalysis(params: {
   const widthM = inferredFootprint.widthM;
   const depthM = inferredFootprint.depthM;
   const shadingRisk = classifyShadingRisk(solarPotential, roofSegments);
-  const obstructionOutlines = buildObstructionOutlines(roofSegments, roofBox, shadingRisk);
+  const obstructionOutlines = buildObstructionOutlines(roofSegments, renderBounds, shadingRisk);
   const panelCount = Math.min(
     recommendedPanelCount || maxArrayPanelsCount,
     maxArrayPanelsCount || recommendedPanelCount
   );
+  const trimmedSolarPanels =
+    solarPanels.length > panelCount ? solarPanels.slice(0, panelCount) : solarPanels;
+  const energyPerPanelKwh =
+    rawRecommendedPanelCount > 0 && Number(bestConfig?.yearlyEnergyDcKwh ?? 0) > 0
+      ? Number(bestConfig?.yearlyEnergyDcKwh ?? 0) / rawRecommendedPanelCount
+      : panelCapacityWatts * 4.8;
+  const annualKwh = Math.round(
+    trimmedSolarPanels.length > 0
+      ? trimmedSolarPanels.reduce(
+          (sum, panel) => sum + Math.max(panel.yearlyEnergyDcKwh, 0),
+          0
+        )
+      : panelCount * energyPerPanelKwh
+  );
+  const annualSavingsUSD = Math.round(annualKwh * AZ_RATE_PER_KWH);
   const roofSegmentsOut = buildRoofSegmentOutlines(
     roofSegments,
-    roofBox,
+    renderBounds,
     bestConfig?.roofSegmentSummaries ?? [],
     panelCount,
     pitchDeg,
@@ -481,7 +529,7 @@ export function buildSolarRoofAnalysis(params: {
       obstructionOutlines,
       roofBounds,
       roofSegments: roofSegmentsOut,
-      solarPanels,
+      solarPanels: trimmedSolarPanels,
       confidence,
       confidenceNote: buildConfidenceNote(
         params.insights.imageryQuality ?? "UNKNOWN",
@@ -648,8 +696,13 @@ function buildRoofSegmentOutlines(
 
 function buildDetectedRoofOutline(
   segments: RoofSegmentStats[],
-  roofBox: LatLngBox
+  roofBox: LatLngBox,
+  usableOutline: RoofPoint[] = []
 ): RoofPoint[] {
+  if (usableOutline.length >= 3) {
+    return insetPolygon(usableOutline, -7.5);
+  }
+
   const segmentPoints = segments
     .flatMap((segment) =>
       segment.boundingBox ? boxToOutline(segment.boundingBox, roofBox) : []
@@ -661,6 +714,117 @@ function buildDetectedRoofOutline(
   }
 
   return boxToOutline(roofBox);
+}
+
+function buildUsableOutlineFromPanels(
+  panels: SolarPanelPlacement[],
+  roofBox: LatLngBox
+) {
+  const points = panels
+    .map((panel) =>
+      toNormalizedPoint(
+        {
+          latitude: panel.center.lat,
+          longitude: panel.center.lng,
+        },
+        roofBox
+      )
+    )
+    .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
+
+  if (points.length < 4) {
+    return [];
+  }
+
+  return convexHull(points);
+}
+
+function buildRenderableRoofBounds(
+  segments: RoofSegmentStats[],
+  panels: SolarPanelPlacement[],
+  fallbackBox?: LatLngBox
+): LatLngBox {
+  const panelBounds = getSolarPanelBounds(panels);
+  const segmentBounds = getSegmentBounds(segments);
+
+  if (panelBounds && segmentBounds) {
+    return expandLatLngBox(mergeLatLngBoxes(panelBounds, segmentBounds), 0.18);
+  }
+
+  if (panelBounds) {
+    return expandLatLngBox(panelBounds, 0.22);
+  }
+
+  if (segmentBounds) {
+    return expandLatLngBox(segmentBounds, 0.12);
+  }
+
+  return fallbackBox ?? {};
+}
+
+function getSolarPanelBounds(panels: SolarPanelPlacement[]): LatLngBox | null {
+  const lats = panels.map((panel) => panel.center.lat).filter(Number.isFinite);
+  const lngs = panels.map((panel) => panel.center.lng).filter(Number.isFinite);
+
+  if (!lats.length || !lngs.length) {
+    return null;
+  }
+
+  return {
+    sw: {
+      latitude: Math.min(...lats),
+      longitude: Math.min(...lngs),
+    },
+    ne: {
+      latitude: Math.max(...lats),
+      longitude: Math.max(...lngs),
+    },
+  };
+}
+
+function getSegmentBounds(segments: RoofSegmentStats[]): LatLngBox | null {
+  const boxes = segments.map((segment) => segment.boundingBox).filter(Boolean) as LatLngBox[];
+
+  if (!boxes.length) {
+    return null;
+  }
+
+  return boxes.reduce((merged, box) => mergeLatLngBoxes(merged, box));
+}
+
+function mergeLatLngBoxes(left: LatLngBox, right: LatLngBox): LatLngBox {
+  return {
+    sw: {
+      latitude: Math.min(left.sw?.latitude ?? Infinity, right.sw?.latitude ?? Infinity),
+      longitude: Math.min(left.sw?.longitude ?? Infinity, right.sw?.longitude ?? Infinity),
+    },
+    ne: {
+      latitude: Math.max(left.ne?.latitude ?? -Infinity, right.ne?.latitude ?? -Infinity),
+      longitude: Math.max(left.ne?.longitude ?? -Infinity, right.ne?.longitude ?? -Infinity),
+    },
+  };
+}
+
+function expandLatLngBox(box: LatLngBox, ratio: number): LatLngBox {
+  if (!box.sw || !box.ne) {
+    return box;
+  }
+
+  const latSpan = Math.max((box.ne.latitude ?? 0) - (box.sw.latitude ?? 0), 0.000001);
+  const lngSpan = Math.max((box.ne.longitude ?? 0) - (box.sw.longitude ?? 0), 0.000001);
+  const latPad = latSpan * ratio;
+  const lngPad = lngSpan * ratio;
+
+  return {
+    sw: {
+      latitude: (box.sw.latitude ?? 0) - latPad,
+      longitude: (box.sw.longitude ?? 0) - lngPad,
+    },
+    ne: {
+      latitude: (box.ne.latitude ?? 0) + latPad,
+      longitude: (box.ne.longitude ?? 0) + lngPad,
+    },
+  };
 }
 
 function buildObstructionOutlines(
