@@ -16,6 +16,7 @@ import { AddressSearch } from "@/components/address-search";
 import { AnalysisSequence } from "@/components/analysis-sequence";
 import { LeadCaptureForm } from "@/components/lead-capture-form";
 import { SolarAnalysis } from "@/components/solar-analysis";
+import { SolarReportDashboard } from "@/components/solar-report-dashboard";
 import type { RoofAnalysis } from "@/lib/roof-analysis";
 
 const VIDEO_SRC =
@@ -320,6 +321,10 @@ export function HomeClient() {
             />
           </div>
         </section>
+      ) : null}
+
+      {hasValidAnalysis && roofAnalysis ? (
+        <SolarReportDashboard address={selectedAddress} analysis={roofAnalysis} />
       ) : null}
 
       <section
