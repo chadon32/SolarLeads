@@ -46,8 +46,9 @@ export async function GET(request: Request) {
     satelliteUrl.searchParams.set("center", `${lat},${lng}`);
     satelliteUrl.searchParams.set("zoom", "20");
     satelliteUrl.searchParams.set("size", "640x640");
-    satelliteUrl.searchParams.set("scale", "2");
+    satelliteUrl.searchParams.set("scale", "1");
     satelliteUrl.searchParams.set("maptype", "satellite");
+    satelliteUrl.searchParams.set("format", "jpg-baseline");
     satelliteUrl.searchParams.append(
       "style",
       "feature:all|element:labels|visibility:off"
@@ -56,7 +57,7 @@ export async function GET(request: Request) {
 
     const imageResponse = await fetch(satelliteUrl, {
       headers: {
-        Accept: "image/png,image/jpeg,image/webp,*/*",
+        Accept: "image/jpeg,image/png,image/webp,*/*",
       },
       cache: "no-store",
     });
@@ -70,7 +71,7 @@ export async function GET(request: Request) {
 
     const buffer = await imageResponse.arrayBuffer();
     const base64 = Buffer.from(buffer).toString("base64");
-    const mimeType = imageResponse.headers.get("content-type") || "image/png";
+    const mimeType = imageResponse.headers.get("content-type") || "image/jpeg";
 
     return NextResponse.json({
       base64,

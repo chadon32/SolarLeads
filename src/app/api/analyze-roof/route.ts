@@ -8,6 +8,13 @@ import {
 import { enforceRateLimit } from "@/lib/rate-limit";
 
 const anthropicKey = process.env.ANTHROPIC_API_KEY;
+const configuredModel = process.env.ANTHROPIC_MODEL?.trim();
+const modelCandidates = [
+  configuredModel,
+  "claude-sonnet-4-6",
+  "claude-sonnet-4-5-20250929",
+  "claude-haiku-4-5-20251001",
+].filter((value, index, array): value is string => Boolean(value) && array.indexOf(value) === index);
 
 const analysisPrompt = (address: string) => `You are a solar rooftop analysis AI. You are looking at a satellite image of a property at: ${address}
 
@@ -77,6 +84,14 @@ Rules:
 - Return ONLY the JSON. No markdown. No explanation.`;
 
 export async function POST(request: Request) {
+  let body: {
+    base64?: string;
+    mimeType?: string;
+    address?: string;
+    lat?: number;
+    lng?: number;
+  } = {};
+
   try {
     const rateLimit = await enforceRateLimit({
       request,
@@ -97,13 +112,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const body = (await request.json().catch(() => ({}))) as {
-      base64?: string;
-      mimeType?: string;
-      address?: string;
-      lat?: number;
-      lng?: number;
-    };
+    body = (await request.json().catch(() => ({}))) as typeof body;
 
     const address = body.address?.trim() || "Arizona residential property";
     const lat = Number(body.lat);
@@ -142,36 +151,11 @@ export async function POST(request: Request) {
     }
 
     const client = new Anthropic({ apiKey: anthropicKey });
-    const response = await client.messages.create({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 1000,
-      messages: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "image",
-              source: {
-                type: "base64",
-                media_type: mediaType,
-                data: body.base64,
-              },
-            },
-            {
-              type: "text",
-              text: analysisPrompt(address),
-            },
-          ],
-        },
-      ],
+    const parsed = await createParsedRoofAnalysis(client, {
+      mediaType,
+      base64: body.base64,
+      address,
     });
-
-    const textContent = response.content
-      .filter((block) => block.type === "text")
-      .map((block) => block.text)
-      .join("\n")
-      .trim();
-    const parsed = extractJsonObject(textContent);
     const analysis = normalizeRoofAnalysis(parsed, fallback);
 
     if (!analysis.validSite || !analysis.rooftopDetected) {
@@ -197,6 +181,24 @@ export async function POST(request: Request) {
     const detail =
       error instanceof Error ? error.message : "Unexpected roof analysis failure.";
 
+    const fallback = buildFallbackRoofAnalysis({
+      address: body.address?.trim() || "Arizona residential property",
+      lat: Number.isFinite(Number(body.lat)) ? Number(body.lat) : 33.4942,
+      lng: Number.isFinite(Number(body.lng)) ? Number(body.lng) : -111.9261,
+    });
+
+    if (isRecoverableAnalysisError(detail)) {
+      return NextResponse.json(
+        {
+          analysis: fallback,
+          message:
+            "Detailed roof segmentation was unavailable, so the system is using a conservative modeled rooftop estimate for this address.",
+          detail,
+        },
+        { status: 200 }
+      );
+    }
+
     return NextResponse.json(
       {
         message: "Roof analysis failed before a rooftop could be validated.",
@@ -210,6 +212,87 @@ export async function POST(request: Request) {
       { status: 500 }
     );
   }
+}
+
+function isRecoverableAnalysisError(detail: string) {
+  return (
+    detail.includes("Could not process image") ||
+    detail.includes("Expected ',' or ']' after array element") ||
+    detail.includes("Claude did not return a valid JSON object.") ||
+    detail.includes("Unexpected token") ||
+    detail.includes("JSON")
+  );
+}
+
+async function createParsedRoofAnalysis(
+  client: Anthropic,
+  params: {
+    mediaType: "image/png" | "image/jpeg" | "image/webp" | "image/gif";
+    base64: string;
+    address: string;
+  }
+) {
+  let lastError: unknown;
+
+  for (const model of modelCandidates) {
+    try {
+      const response = await client.messages.create({
+        model,
+        max_tokens: 1000,
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: params.mediaType,
+                  data: params.base64,
+                },
+              },
+              {
+                type: "text",
+                text: analysisPrompt(params.address),
+              },
+            ],
+          },
+        ],
+      });
+
+      const textContent = response.content
+        .filter((block) => block.type === "text")
+        .map((block) => block.text)
+        .join("\n")
+        .trim();
+
+      return extractJsonObject(textContent);
+    } catch (error) {
+      lastError = error;
+
+      if (isMissingModelError(error) || isRecoverableAnalysisError(getErrorMessage(error))) {
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("No compatible Anthropic model was available for roof analysis.");
+}
+
+function isMissingModelError(error: unknown) {
+  return (
+    error instanceof Error &&
+    error.message.includes("not_found_error") &&
+    error.message.includes("model:")
+  );
+}
+
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function extractJsonObject(text: string) {
