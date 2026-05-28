@@ -56,19 +56,20 @@ export function HomeClient() {
     lng: number;
   } | null>(null);
   const [showStickyCta, setShowStickyCta] = useState(false);
+  const hasValidAnalysis = Boolean(roofAnalysis?.validSite);
 
   useEffect(() => {
     const onScroll = () => {
       const scrollY = window.scrollY;
       const contactTop = document.getElementById("contact")?.offsetTop ?? Number.POSITIVE_INFINITY;
-      setShowStickyCta(scrollY > 300 && scrollY < contactTop - 200);
+      setShowStickyCta(hasValidAnalysis && scrollY > 300 && scrollY < contactTop - 200);
     };
 
     onScroll();
     window.addEventListener("scroll", onScroll, { passive: true });
 
     return () => window.removeEventListener("scroll", onScroll);
-  }, []);
+  }, [hasValidAnalysis]);
 
   const showAnalysis = Boolean(selectedAddress);
   const highlights = useMemo(
@@ -191,9 +192,11 @@ export function HomeClient() {
             </div>
 
             <div className="mt-8 flex flex-col gap-4 sm:flex-row">
-              <ButtonLink href="#contact" variant="primary" className="px-6 py-3.5">
-                Get My Free Estimate
-              </ButtonLink>
+              {hasValidAnalysis ? (
+                <ButtonLink href="#contact" variant="primary" className="px-6 py-3.5">
+                  Get My Free Estimate
+                </ButtonLink>
+              ) : null}
               <ButtonLink href={BUSINESS_PHONE_HREF} variant="secondary" className="px-6 py-3.5">
                 Call {BUSINESS_PHONE}
               </ButtonLink>
@@ -303,23 +306,27 @@ export function HomeClient() {
         </div>
       </section>
 
-      <SectionDivider
-        eyebrow="Conversion"
-        title="Ready to see your full report? Enter your details and we'll send it instantly."
-        copy="We only need a few details to generate the report and send the estimate to you."
-      />
+      {hasValidAnalysis ? (
+        <>
+          <SectionDivider
+            eyebrow="Conversion"
+            title="Ready to see your full report? Enter your details and we'll send it instantly."
+            copy="We only need a few details to generate the report and send the estimate to you."
+          />
 
-      <section
-        id="contact"
-        className="relative mx-auto w-full max-w-7xl px-6 pb-16 md:px-10 lg:px-12"
-      >
-        <LeadCaptureForm
-          initialAddress={selectedAddress}
-          analysis={roofAnalysis}
-          lat={selectedLocation?.lat}
-          lng={selectedLocation?.lng}
-        />
-      </section>
+          <section
+            id="contact"
+            className="relative mx-auto w-full max-w-7xl px-6 pb-16 md:px-10 lg:px-12"
+          >
+            <LeadCaptureForm
+              initialAddress={selectedAddress}
+              analysis={roofAnalysis}
+              lat={selectedLocation?.lat}
+              lng={selectedLocation?.lng}
+            />
+          </section>
+        </>
+      ) : null}
     </main>
   );
 }

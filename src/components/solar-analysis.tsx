@@ -207,7 +207,7 @@ export function SolarAnalysis({
 
         if (!nextRoofData.validSite || !nextRoofData.rooftopDetected) {
           setRoofData(nextRoofData);
-          onAnalysisChange?.(null);
+          onAnalysisChange?.(nextRoofData);
           setStage("invalid");
           setErrorMessage(
             analysisPayload.message ??
@@ -269,7 +269,7 @@ export function SolarAnalysis({
         ? roofData.obstructionOutlines
         : buildDefaultObstructionOutlines(roofData.shadingRisk);
     const bounds = getBounds(footprint);
-    const measurements = buildMeasurementLines(bounds, roofData);
+    const measurements = buildMeasurementLines(footprint, bounds, roofData);
 
     return {
       footprint,
@@ -716,13 +716,23 @@ function ViewportCanvas({
                 />
                 <text
                   x={getPolygonCenter(segment.outline).x}
-                  y={getPolygonCenter(segment.outline).y}
+                  y={getPolygonCenter(segment.outline).y - 0.7}
                   textAnchor="middle"
                   fontSize="1.05"
                   fill="rgba(255,255,255,0.84)"
                   letterSpacing="0.08em"
                 >
                   {segment.label.toUpperCase()}
+                </text>
+                <text
+                  x={getPolygonCenter(segment.outline).x}
+                  y={getPolygonCenter(segment.outline).y + 1.1}
+                  textAnchor="middle"
+                  fontSize="0.86"
+                  fill="rgba(255,255,255,0.72)"
+                  letterSpacing="0.04em"
+                >
+                  {`${segment.areaM2.toFixed(1)} sq m`}
                 </text>
               </g>
             ))}
@@ -1182,29 +1192,41 @@ function getBounds(points: Point[]): Bounds {
   );
 }
 
-function buildMeasurementLines(bounds: Bounds, roofData: RoofAnalysis): MeasurementLine[] {
+function buildMeasurementLines(
+  outline: Point[],
+  bounds: Bounds,
+  roofData: RoofAnalysis
+): MeasurementLine[] {
   const topY = Math.max(8, bounds.minY - 5.4);
   const rightX = Math.min(94, bounds.maxX + 4.8);
+  const topPoints = [...outline].sort((left, right) => left.y - right.y).slice(0, 2);
+  const rightPoints = [...outline].sort((left, right) => right.x - left.x).slice(0, 2);
+  const topLeft = topPoints.sort((left, right) => left.x - right.x)[0] ?? { x: bounds.minX, y: bounds.minY };
+  const topRight =
+    topPoints.sort((left, right) => right.x - left.x)[0] ?? { x: bounds.maxX, y: bounds.minY };
+  const rightTop = rightPoints.sort((left, right) => left.y - right.y)[0] ?? { x: bounds.maxX, y: bounds.minY };
+  const rightBottom =
+    rightPoints.sort((left, right) => right.y - left.y)[0] ?? { x: bounds.maxX, y: bounds.maxY };
 
   return [
     {
       id: "width",
-      x1: bounds.minX,
+      x1: topLeft.x,
       y1: topY,
-      x2: bounds.maxX,
+      x2: topRight.x,
       y2: topY,
-      labelX: (bounds.minX + bounds.maxX) / 2,
+      labelX: (topLeft.x + topRight.x) / 2,
       labelY: topY - 2.3,
       label: `${roofData.widthM.toFixed(1)} m`,
     },
     {
       id: "depth",
       x1: rightX,
-      y1: bounds.minY,
+      y1: rightTop.y,
       x2: rightX,
-      y2: bounds.maxY,
+      y2: rightBottom.y,
       labelX: rightX + 1.8,
-      labelY: (bounds.minY + bounds.maxY) / 2,
+      labelY: (rightTop.y + rightBottom.y) / 2,
       label: `${roofData.depthM.toFixed(1)} m`,
     },
   ];
@@ -1264,22 +1286,33 @@ function buildPanelLayout(analysis: RoofAnalysis, polygon: Point[]): PanelRect[]
     const startX = segmentBounds.minX + 1.5;
     const startY = segmentBounds.minY + 1.6;
     const rotation = clampNumber((segment.azimuthDeg - 180) / 10, -18, 18);
+    let segmentPlaced = 0;
 
-    for (let index = 0; index < targetPanels; index += 1) {
+    for (let index = 0; index < targetPanels * 3 && segmentPlaced < targetPanels; index += 1) {
       const column = index % columns;
       const row = Math.floor(index / columns);
-
-      panels.push({
-        id: `panel-${segment.label}-${segmentIndex}-${index}`,
-        x: startX + column * (panelWidth + gap),
-        y: startY + row * (panelHeight + gap * 0.9),
+      const x = startX + column * (panelWidth + gap);
+      const y = startY + row * (panelHeight + gap * 0.9);
+      const panel = {
+        id: `panel-${segment.label}-${segmentIndex}-${segmentPlaced}`,
+        x,
+        y,
         width: panelWidth,
         height: panelHeight,
         rotation,
+      };
+
+      if (!panelFitsOutline(panel, segment.outline)) {
+        continue;
+      }
+
+      panels.push({
+        ...panel,
       });
+      segmentPlaced += 1;
     }
 
-    placedPanels += targetPanels;
+    placedPanels += segmentPlaced;
   });
 
   if (panels.length > 0) {
@@ -1315,6 +1348,38 @@ function buildPanelLayout(analysis: RoofAnalysis, polygon: Point[]): PanelRect[]
 
 function pointsToString(points: Point[]) {
   return points.map((point) => `${point.x},${point.y}`).join(" ");
+}
+
+function panelFitsOutline(panel: PanelRect, outline: Point[]) {
+  const corners = [
+    { x: panel.x, y: panel.y },
+    { x: panel.x + panel.width, y: panel.y },
+    { x: panel.x, y: panel.y + panel.height },
+    { x: panel.x + panel.width, y: panel.y + panel.height },
+  ];
+
+  return corners.every((corner) => pointInPolygon(corner, outline));
+}
+
+function pointInPolygon(point: Point, polygon: Point[]) {
+  let inside = false;
+
+  for (let current = 0, previous = polygon.length - 1; current < polygon.length; previous = current++) {
+    const currentPoint = polygon[current];
+    const previousPoint = polygon[previous];
+    const intersects =
+      currentPoint.y > point.y !== previousPoint.y > point.y &&
+      point.x <
+        ((previousPoint.x - currentPoint.x) * (point.y - currentPoint.y)) /
+          (previousPoint.y - currentPoint.y || 0.00001) +
+          currentPoint.x;
+
+    if (intersects) {
+      inside = !inside;
+    }
+  }
+
+  return inside;
 }
 
 function getPolygonCenter(points: Point[]) {
