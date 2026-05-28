@@ -8,6 +8,7 @@ import type { RoofAnalysis, RoofSegment } from "@/lib/roof-analysis";
 type RoofModel3DProps = {
   roofData: RoofAnalysis;
   address?: string;
+  className?: string;
 };
 
 type RoofSurface = {
@@ -27,7 +28,11 @@ type AnimatedPanel = {
   materials: THREE.Material[];
 };
 
-export function RoofModel3D({ roofData, address }: RoofModel3DProps) {
+export function RoofModel3D({
+  roofData,
+  address,
+  className = "",
+}: RoofModel3DProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -135,7 +140,9 @@ export function RoofModel3D({ roofData, address }: RoofModel3DProps) {
   }, [roofData]);
 
   return (
-    <div className="relative h-[26rem] w-full overflow-hidden rounded-[1.6rem] border border-white/10 bg-slate-950/35">
+    <div
+      className={`relative h-[26rem] w-full overflow-hidden rounded-[1.6rem] border border-white/10 bg-slate-950/35 ${className}`.trim()}
+    >
       <div ref={mountRef} className="h-full w-full" />
       {address ? (
         <div className="pointer-events-none absolute bottom-3 left-3 rounded-full border border-white/10 bg-slate-950/70 px-3 py-1.5 text-xs text-white backdrop-blur-md">

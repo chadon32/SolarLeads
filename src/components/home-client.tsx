@@ -2,12 +2,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { AddressSearch } from "@/components/address-search";
 import { AnalysisSequence } from "@/components/analysis-sequence";
-import { InstallReadouts } from "@/components/install-readouts";
 import { LeadCaptureForm } from "@/components/lead-capture-form";
 import { SolarAnalysis } from "@/components/solar-analysis";
 import { ButtonLink } from "@/components/ui/button";
 import { SectionDivider } from "@/components/section-divider";
-import { SavingsStats } from "@/components/savings-stats";
 import type { RoofAnalysis } from "@/lib/roof-analysis";
 
 const featureCards = [
@@ -83,19 +81,19 @@ export function HomeClient() {
       },
       {
         value: roofAnalysis
-          ? `${roofAnalysis.pitchDeg.toFixed(1)} deg`
-          : "2-6 deg",
-        label: roofAnalysis
-          ? "Roof pitch from the selected property"
-          : "Typical low-slope roof pitch range",
-      },
-      {
-        value: roofAnalysis
           ? `$${roofAnalysis.annualSavingsUSD.toLocaleString()}/yr`
           : "$2.8K-$4.1K",
         label: roofAnalysis
           ? "Estimated yearly savings for this address"
           : "Estimated yearly savings range",
+      },
+      {
+        value: roofAnalysis
+          ? `${roofAnalysis.usablePctRoof}%`
+          : "68-84%",
+        label: roofAnalysis
+          ? "Usable roof area confirmed by AI analysis"
+          : "Typical usable roof area for Arizona homes",
       },
     ],
     [roofAnalysis]
@@ -153,8 +151,7 @@ export function HomeClient() {
           </div>
         </header>
 
-        <div className={`grid items-start gap-10 ${showAnalysis ? "lg:grid-cols-[1fr_0.96fr]" : "lg:grid-cols-[1fr]"}`}>
-          <div className="relative z-10 max-w-3xl">
+        <div className="relative z-10 max-w-4xl">
             <div className="inline-flex items-center gap-2 rounded-full border border-cyan-300/15 bg-white/5 px-4 py-2 text-sm font-medium text-slate-300 shadow-[0_12px_40px_rgba(2,8,20,0.3)] backdrop-blur-md">
               <span className="h-2 w-2 rounded-full bg-cyan-300 shadow-[0_0_18px_rgba(103,232,249,0.8)]" />
               Arizona-only solar roof preview
@@ -240,47 +237,28 @@ export function HomeClient() {
                 </div>
               ))}
             </dl>
-          </div>
-
-          {showAnalysis ? (
-            <div className="analysis-section relative">
-              <div className="absolute -inset-4 rounded-[2rem] bg-cyan-400/10 blur-2xl" />
-              <div className="relative overflow-hidden rounded-[2rem] border border-white/10 bg-white/5 p-3 shadow-[0_28px_100px_rgba(2,8,20,0.55)] backdrop-blur-xl">
-                <SolarAnalysis
-                  address={selectedAddress}
-                  location={selectedLocation}
-                  onAnalysisChange={setRoofAnalysis}
-                />
-              </div>
-            </div>
-          ) : null}
         </div>
       </section>
 
       {showAnalysis ? (
         <>
           <SectionDivider
-            eyebrow="Roof analysis"
-            title="See exactly where panels go on your roof - before you talk to anyone."
-            copy="Your roof analysis, panel layout, and savings estimate - all in one place."
+            eyebrow="Solar workspace"
+            title="A rooftop intelligence workspace built around the actual property."
+            copy="Satellite imagery, roof segmentation, panel placement, and financial intelligence now live in one analysis surface."
           />
 
-          <div className="analysis-section">
-            <InstallReadouts
-              selectedAddress={selectedAddress}
-              analysis={roofAnalysis}
-            />
-          </div>
-
-          <SectionDivider
-            eyebrow="Savings"
-            title="Your savings, at a glance."
-            copy="Modeled estimate - updates with your address."
-          />
-
-          <div className="analysis-section">
-            <SavingsStats selectedAddress={selectedAddress} analysis={roofAnalysis} />
-          </div>
+          <section className="analysis-section relative mx-auto w-full max-w-7xl px-6 pb-10 md:px-10 lg:px-12">
+            <div className="absolute -inset-4 rounded-[2rem] bg-cyan-400/8 blur-3xl" />
+            <div className="relative overflow-hidden rounded-[2rem] border border-white/10 bg-white/5 p-3 shadow-[0_28px_100px_rgba(2,8,20,0.55)] backdrop-blur-xl">
+              <SolarAnalysis
+                key={selectedAddress}
+                address={selectedAddress}
+                location={selectedLocation}
+                onAnalysisChange={setRoofAnalysis}
+              />
+            </div>
+          </section>
         </>
       ) : null}
 
