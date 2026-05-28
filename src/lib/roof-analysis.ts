@@ -59,6 +59,7 @@ export type RoofAnalysis = {
   panelCapacityWatts: number;
   panelWidthMeters: number;
   panelHeightMeters: number;
+  annualSunlightHours: number;
   shadingRisk: ShadingRisk;
   shadeNote: string;
   roofOutline: RoofPoint[];
@@ -160,6 +161,7 @@ export function buildFallbackRoofAnalysis(params: {
     panelCapacityWatts: 400,
     panelWidthMeters: 1.1,
     panelHeightMeters: 1.7,
+    annualSunlightHours: 1800,
     shadingRisk: "low",
     shadeNote: "No significant shading detected.",
     roofOutline,
@@ -198,6 +200,7 @@ export function buildInvalidRoofAnalysis(params: {
     panelCapacityWatts: fallback.panelCapacityWatts,
     panelWidthMeters: fallback.panelWidthMeters,
     panelHeightMeters: fallback.panelHeightMeters,
+    annualSunlightHours: fallback.annualSunlightHours,
     usablePctRoof: 0,
     roofOutline: [],
     usableOutline: [],
@@ -308,6 +311,10 @@ export function normalizeRoofAnalysis(
     1,
     roundTo(numberOrFallback(input.panelHeightMeters, fallback.panelHeightMeters), 2)
   );
+  const annualSunlightHours = Math.max(
+    0,
+    Math.round(numberOrFallback(input.annualSunlightHours, fallback.annualSunlightHours))
+  );
   const source =
     input.source === "modeled" ||
     input.source === "vision-api" ||
@@ -341,6 +348,7 @@ export function normalizeRoofAnalysis(
     panelCapacityWatts,
     panelWidthMeters,
     panelHeightMeters,
+    annualSunlightHours,
     shadingRisk: shadingRiskOrFallback(input.shadingRisk, fallback.shadingRisk),
     shadeNote: stringOrFallback(input.shadeNote, fallback.shadeNote),
     roofOutline,

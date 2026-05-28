@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Image from "next/image";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -99,6 +99,7 @@ type AnalysisMetrics = {
   roofArea: number;
   usableArea: number;
   averageRoofPitch: number;
+  annualSunlightHours: number;
   selectedPanelCount: number;
   selectedSystemKw: number;
   selectedAnnualKwh: number;
@@ -441,6 +442,7 @@ export function SolarAnalysis({
       roofArea,
       usableArea,
       averageRoofPitch,
+      annualSunlightHours: roofData.annualSunlightHours,
       selectedPanelCount: livePanelCount,
       selectedSystemKw,
       selectedAnnualKwh,
@@ -580,7 +582,7 @@ export function SolarAnalysis({
                   roofData={roofData}
                   selectedPanels={selectedPanels}
                 />
-                  <RoofStatsPanel roofData={roofData} metrics={metrics} />
+                <RoofStatsPanel roofData={roofData} metrics={metrics} />
                   <MeasurementPanel roofData={roofData} metrics={metrics} />
                   <LegendPanel roofData={roofData} metrics={metrics} />
                 </div>
@@ -787,7 +789,6 @@ function ViewportCanvas({
   const footprintPoints = pointsToString(overlay.footprint);
   const usablePoints = pointsToString(overlay.usable);
   const showPanels = viewMode === "overview" || viewMode === "panels";
-  const showHeatmap = viewMode === "overview" || viewMode === "irradiance";
   const showObstructions = viewMode === "overview" || viewMode === "irradiance";
 
   return (
@@ -815,43 +816,18 @@ function ViewportCanvas({
           <clipPath id="usable-roof-zone">
             <polygon points={usablePoints} />
           </clipPath>
-          <radialGradient id="irradiance-core" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="rgba(245, 158, 11, 0.8)" />
-            <stop offset="40%" stopColor="rgba(250, 204, 21, 0.45)" />
-            <stop offset="100%" stopColor="rgba(34, 211, 238, 0.06)" />
-          </radialGradient>
           <linearGradient id="usable-fill" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="rgba(34, 211, 238, 0.36)" />
-            <stop offset="100%" stopColor="rgba(59, 130, 246, 0.16)" />
+            <stop offset="0%" stopColor="rgba(34, 211, 238, 0.24)" />
+            <stop offset="100%" stopColor="rgba(59, 130, 246, 0.08)" />
           </linearGradient>
         </defs>
 
-        {showHeatmap ? (
-          <>
-            <ellipse
-              cx="48"
-              cy="46"
-              rx="24"
-              ry="18"
-              fill="url(#irradiance-core)"
-              opacity="0.9"
-            />
-            <ellipse
-              cx="61"
-              cy="40"
-              rx="12"
-              ry="9"
-              fill="rgba(250, 204, 21, 0.22)"
-            />
-          </>
-        ) : null}
-
         <polygon
           points={footprintPoints}
-          fill="rgba(3, 7, 18, 0.12)"
-          stroke="rgba(103, 232, 249, 0.95)"
-          strokeWidth="0.6"
-          strokeDasharray="1.3 1.1"
+          fill="rgba(3, 7, 18, 0.03)"
+          stroke="rgba(103, 232, 249, 0.82)"
+          strokeWidth="0.5"
+          strokeDasharray="1.2 1.1"
         />
         <polygon
           points={usablePoints}
@@ -868,8 +844,8 @@ function ViewportCanvas({
                 <polygon
                   points={pointsToString(segment.outline)}
                   fill={segment.usable ? "rgba(255,255,255,0.05)" : "rgba(248,113,113,0.08)"}
-                  stroke={segment.usable ? "rgba(255,255,255,0.32)" : "rgba(248,113,113,0.42)"}
-                  strokeWidth="0.18"
+                  stroke={segment.usable ? "rgba(255,255,255,0.22)" : "rgba(248,113,113,0.34)"}
+                  strokeWidth="0.16"
                 />
                 <text
                   x={getPolygonCenter(segment.outline).x}
@@ -919,7 +895,7 @@ function ViewportCanvas({
                 <polygon
                   points={pointsToString(zone)}
                   fill="rgba(248,113,113,0.18)"
-                  stroke="rgba(248,113,113,0.78)"
+                  stroke="rgba(248,113,113,0.66)"
                   strokeWidth="0.22"
                   strokeDasharray="0.8 0.6"
                 />
@@ -975,9 +951,6 @@ function ViewportCanvas({
             </text>
           </g>
         ))}
-
-        <line x1="50" y1="12" x2="50" y2="88" stroke="rgba(255,255,255,0.14)" strokeWidth="0.14" />
-        <line x1="18" y1="50" x2="82" y2="50" stroke="rgba(255,255,255,0.14)" strokeWidth="0.14" />
       </svg>
 
       <div className="absolute left-4 top-4 flex flex-wrap gap-2">
@@ -998,11 +971,6 @@ function ViewportCanvas({
         </p>
       </div>
 
-      <div className="absolute bottom-4 left-4 right-4 grid gap-3 md:grid-cols-3">
-        <HudCard label="Usable roof area" value={`${metrics.usableArea.toFixed(1)} sq m`} />
-        <HudCard label="Estimated monthly savings" value={`$${metrics.monthlySavings.toLocaleString()}`} />
-        <HudCard label="Recommended segment" value={metrics.recommendedSegment?.label ?? "Primary"} />
-      </div>
     </div>
   );
 }
@@ -1312,7 +1280,8 @@ function RoofStatsPanel({
         <MetricRow label="Roof depth" value={`${roofData.depthM.toFixed(1)} m`} />
         <MetricRow label="Gross roof area" value={`${metrics.roofArea.toFixed(1)} sq m`} />
         <MetricRow label="Usable roof area" value={`${metrics.usableArea.toFixed(1)} sq m`} />
-        <MetricRow label="Average roof pitch" value={`${metrics.averageRoofPitch.toFixed(1)}°`} />
+        <MetricRow label="Annual sunlight" value={`${metrics.annualSunlightHours.toLocaleString()} hrs`} />
+        <MetricRow label="Average roof pitch" value={`${metrics.averageRoofPitch.toFixed(1)} deg`} />
         <MetricRow label="Primary orientation" value={metrics.orientationLabel} />
         <MetricRow label="Panel count" value={`${metrics.selectedPanelCount}`} />
         <MetricRow label="Estimated payback" value={`${metrics.roiYears.toFixed(1)} yrs`} />
@@ -1326,13 +1295,13 @@ function RoofStatsPanel({
           <div className="flex items-center justify-between gap-3 text-sm">
             <span className="text-slate-300">Primary</span>
             <span className="text-white">
-              {primarySegment ? `${primarySegment.areaM2.toFixed(1)} sq m` : "—"}
+              {primarySegment ? `${primarySegment.areaM2.toFixed(1)} sq m` : "-"}
             </span>
           </div>
           <div className="flex items-center justify-between gap-3 text-sm">
             <span className="text-slate-300">Secondary</span>
             <span className="text-white">
-              {secondarySegment ? `${secondarySegment.areaM2.toFixed(1)} sq m` : "—"}
+              {secondarySegment ? `${secondarySegment.areaM2.toFixed(1)} sq m` : "-"}
             </span>
           </div>
           <div className="flex items-center justify-between gap-3 text-sm">
@@ -1340,7 +1309,7 @@ function RoofStatsPanel({
             <span className="text-white">
               {roofData.roofSegments[2]
                 ? `${roofData.roofSegments[2].areaM2.toFixed(1)} sq m`
-                : "—"}
+                : "-"}
             </span>
           </div>
         </div>
@@ -1598,6 +1567,7 @@ function MeasurementPanel({
         <MetricRow label="Roof depth" value={`${roofData.depthM.toFixed(1)} m`} />
         <MetricRow label="Gross roof area" value={`${metrics.roofArea.toFixed(1)} sq m`} />
         <MetricRow label="Usable roof area" value={`${metrics.usableArea.toFixed(1)} sq m`} />
+        <MetricRow label="Annual sunlight" value={`${metrics.annualSunlightHours.toLocaleString()} hrs`} />
         <MetricRow label="Average roof pitch" value={`${roofData.pitchDeg.toFixed(1)} deg`} />
         <MetricRow label="Primary orientation" value={metrics.orientationLabel} />
       </div>
@@ -1636,6 +1606,7 @@ function LegendPanel({
       <LegendRow swatch="bg-rose-400" label="Obstruction or shade marker" />
       <div className="rounded-[1.15rem] border border-white/8 bg-white/[0.03] p-3 text-sm leading-6 text-slate-300">
         {roofData.panelCount} modules fit across about {metrics.usableArea.toFixed(1)} sq m of usable roof area. Estimated payback is about {metrics.roiYears.toFixed(1)} years.
+        <MetricRow label="Annual sunlight" value={`${metrics.annualSunlightHours.toLocaleString()} hrs`} />
       </div>
       <div className="rounded-[1.15rem] border border-white/8 bg-slate-950/42 p-3 text-xs leading-6 text-slate-400">
         Estimates are based on rooftop image interpretation, standard 400W modules, and a $0.13/kWh Arizona utility rate.
@@ -1718,17 +1689,6 @@ function MetricRow({ label, value }: { label: string; value: string }) {
     <div className="flex items-center justify-between gap-3 rounded-[1.1rem] border border-white/8 bg-white/[0.03] px-3 py-3 text-sm">
       <span className="text-slate-400">{label}</span>
       <span className="font-semibold text-white">{value}</span>
-    </div>
-  );
-}
-
-function HudCard({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-[1.1rem] border border-white/10 bg-slate-950/72 px-3 py-3 shadow-[0_10px_24px_rgba(2,8,20,0.18)] backdrop-blur-xl">
-      <p className="text-[0.58rem] font-semibold uppercase tracking-[0.28em] text-slate-400">
-        {label}
-      </p>
-      <p className="mt-2 text-base font-semibold text-white">{value}</p>
     </div>
   );
 }
@@ -2093,3 +2053,4 @@ function formatAzimuth(value: number) {
 function clampNumber(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
+

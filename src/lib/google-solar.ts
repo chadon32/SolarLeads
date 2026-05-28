@@ -390,6 +390,7 @@ export function buildSolarRoofAnalysis(params: {
       panelCapacityWatts,
       panelWidthMeters,
       panelHeightMeters,
+      annualSunlightHours: Math.round(solarPotential.maxSunshineHoursPerYear ?? 1800),
       shadingRisk,
       shadeNote: buildShadeNote(shadingRisk, roofSegments.length),
       roofOutline,
