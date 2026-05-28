@@ -52,49 +52,6 @@ type AnalyzeRoofPayload = {
 
 type ViewMode = "overview" | "panels" | "irradiance";
 
-type GoogleLatLngLiteral = {
-  lat: number;
-  lng: number;
-};
-
-type GoogleMapsMap = {
-  setCenter(center: GoogleLatLngLiteral): void;
-};
-
-type GoogleMapsProjection = {
-  fromLatLngToDivPixel(location: GoogleLatLngLiteral): { x: number; y: number } | null;
-};
-
-type GoogleMapsPanes = {
-  overlayLayer: HTMLElement;
-};
-
-type GoogleMapsOverlayView = {
-  setMap(map: GoogleMapsMap | null): void;
-  getPanes(): GoogleMapsPanes | null;
-  getProjection(): GoogleMapsProjection | null;
-  onAdd?: () => void;
-  draw?: () => void;
-  onRemove?: () => void;
-};
-
-type GoogleMapsNamespace = {
-  Map: new (element: HTMLElement, options: GoogleMapsMapOptions) => GoogleMapsMap;
-  OverlayView: new () => GoogleMapsOverlayView;
-};
-
-type GoogleMapsMapOptions = {
-  center: GoogleLatLngLiteral;
-  zoom: number;
-  mapTypeId: string;
-  disableDefaultUI: boolean;
-  clickableIcons: boolean;
-  gestureHandling: "none" | "cooperative" | "greedy" | "auto";
-  keyboardShortcuts: boolean;
-  scrollwheel: boolean;
-  tilt: number;
-};
-
 type AnalysisMetrics = {
   roofArea: number;
   usableArea: number;
@@ -566,7 +523,6 @@ export function SolarAnalysis({
                   address={resolvedProperty?.address ?? address}
                   roofData={roofData}
                   overlay={overlay}
-                  metrics={metrics}
                   viewMode={viewMode}
                 />
                 <div className="border-t border-white/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.02))] p-4 lg:border-l lg:border-t-0">
@@ -575,16 +531,7 @@ export function SolarAnalysis({
                     max={roofData.panelCount}
                     onChange={setSelectedPanelCount}
                   />
-                <PanelMapPreview
-                  address={resolvedProperty?.address ?? address}
-                  lat={resolvedProperty?.lat ?? 0}
-                  lng={resolvedProperty?.lng ?? 0}
-                  roofData={roofData}
-                  selectedPanels={selectedPanels}
-                />
-                <RoofStatsPanel roofData={roofData} metrics={metrics} />
-                  <MeasurementPanel roofData={roofData} metrics={metrics} />
-                  <LegendPanel roofData={roofData} metrics={metrics} />
+                  <RoofStatsPanel roofData={roofData} metrics={metrics} />
                 </div>
               </div>
             </article>
@@ -593,7 +540,7 @@ export function SolarAnalysis({
               <IntelligenceCard
                 eyebrow="Site findings"
                 title="Rooftop analysis summary"
-                body={`The primary roof plane faces ${metrics.orientationLabel} with about ${metrics.selectedPanelCount} modules selected on the map preview. The current analysis reads ${roofData.usablePctRoof}% of the roof as usable for solar with ${roofData.shadingRisk} shading exposure.`}
+                body={`The primary roof plane faces ${metrics.orientationLabel} with about ${metrics.selectedPanelCount} modules selected across the detected roof planes. The current analysis reads ${roofData.usablePctRoof}% of the roof as usable for solar with ${roofData.shadingRisk} shading exposure.`}
               />
               <IntelligenceCard
                 eyebrow="Environmental impact"
@@ -614,7 +561,7 @@ export function SolarAnalysis({
                 Analysis summary
               </p>
               <h3 className="mt-3 text-2xl font-semibold tracking-tight text-white">
-                Rooftop analysis is ready.
+                Analysis complete.
               </h3>
               <p className="mt-3 text-sm leading-7 text-slate-300">
                 The platform mapped roof geometry, candidate panel zones, obstructions, and projected savings from the rooftop image.
@@ -683,7 +630,7 @@ export function SolarAnalysis({
                       />
                     </div>
                     <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-400">
-                      <span>{segment.areaM2.toFixed(1)} sq m</span>
+                      <span>{segment.areaM2.toFixed(1)} m²</span>
                       <span>{formatAzimuth(segment.azimuthDeg)}</span>
                     </div>
                   </div>
@@ -730,12 +677,12 @@ function ViewportHeader({
     <div className="flex flex-col gap-4 px-4 py-4 sm:px-5">
       <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <p className="text-[0.62rem] font-semibold uppercase tracking-[0.34em] text-cyan-300">
-            Rooftop analysis
-          </p>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
-            Satellite imagery is the primary analysis layer, with roof polygons, panel placement, and irradiance guidance overlaid directly on the property.
-          </p>
+              <p className="text-[0.62rem] font-semibold uppercase tracking-[0.34em] text-cyan-300">
+                Rooftop analysis
+              </p>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
+            Roof geometry, usable area, and irradiance data are aligned to the detected roof footprint.
+              </p>
         </div>
         <div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-slate-300">
           {address}
@@ -768,7 +715,6 @@ function ViewportCanvas({
   address,
   roofData,
   overlay,
-  metrics,
   viewMode,
 }: {
   satelliteImage: string | null;
@@ -783,7 +729,6 @@ function ViewportCanvas({
     bounds: Bounds;
     measurements: MeasurementLine[];
   };
-  metrics: AnalysisMetrics;
   viewMode: ViewMode;
 }) {
   const footprintPoints = pointsToString(overlay.footprint);
@@ -804,7 +749,11 @@ function ViewportCanvas({
       ) : null}
       <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(4,8,16,0.1),rgba(4,8,16,0.68))]" />
       <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(6,10,18,0.02),rgba(6,10,18,0.18))]" />
-      <AnnualFluxCanvasOverlay annualFluxUrl={annualFluxUrl} viewMode={viewMode} />
+      <AnnualFluxCanvasOverlay
+        annualFluxUrl={annualFluxUrl}
+        viewMode={viewMode}
+        clipPath={polygonToCssClipPath(overlay.footprint)}
+      />
 
       <svg
         viewBox="0 0 100 100"
@@ -865,7 +814,7 @@ function ViewportCanvas({
                   fill="rgba(255,255,255,0.72)"
                   letterSpacing="0.04em"
                 >
-                  {`${segment.areaM2.toFixed(1)} sq m`}
+                  {`${segment.areaM2.toFixed(1)} m²`}
                 </text>
               </g>
             ))}
@@ -953,24 +902,6 @@ function ViewportCanvas({
         ))}
       </svg>
 
-      <div className="absolute left-4 top-4 flex flex-wrap gap-2">
-        <StatusBadge label="Roof polygon detected" tone="cyan" />
-        <StatusBadge label={`${roofData.panelCount} panel layout`} tone="amber" />
-        <StatusBadge label={`${metrics.orientationLabel} orientation`} />
-      </div>
-
-      <div className="absolute right-4 top-20 rounded-[1rem] border border-white/10 bg-slate-950/76 px-3 py-3 text-xs text-slate-200 shadow-[0_10px_24px_rgba(2,8,20,0.18)] backdrop-blur-xl">
-        <p className="text-[0.56rem] font-semibold uppercase tracking-[0.28em] text-slate-400">
-          Measured roof
-        </p>
-        <p className="mt-2 font-semibold text-white">
-          {metrics.roofArea.toFixed(1)} sq m gross area
-        </p>
-        <p className="mt-1 text-slate-400">
-          {metrics.usableArea.toFixed(1)} sq m usable
-        </p>
-      </div>
-
     </div>
   );
 }
@@ -978,9 +909,11 @@ function ViewportCanvas({
 function AnnualFluxCanvasOverlay({
   annualFluxUrl,
   viewMode,
+  clipPath,
 }: {
   annualFluxUrl: string | null;
   viewMode: ViewMode;
+  clipPath: string;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -988,7 +921,7 @@ function AnnualFluxCanvasOverlay({
     let cancelled = false;
     const canvas = canvasRef.current;
 
-    if (!canvas || !annualFluxUrl || (viewMode !== "overview" && viewMode !== "irradiance")) {
+    if (!canvas || !annualFluxUrl || viewMode !== "irradiance") {
       const context = canvas?.getContext("2d");
       if (canvas && context) {
         context.clearRect(0, 0, canvas.width, canvas.height);
@@ -1073,7 +1006,17 @@ function AnnualFluxCanvasOverlay({
     };
   }, [annualFluxUrl, viewMode]);
 
-  return <canvas ref={canvasRef} aria-hidden="true" className="absolute inset-0 h-full w-full pointer-events-none" />;
+  return (
+    <canvas
+      ref={canvasRef}
+      aria-hidden="true"
+      className="absolute inset-0 h-full w-full pointer-events-none opacity-60"
+      style={{
+        clipPath,
+        WebkitClipPath: clipPath,
+      }}
+    />
+  );
 }
 
 function PanelSelectionSlider({
@@ -1095,7 +1038,7 @@ function PanelSelectionSlider({
             Panel selection
           </p>
           <p className="mt-2 text-sm leading-6 text-slate-300">
-            Choose how many panels to include in the live layout and estimate.
+            Set the live panel count against the detected roof geometry.
           </p>
         </div>
         <div className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs font-semibold text-white">
@@ -1118,137 +1061,6 @@ function PanelSelectionSlider({
   );
 }
 
-function PanelMapPreview({
-  address,
-  lat,
-  lng,
-  roofData,
-  selectedPanels,
-}: {
-  address: string;
-  lat: number;
-  lng: number;
-  roofData: RoofAnalysis;
-  selectedPanels: RoofAnalysis["solarPanels"];
-}) {
-  const mapRef = useRef<HTMLDivElement | null>(null);
-  const mapInstanceRef = useRef<GoogleMapsMap | null>(null);
-  const overlayRef = useRef<SolarPanelOverlay | null>(null);
-  const selectedPanelsRef = useRef(selectedPanels);
-  const [mapReady, setMapReady] = useState(false);
-  const [mapError, setMapError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function initializeMap() {
-      if (!mapRef.current || !Number.isFinite(lat) || !Number.isFinite(lng)) {
-        return;
-      }
-
-      const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
-      if (!apiKey) {
-        setMapError("Google Maps key is not configured.");
-        return;
-      }
-
-      const googleMaps = await loadGoogleMaps(apiKey);
-      if (cancelled || !mapRef.current) {
-        return;
-      }
-
-      if (!mapInstanceRef.current) {
-        mapInstanceRef.current = new googleMaps.Map(mapRef.current, {
-          center: { lat, lng },
-          zoom: 20,
-          mapTypeId: "satellite",
-          disableDefaultUI: true,
-          clickableIcons: false,
-          gestureHandling: "none",
-          keyboardShortcuts: false,
-          scrollwheel: false,
-          tilt: 0,
-        });
-      } else {
-        mapInstanceRef.current.setCenter({ lat, lng });
-      }
-
-      overlayRef.current?.setMap(null);
-      overlayRef.current = new SolarPanelOverlay(mapInstanceRef.current, {
-        googleMaps,
-        panels: selectedPanelsRef.current,
-        roofSegments: roofData.roofSegments,
-        panelWidthMeters: roofData.panelWidthMeters,
-        panelHeightMeters: roofData.panelHeightMeters,
-      });
-
-      setMapReady(true);
-      setMapError(null);
-    }
-
-    void initializeMap().catch((error) => {
-      setMapReady(false);
-      setMapError(
-        error instanceof Error ? error.message : "Could not load Google Maps."
-      );
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    address,
-    lat,
-    lng,
-    roofData.panelHeightMeters,
-    roofData.panelWidthMeters,
-    roofData.roofSegments,
-  ]);
-
-  useEffect(() => {
-    selectedPanelsRef.current = selectedPanels;
-    overlayRef.current?.setPanels(selectedPanels);
-  }, [selectedPanels]);
-
-  useEffect(
-    () => () => {
-      overlayRef.current?.setMap(null);
-      overlayRef.current = null;
-      mapInstanceRef.current = null;
-    },
-    []
-  );
-
-  return (
-    <div className="mt-4 rounded-[1.45rem] border border-white/10 bg-black/20 p-4 shadow-[0_10px_28px_rgba(2,8,20,0.18)]">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <p className="text-[0.56rem] font-semibold uppercase tracking-[0.32em] text-cyan-300">
-            Panel map
-          </p>
-          <p className="mt-2 text-sm leading-6 text-slate-300">
-            Selected panels rendered on Google Maps satellite imagery.
-          </p>
-        </div>
-        <div className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.22em] text-slate-300">
-          {mapReady ? "Live" : "Loading"}
-        </div>
-      </div>
-      <div className="relative mt-4 h-52 overflow-hidden rounded-[1.1rem] border border-white/10 bg-slate-950">
-          <div ref={mapRef} className="absolute inset-0" />
-        {!mapReady ? (
-          <div className="absolute inset-0 flex items-center justify-center bg-slate-950/90 px-4 text-center text-sm text-slate-300">
-            {mapError ?? "Loading Google satellite map..."}
-          </div>
-        ) : null}
-      </div>
-      <p className="mt-3 text-xs leading-6 text-slate-400">
-        The selected {selectedPanels.length} panels are drawn as live map overlays at the property center.
-      </p>
-    </div>
-  );
-}
-
 function RoofStatsPanel({
   roofData,
   metrics,
@@ -1267,7 +1079,7 @@ function RoofStatsPanel({
             Roof stats
           </p>
           <p className="mt-2 text-sm leading-6 text-slate-300">
-            Live Solar API measurements and the current panel selection summary.
+            Live Solar API measurements and the current panel count.
           </p>
         </div>
         <div className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.22em] text-slate-300">
@@ -1278,10 +1090,10 @@ function RoofStatsPanel({
       <div className="mt-4 grid gap-3">
         <MetricRow label="Roof width" value={`${roofData.widthM.toFixed(1)} m`} />
         <MetricRow label="Roof depth" value={`${roofData.depthM.toFixed(1)} m`} />
-        <MetricRow label="Gross roof area" value={`${metrics.roofArea.toFixed(1)} sq m`} />
-        <MetricRow label="Usable roof area" value={`${metrics.usableArea.toFixed(1)} sq m`} />
+        <MetricRow label="Gross roof area" value={`${metrics.roofArea.toFixed(1)} m²`} />
+        <MetricRow label="Usable roof area" value={`${metrics.usableArea.toFixed(1)} m²`} />
         <MetricRow label="Annual sunlight" value={`${metrics.annualSunlightHours.toLocaleString()} hrs`} />
-        <MetricRow label="Average roof pitch" value={`${metrics.averageRoofPitch.toFixed(1)} deg`} />
+        <MetricRow label="Average roof pitch" value={`${metrics.averageRoofPitch.toFixed(1)}°`} />
         <MetricRow label="Primary orientation" value={metrics.orientationLabel} />
         <MetricRow label="Panel count" value={`${metrics.selectedPanelCount}`} />
         <MetricRow label="Estimated payback" value={`${metrics.roiYears.toFixed(1)} yrs`} />
@@ -1295,20 +1107,20 @@ function RoofStatsPanel({
           <div className="flex items-center justify-between gap-3 text-sm">
             <span className="text-slate-300">Primary</span>
             <span className="text-white">
-              {primarySegment ? `${primarySegment.areaM2.toFixed(1)} sq m` : "-"}
+              {primarySegment ? `${primarySegment.areaM2.toFixed(1)} m²` : "-"}
             </span>
           </div>
           <div className="flex items-center justify-between gap-3 text-sm">
             <span className="text-slate-300">Secondary</span>
             <span className="text-white">
-              {secondarySegment ? `${secondarySegment.areaM2.toFixed(1)} sq m` : "-"}
+              {secondarySegment ? `${secondarySegment.areaM2.toFixed(1)} m²` : "-"}
             </span>
           </div>
           <div className="flex items-center justify-between gap-3 text-sm">
             <span className="text-slate-300">Garage</span>
             <span className="text-white">
               {roofData.roofSegments[2]
-                ? `${roofData.roofSegments[2].areaM2.toFixed(1)} sq m`
+                ? `${roofData.roofSegments[2].areaM2.toFixed(1)} m²`
                 : "-"}
             </span>
           </div>
@@ -1316,195 +1128,6 @@ function RoofStatsPanel({
       </div>
     </div>
   );
-}
-
-function loadGoogleMaps(apiKey: string) {
-  const globalWindow = window as Window & {
-    __azGoogleMapsPromise?: Promise<GoogleMapsNamespace>;
-    google?: { maps?: GoogleMapsNamespace };
-  };
-
-  if (globalWindow.google?.maps) {
-    return Promise.resolve(globalWindow.google.maps);
-  }
-
-  if (!globalWindow.__azGoogleMapsPromise) {
-    globalWindow.__azGoogleMapsPromise = new Promise((resolve, reject) => {
-      const scriptId = "az-google-maps-js";
-      const existing = document.getElementById(scriptId) as HTMLScriptElement | null;
-
-      if (existing) {
-        existing.addEventListener("load", () => resolve(globalWindow.google!.maps!), {
-          once: true,
-        });
-        existing.addEventListener("error", () => reject(new Error("Could not load Google Maps.")), {
-          once: true,
-        });
-        return;
-      }
-
-      const script = document.createElement("script");
-      script.id = scriptId;
-      script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(
-        apiKey
-      )}&v=weekly&libraries=maps`;
-      script.async = true;
-      script.defer = true;
-      script.onload = () => resolve(globalWindow.google!.maps!);
-      script.onerror = () => reject(new Error("Could not load Google Maps."));
-      document.head.appendChild(script);
-    });
-  }
-
-  return globalWindow.__azGoogleMapsPromise;
-}
-
-class SolarPanelOverlay {
-  private container: HTMLDivElement | null = null;
-  private map: GoogleMapsMap;
-  private panels: RoofAnalysis["solarPanels"];
-  private roofSegments: RoofAnalysis["roofSegments"];
-  private panelWidthMeters: number;
-  private panelHeightMeters: number;
-  private overlayView: GoogleMapsOverlayView;
-
-  constructor(
-    map: GoogleMapsMap,
-    params: {
-      googleMaps: GoogleMapsNamespace;
-      panels: RoofAnalysis["solarPanels"];
-      roofSegments: RoofAnalysis["roofSegments"];
-      panelWidthMeters: number;
-      panelHeightMeters: number;
-    }
-  ) {
-    this.map = map;
-    this.panels = params.panels;
-    this.roofSegments = params.roofSegments;
-    this.panelWidthMeters = params.panelWidthMeters;
-    this.panelHeightMeters = params.panelHeightMeters;
-    this.overlayView = new params.googleMaps.OverlayView();
-    this.overlayView.onAdd = () => this.onAdd();
-    this.overlayView.draw = () => this.draw();
-    this.overlayView.onRemove = () => this.onRemove();
-    this.overlayView.setMap(map);
-  }
-
-  setPanels(panels: RoofAnalysis["solarPanels"]) {
-    this.panels = panels;
-    this.draw();
-  }
-
-  setMap(map: GoogleMapsMap | null) {
-    this.overlayView.setMap(map);
-  }
-
-  private getPanes() {
-    return this.overlayView.getPanes?.();
-  }
-
-  private getProjection() {
-    return this.overlayView.getProjection?.();
-  }
-
-  private onAdd() {
-    const panes = this.getPanes();
-    if (!panes) {
-      return;
-    }
-
-    const container = document.createElement("div");
-    container.style.position = "absolute";
-    container.style.inset = "0";
-    container.style.pointerEvents = "none";
-    container.style.zIndex = "2";
-    this.container = container;
-    panes.overlayLayer.appendChild(container);
-  }
-
-  private draw() {
-    const container = this.container;
-    if (!container) {
-      return;
-    }
-
-    const projection = this.getProjection();
-    if (!projection) {
-      return;
-    }
-
-    container.innerHTML = "";
-
-    this.panels.forEach((panel, index) => {
-      const segment = this.roofSegments[panel.segmentIndex] ?? this.roofSegments[0];
-      const projected = projection.fromLatLngToDivPixel(panel.center);
-
-      if (!projected) {
-        return;
-      }
-
-      const widthMeters =
-        panel.orientation === "LANDSCAPE"
-          ? this.panelHeightMeters
-          : this.panelWidthMeters;
-      const heightMeters =
-        panel.orientation === "LANDSCAPE"
-          ? this.panelWidthMeters
-          : this.panelHeightMeters;
-      const east = projection.fromLatLngToDivPixel(
-        metersOffset(panel.center.lat, panel.center.lng, 0, widthMeters / 2)
-      );
-      const west = projection.fromLatLngToDivPixel(
-        metersOffset(panel.center.lat, panel.center.lng, 0, -widthMeters / 2)
-      );
-      const north = projection.fromLatLngToDivPixel(
-        metersOffset(panel.center.lat, panel.center.lng, heightMeters / 2, 0)
-      );
-      const south = projection.fromLatLngToDivPixel(
-        metersOffset(panel.center.lat, panel.center.lng, -heightMeters / 2, 0)
-      );
-
-      const pixelWidth = Math.max(5, Math.abs((east?.x ?? 0) - (west?.x ?? 0)));
-      const pixelHeight = Math.max(8, Math.abs((south?.y ?? 0) - (north?.y ?? 0)));
-      const rotation =
-        panel.orientation === "LANDSCAPE"
-          ? 180 - (segment?.azimuthDeg ?? 180)
-          : 90 - (segment?.azimuthDeg ?? 180);
-
-      const element = document.createElement("div");
-      element.style.position = "absolute";
-      element.style.left = `${projected.x - pixelWidth / 2}px`;
-      element.style.top = `${projected.y - pixelHeight / 2}px`;
-      element.style.width = `${pixelWidth}px`;
-      element.style.height = `${pixelHeight}px`;
-      element.style.borderRadius = "2px";
-      element.style.background = index < this.panels.length ? "rgba(37, 99, 235, 0.72)" : "rgba(37, 99, 235, 0.36)";
-      element.style.border = "1px solid rgba(255, 255, 255, 0.65)";
-      element.style.boxShadow = "0 0 0 1px rgba(15, 23, 42, 0.24) inset";
-      element.style.transformOrigin = "center center";
-      element.style.transform = `rotate(${rotation}deg)`;
-      container.appendChild(element);
-    });
-  }
-
-  private onRemove() {
-    if (this.container?.parentNode) {
-      this.container.parentNode.removeChild(this.container);
-    }
-    this.container = null;
-  }
-}
-
-function metersOffset(lat: number, lng: number, northMeters: number, eastMeters: number) {
-  const earthRadius = 6378137;
-  const dLat = (northMeters / earthRadius) * (180 / Math.PI);
-  const dLng =
-    (eastMeters / (earthRadius * Math.cos((lat * Math.PI) / 180))) * (180 / Math.PI);
-
-  return {
-    lat: lat + dLat,
-    lng: lng + dLng,
-  };
 }
 
 function fluxColor(value: number) {
@@ -1548,71 +1171,6 @@ function percentile(values: number[], ratio: number) {
 
 function clamp01(value: number) {
   return Math.max(0, Math.min(1, value));
-}
-
-function MeasurementPanel({
-  roofData,
-  metrics,
-}: {
-  roofData: RoofAnalysis;
-  metrics: AnalysisMetrics;
-}) {
-  return (
-    <div className="rounded-[1.45rem] border border-white/10 bg-black/16 p-4">
-      <p className="text-[0.62rem] font-semibold uppercase tracking-[0.32em] text-cyan-300">
-        Measurements
-      </p>
-      <div className="mt-4 grid gap-3">
-        <MetricRow label="Roof width" value={`${roofData.widthM.toFixed(1)} m`} />
-        <MetricRow label="Roof depth" value={`${roofData.depthM.toFixed(1)} m`} />
-        <MetricRow label="Gross roof area" value={`${metrics.roofArea.toFixed(1)} sq m`} />
-        <MetricRow label="Usable roof area" value={`${metrics.usableArea.toFixed(1)} sq m`} />
-        <MetricRow label="Annual sunlight" value={`${metrics.annualSunlightHours.toLocaleString()} hrs`} />
-        <MetricRow label="Average roof pitch" value={`${roofData.pitchDeg.toFixed(1)} deg`} />
-        <MetricRow label="Primary orientation" value={metrics.orientationLabel} />
-      </div>
-      <div className="mt-4 rounded-[1rem] border border-white/8 bg-white/[0.03] p-3">
-        <p className="text-[0.56rem] font-semibold uppercase tracking-[0.28em] text-slate-400">
-          Segment allocation
-        </p>
-        <div className="mt-3 space-y-2">
-          {roofData.roofSegments.slice(0, 3).map((segment) => (
-            <div key={segment.label} className="flex items-center justify-between gap-3 text-xs">
-              <span className="capitalize text-slate-300">{segment.label}</span>
-              <span className="text-slate-400">{segment.areaM2.toFixed(1)} sq m</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function LegendPanel({
-  roofData,
-  metrics,
-}: {
-  roofData: RoofAnalysis;
-  metrics: AnalysisMetrics;
-}) {
-  return (
-    <div className="mt-4 space-y-3">
-      <p className="text-[0.62rem] font-semibold uppercase tracking-[0.32em] text-cyan-300">
-        Overlay legend
-      </p>
-      <LegendRow swatch="bg-cyan-300" label="Roof edge and usable area" />
-      <LegendRow swatch="bg-blue-500" label="Panel placement candidates" />
-      <LegendRow swatch="bg-amber-400" label="High-irradiance roof region" />
-      <LegendRow swatch="bg-rose-400" label="Obstruction or shade marker" />
-      <div className="rounded-[1.15rem] border border-white/8 bg-white/[0.03] p-3 text-sm leading-6 text-slate-300">
-        {roofData.panelCount} modules fit across about {metrics.usableArea.toFixed(1)} sq m of usable roof area. Estimated payback is about {metrics.roiYears.toFixed(1)} years.
-        <MetricRow label="Annual sunlight" value={`${metrics.annualSunlightHours.toLocaleString()} hrs`} />
-      </div>
-      <div className="rounded-[1.15rem] border border-white/8 bg-slate-950/42 p-3 text-xs leading-6 text-slate-400">
-        Estimates are based on rooftop image interpretation, standard 400W modules, and a $0.13/kWh Arizona utility rate.
-      </div>
-    </div>
-  );
 }
 
 function AnalysisSidebarSkeleton() {
@@ -1693,21 +1251,6 @@ function MetricRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function LegendRow({
-  swatch,
-  label,
-}: {
-  swatch: string;
-  label: string;
-}) {
-  return (
-    <div className="flex items-center gap-3 text-sm text-slate-300">
-      <span className={`h-2.5 w-2.5 rounded-full ${swatch}`} />
-      <span>{label}</span>
-    </div>
-  );
-}
-
 function Pill({ label, tone = "slate" }: { label: string; tone?: "slate" | "cyan" | "amber" }) {
   const toneClass =
     tone === "cyan"
@@ -1719,29 +1262,6 @@ function Pill({ label, tone = "slate" }: { label: string; tone?: "slate" | "cyan
   return (
     <span
       className={`rounded-full border px-3 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.26em] ${toneClass}`.trim()}
-    >
-      {label}
-    </span>
-  );
-}
-
-function StatusBadge({
-  label,
-  tone = "slate",
-}: {
-  label: string;
-  tone?: "slate" | "cyan" | "amber";
-}) {
-  const toneClass =
-    tone === "cyan"
-      ? "border-cyan-300/18 bg-cyan-300/10 text-cyan-100"
-      : tone === "amber"
-        ? "border-amber-300/18 bg-amber-300/10 text-amber-100"
-        : "border-white/10 bg-slate-950/62 text-slate-200";
-
-  return (
-    <span
-      className={`rounded-full border px-3 py-1.5 text-[0.6rem] font-semibold uppercase tracking-[0.26em] backdrop-blur-md ${toneClass}`.trim()}
     >
       {label}
     </span>
@@ -1953,6 +1473,14 @@ function buildPanelLayout(analysis: RoofAnalysis, polygon: Point[]): PanelRect[]
 
 function pointsToString(points: Point[]) {
   return points.map((point) => `${point.x},${point.y}`).join(" ");
+}
+
+function polygonToCssClipPath(points: Point[]) {
+  if (!points.length) {
+    return "inset(0)";
+  }
+
+  return `polygon(${points.map((point) => `${point.x}% ${point.y}%`).join(", ")})`;
 }
 
 function panelFitsOutline(panel: PanelRect, outline: Point[]) {
