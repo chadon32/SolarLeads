@@ -448,7 +448,10 @@ export function buildSolarRoofAnalysis(params: {
     rawMaxConfig?.roofSegmentSummaries ?? [],
     panelCount,
     pitchDeg,
-    primaryRoofAzimuth
+    primaryRoofAzimuth,
+    solarPanels,
+    panelWidthMeters,
+    panelHeightMeters
   );
   const propertyType = inferPropertyType({
     roofAreaM2,
@@ -686,7 +689,10 @@ function buildRoofSegmentOutlines(
   segmentSummaries: NonNullable<SolarPanelConfig["roofSegmentSummaries"]>,
   totalPanels: number,
   defaultPitch: number,
-  defaultAzimuth: number
+  defaultAzimuth: number,
+  panels: SolarPanelPlacement[],
+  panelWidthMeters: number,
+  panelHeightMeters: number
 ): RoofSegment[] {
   const roofArea = segments.reduce(
     (sum, segment) => sum + (segment.stats?.areaMeters2 ?? segment.stats?.groundAreaMeters2 ?? 0),
@@ -709,7 +715,20 @@ function buildRoofSegmentOutlines(
       Math.round(summary?.panelsCount ?? totalPanels * share)
     );
     const label = fallbackOutlines[index]?.label ?? "primary";
-    const outline = segment.boundingBox ? boxToOutline(segment.boundingBox, roofBox) : buildFallbackSegmentOutline(index);
+    const panelOutline = buildSegmentOutlineFromPanels({
+      panels,
+      segmentIndex: index,
+      roofBox,
+      panelWidthMeters,
+      panelHeightMeters,
+      fallbackAzimuth: segment.azimuthDegrees ?? defaultAzimuth,
+    });
+    const outline =
+      panelOutline.length >= 3
+        ? panelOutline
+        : segment.boundingBox
+          ? boxToOutline(segment.boundingBox, roofBox)
+          : buildFallbackSegmentOutline(index);
     const sunshineScore = medianSunshine(segment.stats?.sunshineQuantiles ?? []);
     const usable =
       areaM2 >= 8 &&
@@ -771,6 +790,170 @@ function buildUsableOutlineFromPanels(
   }
 
   return convexHull(points);
+}
+
+function buildSegmentOutlineFromPanels({
+  panels,
+  segmentIndex,
+  roofBox,
+  panelWidthMeters,
+  panelHeightMeters,
+  fallbackAzimuth,
+}: {
+  panels: SolarPanelPlacement[];
+  segmentIndex: number;
+  roofBox: LatLngBox;
+  panelWidthMeters: number;
+  panelHeightMeters: number;
+  fallbackAzimuth: number;
+}) {
+  const segmentPanels = panels.filter(
+    (panel) =>
+      panel.segmentIndex === segmentIndex &&
+      Number.isFinite(panel.center.lat) &&
+      Number.isFinite(panel.center.lng)
+  );
+
+  if (segmentPanels.length < 2) {
+    return [];
+  }
+
+  const points = segmentPanels.flatMap((panel) =>
+    getPanelCornerCoordinates({
+      panel,
+      panels: segmentPanels,
+      panelWidthMeters,
+      panelHeightMeters,
+      fallbackAzimuth,
+    }).map((corner) =>
+      toNormalizedPoint(
+        {
+          latitude: corner.lat,
+          longitude: corner.lng,
+        },
+        roofBox
+      )
+    )
+  );
+
+  if (points.length < 4) {
+    return [];
+  }
+
+  return insetPolygon(convexHull(points), -1.8);
+}
+
+function getPanelCornerCoordinates({
+  panel,
+  panels,
+  panelWidthMeters,
+  panelHeightMeters,
+  fallbackAzimuth,
+}: {
+  panel: SolarPanelPlacement;
+  panels: SolarPanelPlacement[];
+  panelWidthMeters: number;
+  panelHeightMeters: number;
+  fallbackAzimuth: number;
+}) {
+  const shortSide = Math.min(panelWidthMeters, panelHeightMeters);
+  const longSide = Math.max(panelWidthMeters, panelHeightMeters);
+  const widthMeters = panel.orientation === "LANDSCAPE" ? longSide : shortSide;
+  const heightMeters = panel.orientation === "LANDSCAPE" ? shortSide : longSide;
+  const halfWidth = widthMeters / 2;
+  const halfHeight = heightMeters / 2;
+  const rotation = (inferPanelRotationDeg(panel, panels, fallbackAzimuth) * Math.PI) / 180;
+  const corners = [
+    { east: -halfWidth, north: -halfHeight },
+    { east: halfWidth, north: -halfHeight },
+    { east: halfWidth, north: halfHeight },
+    { east: -halfWidth, north: halfHeight },
+  ];
+
+  return corners.map((corner) => {
+    const rotatedEast =
+      corner.east * Math.cos(rotation) + corner.north * Math.sin(rotation);
+    const rotatedNorth =
+      -corner.east * Math.sin(rotation) + corner.north * Math.cos(rotation);
+
+    return offsetLatLngMeters({
+      lat: panel.center.lat,
+      lng: panel.center.lng,
+      eastMeters: rotatedEast,
+      northMeters: rotatedNorth,
+    });
+  });
+}
+
+function inferPanelRotationDeg(
+  panel: SolarPanelPlacement,
+  panels: SolarPanelPlacement[],
+  fallbackAzimuth: number
+) {
+  const rowNeighbor = panels
+    .filter(
+      (candidate) =>
+        candidate !== panel &&
+        candidate.rowIndex !== null &&
+        candidate.rowIndex === panel.rowIndex &&
+        candidate.columnIndex !== null &&
+        panel.columnIndex !== null
+    )
+    .sort(
+      (left, right) =>
+        Math.abs((left.columnIndex ?? 0) - (panel.columnIndex ?? 0)) -
+        Math.abs((right.columnIndex ?? 0) - (panel.columnIndex ?? 0))
+    )[0];
+
+  if (rowNeighbor) {
+    return normalizeDegrees(
+      bearingDegrees(panel.center.lat, panel.center.lng, rowNeighbor.center.lat, rowNeighbor.center.lng) - 90
+    );
+  }
+
+  const columnNeighbor = panels
+    .filter(
+      (candidate) =>
+        candidate !== panel &&
+        candidate.columnIndex !== null &&
+        candidate.columnIndex === panel.columnIndex &&
+        candidate.rowIndex !== null &&
+        panel.rowIndex !== null
+    )
+    .sort(
+      (left, right) =>
+        Math.abs((left.rowIndex ?? 0) - (panel.rowIndex ?? 0)) -
+        Math.abs((right.rowIndex ?? 0) - (panel.rowIndex ?? 0))
+    )[0];
+
+  if (columnNeighbor) {
+    return normalizeDegrees(
+      bearingDegrees(panel.center.lat, panel.center.lng, columnNeighbor.center.lat, columnNeighbor.center.lng)
+    );
+  }
+
+  return normalizeDegrees((Number.isFinite(panel.azimuthDeg) ? panel.azimuthDeg : fallbackAzimuth) - 90);
+}
+
+function offsetLatLngMeters({
+  lat,
+  lng,
+  eastMeters,
+  northMeters,
+}: {
+  lat: number;
+  lng: number;
+  eastMeters: number;
+  northMeters: number;
+}) {
+  const metersPerDegreeLat = 111_320;
+  const metersPerDegreeLng =
+    metersPerDegreeLat * Math.max(Math.cos((lat * Math.PI) / 180), 0.01);
+
+  return {
+    lat: lat + northMeters / metersPerDegreeLat,
+    lng: lng + eastMeters / metersPerDegreeLng,
+  };
 }
 
 function buildObstructionOutlines(
@@ -1051,6 +1234,24 @@ function haversineMeters(
 function angularDistance(left: number, right: number) {
   const delta = Math.abs(((left - right) % 360) + 360) % 360;
   return Math.min(delta, 360 - delta);
+}
+
+function bearingDegrees(fromLat: number, fromLng: number, toLat: number, toLng: number) {
+  const toRadians = (value: number) => (value * Math.PI) / 180;
+  const toDegrees = (value: number) => (value * 180) / Math.PI;
+  const lat1 = toRadians(fromLat);
+  const lat2 = toRadians(toLat);
+  const deltaLng = toRadians(toLng - fromLng);
+  const y = Math.sin(deltaLng) * Math.cos(lat2);
+  const x =
+    Math.cos(lat1) * Math.sin(lat2) -
+    Math.sin(lat1) * Math.cos(lat2) * Math.cos(deltaLng);
+
+  return normalizeDegrees(toDegrees(Math.atan2(y, x)));
+}
+
+function normalizeDegrees(value: number) {
+  return ((value % 360) + 360) % 360;
 }
 
 function clamp(value: number, min: number, max: number) {
