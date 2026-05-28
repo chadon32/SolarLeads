@@ -16,6 +16,21 @@ type AddressSearchProps = {
   selectedAddress?: string;
 };
 
+type PlaceDetailsPayload = {
+  formattedAddress?: string;
+  lat?: number;
+  lng?: number;
+  message?: string;
+  types?: string[];
+  primaryType?: string;
+  businessStatus?: string;
+  addressComponents?: Array<{
+    longText?: string;
+    shortText?: string;
+    types?: string[];
+  }>;
+};
+
 const demoSuggestions = [
   "7140 E Via Dona Rd, Scottsdale, AZ",
   "8420 E Shea Blvd, Scottsdale, AZ",
@@ -59,6 +74,70 @@ function isArizonaAddress(address: string) {
 
 function normalizeAddress(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function isClearlyNonResidentialPlace(payload: PlaceDetailsPayload) {
+  const knownCommercialTypes = new Set([
+    "establishment",
+    "point_of_interest",
+    "restaurant",
+    "bar",
+    "cafe",
+    "store",
+    "shopping_mall",
+    "school",
+    "hospital",
+    "doctor",
+    "bank",
+    "hotel",
+    "lodging",
+    "car_dealer",
+    "car_repair",
+    "church",
+    "synagogue",
+    "mosque",
+    "stadium",
+    "gym",
+    "post_office",
+    "local_government_office",
+    "fire_station",
+    "police",
+    "courthouse",
+    "office",
+    "apartment_building",
+    "subpremise",
+    "rooming_house",
+  ]);
+
+  const types = payload.types ?? [];
+  const addressComponentTypes =
+    payload.addressComponents?.flatMap((component) => component.types ?? []) ?? [];
+  const allTypes = new Set([...types, ...addressComponentTypes]);
+  const hasStreetAddressSignal =
+    allTypes.has("street_address") ||
+    allTypes.has("premise") ||
+    allTypes.has("route");
+  const hasCommercialSignal = [...allTypes].some((type) =>
+    knownCommercialTypes.has(type)
+  );
+
+  if (payload.primaryType && knownCommercialTypes.has(payload.primaryType)) {
+    return true;
+  }
+
+  if (!hasStreetAddressSignal && hasCommercialSignal) {
+    return true;
+  }
+
+  if (
+    payload.businessStatus === "OPERATIONAL" &&
+    hasCommercialSignal &&
+    !allTypes.has("street_address")
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
 export function AddressSearch({
@@ -205,12 +284,7 @@ export function AddressSearch({
       const response = await fetch(
         `/api/places/details?placeId=${encodeURIComponent(prediction.place_id)}`
       );
-      const payload: {
-        formattedAddress?: string;
-        lat?: number;
-        lng?: number;
-        message?: string;
-      } =
+      const payload: PlaceDetailsPayload =
         await response.json().catch(() => ({}));
       const formattedAddress =
         response.ok && payload.formattedAddress ? payload.formattedAddress : address;
@@ -220,6 +294,15 @@ export function AddressSearch({
           "We currently only serve Arizona homes. Please enter an AZ address."
         );
         setStatus("Arizona address required.");
+        onSelect({ address: "" });
+        return;
+      }
+
+      if (isClearlyNonResidentialPlace(payload)) {
+        setAddressError(
+          "That address looks like a business or non-residential property. Please choose a detached home address."
+        );
+        setStatus("Residential home required.");
         onSelect({ address: "" });
         return;
       }
