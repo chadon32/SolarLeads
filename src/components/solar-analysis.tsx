@@ -18,6 +18,7 @@ type ResolvedProperty = {
 
 type SolarAnalysisProps = {
   address: string;
+  compact?: boolean;
   location?: {
     lat?: number;
     lng?: number;
@@ -186,6 +187,7 @@ const azimuthLabels = [
 
 export function SolarAnalysis({
   address,
+  compact = false,
   location,
   onAnalysisChange,
 }: SolarAnalysisProps) {
@@ -520,20 +522,20 @@ export function SolarAnalysis({
   }
 
   return (
-    <section className="space-y-6">
+    <section className={compact ? "space-y-3" : "space-y-6"}>
       {stageStep ? (
         <AnalysisProgress step={stageStep.label} pct={stageStep.pct} />
       ) : null}
 
       {satelliteImage && stage !== "done" ? (
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.55fr)_22rem]">
+        <div className={compact ? "grid gap-4" : "grid gap-6 xl:grid-cols-[minmax(0,1.55fr)_22rem]"}>
           <div className="overflow-hidden rounded-[1.85rem] border border-white/10 bg-slate-950/76 shadow-[0_12px_42px_rgba(2,8,20,0.36)]">
             <ViewportHeader
               address={resolvedProperty?.address ?? address}
               viewMode={viewMode}
               onSelectView={setViewMode}
             />
-            <div className="relative min-h-[30rem]">
+            <div className={compact ? "relative min-h-[24rem]" : "relative min-h-[30rem]"}>
               <Image
                 src={satelliteImage}
                 alt={`Satellite view of ${resolvedProperty?.address ?? address}`}
@@ -559,11 +561,50 @@ export function SolarAnalysis({
             </div>
           </div>
 
-          <AnalysisSidebarSkeleton />
+          {compact ? null : <AnalysisSidebarSkeleton />}
         </div>
       ) : null}
 
       {stage === "done" && roofData && metrics ? (
+        compact ? (
+          <article className="overflow-hidden rounded-[1.5rem] border border-white/10 bg-slate-950/82 shadow-[0_14px_44px_rgba(2,8,20,0.36)]">
+            <ViewportHeader
+              address={resolvedProperty?.address ?? address}
+              viewMode={viewMode}
+              onSelectView={setViewMode}
+            />
+            <div className="border-t border-white/8 p-3">
+              <div className="relative overflow-hidden rounded-[1.1rem] border border-white/8">
+                <ViewportCanvas
+                  satelliteImage={satelliteImage}
+                  annualFluxUrl={annualFluxUrl}
+                  dsmUrl={dsmUrl}
+                  solarMaskUrl={solarMaskUrl}
+                  address={resolvedProperty?.address ?? address}
+                  compact
+                  property={resolvedProperty}
+                  roofData={roofData}
+                  viewMode={viewMode}
+                  selectedPanelCount={metrics.selectedPanelCount}
+                />
+              </div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                <CompactMapStat
+                  label="Panel layout"
+                  value={`${metrics.selectedPanelCount} modules`}
+                />
+                <CompactMapStat
+                  label="System size"
+                  value={`${metrics.selectedSystemKw.toFixed(1)} kW`}
+                />
+                <CompactMapStat
+                  label="Orientation"
+                  value={metrics.orientationLabel}
+                />
+              </div>
+            </div>
+          </article>
+        ) : (
         <div className="space-y-6">
           <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_23rem]">
             <article className="overflow-hidden rounded-[1.95rem] border border-white/10 bg-slate-950/82 shadow-[0_14px_44px_rgba(2,8,20,0.36)]">
@@ -666,6 +707,7 @@ export function SolarAnalysis({
             />
           </section>
         </div>
+        )
       ) : null}
     </section>
   );
@@ -728,6 +770,7 @@ function ViewportCanvas({
   dsmUrl,
   solarMaskUrl,
   address,
+  compact = false,
   property,
   roofData,
   viewMode,
@@ -738,6 +781,7 @@ function ViewportCanvas({
   dsmUrl: string | null;
   solarMaskUrl: string | null;
   address: string;
+  compact?: boolean;
   property: ResolvedProperty | null;
   roofData: RoofAnalysis;
   viewMode: ViewMode;
@@ -922,7 +966,7 @@ function ViewportCanvas({
   const showMapFallback = !mapsApiKey;
 
   return (
-    <div className="relative min-h-[36rem] overflow-hidden bg-slate-950 lg:min-h-[43rem]">
+    <div className={`relative overflow-hidden bg-slate-950 ${compact ? "min-h-[24rem] lg:min-h-[30rem]" : "min-h-[36rem] lg:min-h-[43rem]"}`}>
       <div ref={mapElementRef} className="absolute inset-0" />
       {showMapFallback && satelliteImage ? (
         <Image
@@ -2177,6 +2221,17 @@ function MetricRow({ label, value }: { label: string; value: string }) {
     <div className="flex items-center justify-between gap-3 rounded-[1.1rem] border border-white/8 bg-white/[0.03] px-3 py-3 text-sm">
       <span className="text-slate-400">{label}</span>
       <span className="font-semibold text-white">{value}</span>
+    </div>
+  );
+}
+
+function CompactMapStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-[0.9rem] border border-white/8 bg-white/[0.035] px-3 py-2.5">
+      <p className="text-[0.55rem] font-semibold uppercase tracking-[0.22em] text-slate-500">
+        {label}
+      </p>
+      <p className="mt-1 text-sm font-semibold text-white">{value}</p>
     </div>
   );
 }

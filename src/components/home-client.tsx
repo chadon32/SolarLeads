@@ -2,16 +2,13 @@
 
 import {
   ArrowRight,
-  DollarSign,
   FileText,
   Phone,
   ShieldCheck,
   Sparkles,
   Star,
-  Sun,
-  type LucideIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AddressSearch } from "@/components/address-search";
 import { AnalysisSequence } from "@/components/analysis-sequence";
 import { LeadCaptureForm } from "@/components/lead-capture-form";
@@ -101,39 +98,6 @@ export function HomeClient() {
     : selectedAddress
       ? "#solar-workspace"
       : "#address-estimate";
-  const highlights = useMemo(
-    () => [
-      {
-        icon: Sun,
-        value: roofAnalysis
-          ? `${roofAnalysis.annualSunlightHours.toLocaleString()} hrs`
-          : "1,700–2,100 hrs",
-        label: roofAnalysis
-          ? "Annual usable sunlight estimated for the detected roof"
-          : "Typical annual rooftop sunlight for Arizona detached homes",
-      },
-      {
-        icon: DollarSign,
-        value: roofAnalysis
-          ? `$${roofAnalysis.annualSavingsUSD.toLocaleString()}/yr`
-          : "$2.8K–$4.1K",
-        label: roofAnalysis
-          ? "Estimated yearly savings for this address"
-          : "Estimated yearly savings range",
-      },
-      {
-        icon: ShieldCheck,
-        value: roofAnalysis
-          ? `${roofAnalysis.rooftopConfidenceScore}/100`
-          : "High-confidence",
-        label: roofAnalysis
-          ? "Rooftop confidence score from the current property analysis"
-          : "Expected rooftop suitability for detached Arizona homes",
-      },
-    ],
-    [roofAnalysis]
-  );
-
   return (
     <main className="relative isolate min-h-screen overflow-hidden bg-black text-white">
       <CinematicVideoBackground />
@@ -152,7 +116,7 @@ export function HomeClient() {
         </div>
       ) : null}
 
-      <section className="relative z-10 mx-auto flex min-h-screen w-full max-w-7xl flex-col px-5 pb-20 pt-5 sm:px-7 md:px-10 lg:px-12">
+      <section className="relative z-10 mx-auto flex w-full max-w-7xl flex-col px-5 pb-10 pt-5 sm:px-7 md:px-10 lg:px-12">
         <nav className="liquid-glass relative z-20 mx-auto flex w-full max-w-6xl items-center justify-between gap-4 rounded-full px-4 py-3 sm:px-6 sm:py-4">
           <a href="#" className="flex min-w-0 items-center gap-3">
             <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-cyan-200/14 text-cyan-100 shadow-[0_0_34px_rgba(103,232,249,0.22)]">
@@ -175,8 +139,8 @@ export function HomeClient() {
             <a className="transition hover:text-white" href="#reviews">
               Reviews
             </a>
-            <a className="transition hover:text-white" href="#why-arizona">
-              Why Arizona
+            <a className="transition hover:text-white" href="#solar-workspace">
+              Report
             </a>
           </div>
 
@@ -198,15 +162,15 @@ export function HomeClient() {
           </div>
         </nav>
 
-        <div className="grid flex-1 items-center gap-10 py-16 lg:grid-cols-[minmax(0,1.05fr)_25rem] lg:py-20">
-          <div className="max-w-4xl text-center lg:text-left">
-            <div className="liquid-glass mx-auto inline-flex items-center gap-3 rounded-full px-4 py-2 text-sm font-medium text-white/78 lg:mx-0">
+        <div className="flex flex-1 items-center py-10 lg:py-14">
+          <div className="mx-auto max-w-4xl text-center">
+            <div className="liquid-glass mx-auto inline-flex items-center gap-3 rounded-full px-4 py-2 text-sm font-medium text-white/78">
               <span className="h-2 w-2 rounded-full bg-cyan-300 shadow-[0_0_20px_rgba(103,232,249,0.85)]" />
               Arizona residential analysis
             </div>
 
             <h1
-              className="mt-7 max-w-5xl text-5xl leading-[0.86] tracking-[-0.05em] text-white drop-shadow-[0_14px_50px_rgba(0,0,0,0.48)] md:text-7xl lg:text-8xl"
+              className="mt-6 max-w-5xl text-5xl leading-[0.88] tracking-[-0.05em] text-white drop-shadow-[0_14px_50px_rgba(0,0,0,0.48)] md:text-6xl lg:text-7xl"
               style={{ fontFamily: "'Instrument Serif', serif" }}
             >
               See your home with solar —{" "}
@@ -215,7 +179,7 @@ export function HomeClient() {
               </span>
             </h1>
 
-            <p className="mx-auto mt-7 max-w-2xl text-base leading-8 text-white/68 sm:text-lg lg:mx-0">
+            <p className="mx-auto mt-5 max-w-2xl text-base leading-7 text-white/68 sm:text-lg">
               Type your address below to review rooftop imagery, estimated panel
               placement, and a modeled savings profile for your property. No
               obligation.
@@ -223,7 +187,7 @@ export function HomeClient() {
 
             <div
               id="address-estimate"
-              className="liquid-glass liquid-glass-unclipped mt-8 rounded-[2rem] p-4 shadow-[0_28px_90px_rgba(0,0,0,0.34)] sm:p-6"
+              className="liquid-glass liquid-glass-unclipped mt-7 rounded-[1.75rem] p-4 shadow-[0_24px_80px_rgba(0,0,0,0.34)] sm:p-5"
             >
               <AddressSearch
                 selectedAddress={selectedAddress}
@@ -256,7 +220,7 @@ export function HomeClient() {
               ) : null}
             </div>
 
-            <div className="mt-6 flex flex-col items-center gap-3 sm:flex-row lg:items-start">
+            <div className="mt-5 flex flex-col items-center justify-center gap-3 sm:flex-row">
               <a
                 href={reportCtaHref}
                 className="liquid-glass inline-flex w-full items-center justify-center gap-2 rounded-full px-6 py-4 text-sm font-semibold text-white shadow-[0_22px_70px_rgba(103,232,249,0.18)] transition hover:-translate-y-0.5 sm:w-auto"
@@ -273,7 +237,7 @@ export function HomeClient() {
               </a>
             </div>
 
-            <div className="mt-5 flex flex-wrap justify-center gap-2 text-[0.68rem] font-semibold uppercase tracking-[0.28em] text-white/70 lg:justify-start">
+            <div className="mt-5 flex flex-wrap justify-center gap-2 text-[0.68rem] font-semibold uppercase tracking-[0.28em] text-white/70">
               {["No obligation", "Estimated ranges", "Arizona only"].map((pill) => (
                 <span key={pill} className="liquid-glass rounded-full px-3 py-2">
                   {pill}
@@ -281,62 +245,65 @@ export function HomeClient() {
               ))}
             </div>
           </div>
-
-          <div id="why-arizona" className="grid gap-4">
-            {highlights.map((item, index) => (
-              <StatCard
-                key={item.label}
-                icon={item.icon}
-                value={item.value}
-                label={item.label}
-                className={
-                  index === 1
-                    ? "lg:translate-x-8"
-                    : index === 2
-                      ? "lg:translate-x-2"
-                      : ""
-                }
-              />
-            ))}
-          </div>
         </div>
       </section>
 
       {showAnalysis ? (
         <section
           id="solar-workspace"
-          className="analysis-section relative z-10 mx-auto w-full max-w-7xl px-5 pb-16 sm:px-7 md:px-10 lg:px-12"
+          className="analysis-section relative z-10 mx-auto w-full max-w-7xl px-5 pb-10 sm:px-7 md:px-10 lg:px-12"
         >
-          <SectionIntro
-            eyebrow="Solar workspace"
-            title="A practical rooftop analysis workspace built around the actual property."
-            copy="Satellite imagery, roof segmentation, panel placement, and financial estimates are organized in one clear analysis surface."
-          />
-          <div className="liquid-glass mt-7 overflow-hidden rounded-[2rem] p-2 shadow-[0_28px_95px_rgba(0,0,0,0.42)] sm:p-3">
-            <SolarAnalysis
-              key={selectedAddress}
-              address={selectedAddress}
-              location={selectedLocation}
-              onAnalysisChange={setRoofAnalysis}
-            />
+          <div className="mb-5 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-100/82">
+                Solar report
+              </p>
+              <h2
+                className="mt-2 text-3xl leading-none tracking-[-0.035em] text-white md:text-5xl"
+                style={{ fontFamily: "'Instrument Serif', serif" }}
+              >
+                Roof analysis workspace
+              </h2>
+            </div>
+            {hasValidAnalysis ? (
+              <a
+                href="#report-dashboard"
+                className="text-sm font-semibold text-cyan-100/82 transition hover:text-cyan-50"
+              >
+                View report tabs
+              </a>
+            ) : null}
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-12">
+            <div className={hasValidAnalysis ? "lg:col-span-7" : "lg:col-span-12"}>
+              <div className="liquid-glass overflow-hidden rounded-[1.5rem] p-2 shadow-[0_22px_75px_rgba(0,0,0,0.38)]">
+                <SolarAnalysis
+                  key={selectedAddress}
+                  address={selectedAddress}
+                  compact
+                  location={selectedLocation}
+                  onAnalysisChange={setRoofAnalysis}
+                />
+              </div>
+            </div>
+            {hasValidAnalysis && roofAnalysis ? (
+              <SolarReportDashboard address={selectedAddress} analysis={roofAnalysis} />
+            ) : null}
           </div>
         </section>
       ) : null}
 
-      {hasValidAnalysis && roofAnalysis ? (
-        <SolarReportDashboard address={selectedAddress} analysis={roofAnalysis} />
-      ) : null}
-
       <section
         id="how-it-works"
-        className="relative z-10 mx-auto w-full max-w-7xl px-5 pb-16 sm:px-7 md:px-10 lg:px-12"
+        className="relative z-10 mx-auto w-full max-w-7xl px-5 pb-10 sm:px-7 md:px-10 lg:px-12"
       >
         <SectionIntro
           eyebrow="Why it works"
           title="See your roof, your layout, and your estimate without the pressure."
           copy="We keep the experience simple so you can evaluate the roof, the savings, and the next step on your own terms."
         />
-        <div className="mt-7 grid gap-4 lg:grid-cols-3">
+        <div className="mt-5 grid gap-3 lg:grid-cols-3">
           {featureCards.map((card) => (
             <FeatureCard key={card.title} title={card.title} copy={card.copy} />
           ))}
@@ -345,19 +312,19 @@ export function HomeClient() {
 
       <section
         id="reviews"
-        className="relative z-10 mx-auto w-full max-w-7xl px-5 pb-16 sm:px-7 md:px-10 lg:px-12"
+        className="relative z-10 mx-auto w-full max-w-7xl px-5 pb-10 sm:px-7 md:px-10 lg:px-12"
       >
-        <div className="liquid-glass rounded-[2.2rem] p-5 shadow-[0_28px_95px_rgba(0,0,0,0.42)] sm:p-7">
+        <div className="liquid-glass rounded-[1.7rem] p-5 shadow-[0_22px_75px_rgba(0,0,0,0.38)] sm:p-6">
           <p className="text-xs font-semibold uppercase tracking-[0.34em] text-cyan-100/82">
             Homeowner reviews
           </p>
           <h2
-            className="mt-4 text-4xl leading-none tracking-[-0.035em] text-white md:text-6xl"
+            className="mt-3 text-3xl leading-none tracking-[-0.035em] text-white md:text-5xl"
             style={{ fontFamily: "'Instrument Serif', serif" }}
           >
             What Arizona homeowners are saying
           </h2>
-          <div className="mt-7 grid snap-x snap-mandatory gap-4 overflow-x-auto pb-2 lg:grid-cols-3 lg:overflow-visible">
+          <div className="mt-5 grid snap-x snap-mandatory gap-3 overflow-x-auto pb-2 lg:grid-cols-3 lg:overflow-visible">
             {testimonials.map((item) => (
               <ReviewCard key={item.name} name={item.name} quote={item.quote} />
             ))}
@@ -368,14 +335,14 @@ export function HomeClient() {
       {hasValidAnalysis ? (
         <section
           id="contact"
-          className="relative z-10 mx-auto w-full max-w-7xl px-5 pb-16 sm:px-7 md:px-10 lg:px-12"
+          className="relative z-10 mx-auto w-full max-w-7xl px-5 pb-12 sm:px-7 md:px-10 lg:px-12"
         >
           <SectionIntro
             eyebrow="Generate report"
             title="Ready to see your full report? Enter your details and we’ll send it instantly."
             copy="We only need a few details to generate the report and send the estimate to you."
           />
-          <div className="mt-7">
+          <div className="mt-5">
             <LeadCaptureForm
               initialAddress={selectedAddress}
               analysis={roofAnalysis}
@@ -514,40 +481,6 @@ function CinematicVideoBackground() {
   );
 }
 
-function StatCard({
-  icon: Icon,
-  value,
-  label,
-  className = "",
-}: {
-  icon: LucideIcon;
-  value: string;
-  label: string;
-  className?: string;
-}) {
-  return (
-    <article
-      className={`liquid-glass rounded-[1.8rem] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.34)] ${className}`.trim()}
-    >
-      <div className="flex items-start justify-between gap-4">
-        <span className="grid h-11 w-11 place-items-center rounded-full bg-cyan-200/12 text-cyan-100">
-          <Icon className="h-5 w-5" aria-hidden="true" />
-        </span>
-        <span
-          className="rounded-full border border-cyan-100/14 bg-cyan-100/8 px-2.5 py-1 text-[0.56rem] font-semibold uppercase tracking-[0.28em] text-cyan-100"
-          title="This is a modeled estimate. Your final report will include measurements specific to your roof."
-        >
-          Est.
-        </span>
-      </div>
-      <p className="mt-5 text-3xl font-semibold tracking-[-0.035em] text-white">
-        {value}
-      </p>
-      <p className="mt-2 text-sm leading-6 text-white/58">{label}</p>
-    </article>
-  );
-}
-
 function SectionIntro({
   eyebrow,
   title,
@@ -563,12 +496,12 @@ function SectionIntro({
         {eyebrow}
       </span>
       <h2
-        className="mt-5 text-4xl leading-[0.95] tracking-[-0.04em] text-white md:text-6xl"
+        className="mt-4 text-3xl leading-[0.98] tracking-[-0.04em] text-white md:text-5xl"
         style={{ fontFamily: "'Instrument Serif', serif" }}
       >
         {title}
       </h2>
-      <p className="mx-auto mt-4 max-w-2xl text-base leading-7 text-white/62">
+      <p className="mx-auto mt-3 max-w-2xl text-sm leading-6 text-white/62 sm:text-base">
         {copy}
       </p>
     </div>
@@ -577,17 +510,17 @@ function SectionIntro({
 
 function FeatureCard({ title, copy }: { title: string; copy: string }) {
   return (
-    <article className="liquid-glass rounded-[1.8rem] p-6 shadow-[0_24px_80px_rgba(0,0,0,0.32)]">
-      <div className="mb-7 h-px w-20 bg-gradient-to-r from-cyan-200/80 to-transparent" />
+    <article className="liquid-glass rounded-[1.35rem] p-5 shadow-[0_18px_60px_rgba(0,0,0,0.3)]">
+      <div className="mb-5 h-px w-20 bg-gradient-to-r from-cyan-200/80 to-transparent" />
       <h3 className="text-xl font-semibold tracking-tight text-white">{title}</h3>
-      <p className="mt-3 text-sm leading-7 text-white/62">{copy}</p>
+      <p className="mt-3 text-sm leading-6 text-white/62">{copy}</p>
     </article>
   );
 }
 
 function ReviewCard({ name, quote }: { name: string; quote: string }) {
   return (
-    <article className="liquid-glass min-w-[18rem] snap-start rounded-[1.7rem] p-5 shadow-[0_18px_60px_rgba(0,0,0,0.28)]">
+    <article className="liquid-glass min-w-[18rem] snap-start rounded-[1.25rem] p-4 shadow-[0_18px_60px_rgba(0,0,0,0.28)]">
       <div className="flex gap-1 text-amber-200">
         {Array.from({ length: 5 }).map((_, index) => (
           <Star
