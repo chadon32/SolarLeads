@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { buildSolarReport } from "@/lib/solar-report";
 import { buildReportPdfPath } from "@/lib/report-access";
 import { enforceRateLimit } from "@/lib/rate-limit";
 
@@ -63,12 +62,11 @@ export async function POST(request: Request) {
     const address = body.address?.trim();
     const monthlyBill = Number(body.monthlyBill);
     const annualSavingsOverride = Number(body.annualSavings);
-    const report = Number.isFinite(monthlyBill)
-      ? buildSolarReport(monthlyBill)
-      : null;
-    const estimatedSavings = Number.isFinite(annualSavingsOverride)
-      ? Math.round(annualSavingsOverride)
-      : report?.annualSavings;
+    const panelCount = Number(body.panelCount);
+    const estimatedSavings =
+      Number.isFinite(annualSavingsOverride) && annualSavingsOverride > 0
+        ? Math.round(annualSavingsOverride)
+        : null;
 
     if (
       !name ||
@@ -80,10 +78,12 @@ export async function POST(request: Request) {
       phone.replace(/\D/g, "").length > 15 ||
       !address ||
       address.length < 8 ||
+      !Number.isFinite(panelCount) ||
+      panelCount < 1 ||
       !estimatedSavings
     ) {
       return NextResponse.json(
-        { message: "Missing required lead fields." },
+        { message: "Missing required lead fields or Solar API analysis values." },
         { status: 400 }
       );
     }

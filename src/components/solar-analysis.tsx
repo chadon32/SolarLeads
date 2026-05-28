@@ -75,31 +75,6 @@ type AnalysisMetrics = {
   orientationLabel: string;
 };
 
-type Point = {
-  x: number;
-  y: number;
-};
-
-type PanelRect = {
-  id: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  rotation: number;
-};
-
-type MeasurementLine = {
-  id: string;
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
-  labelX: number;
-  labelY: number;
-  label: string;
-};
-
 type RasterData =
   | Float32Array
   | Float64Array
@@ -109,6 +84,58 @@ type RasterData =
   | Int8Array
   | Int16Array
   | Int32Array;
+
+type GoogleMapsWindow = Window &
+  typeof globalThis & {
+    google?: GoogleMapsApi;
+    __solarMapsPromise?: Promise<GoogleMapsApi>;
+  };
+
+type GoogleMapsApi = {
+  maps: {
+    Map: new (
+      element: HTMLElement,
+      options: Record<string, unknown>
+    ) => GoogleMapInstance;
+    LatLng: new (lat: number, lng: number) => GoogleLatLngInstance;
+    Rectangle: new (
+      options: Record<string, unknown>
+    ) => GoogleMapOverlayInstance;
+    Polygon: new (
+      options: Record<string, unknown>
+    ) => GoogleMapOverlayInstance;
+    OverlayView: new () => GoogleOverlayViewInstance;
+    MapTypeId: {
+      SATELLITE: string;
+    };
+  };
+};
+
+type GoogleMapInstance = {
+  setCenter: (latLng: { lat: number; lng: number }) => void;
+  setZoom: (zoom: number) => void;
+  setMapTypeId: (mapTypeId: string) => void;
+  setTilt: (tilt: number) => void;
+};
+
+type GoogleLatLngInstance = unknown;
+
+type GoogleMapOverlayInstance = {
+  setMap: (map: GoogleMapInstance | null) => void;
+};
+
+type GoogleOverlayViewInstance = GoogleMapOverlayInstance & {
+  onAdd: () => void;
+  draw: () => void;
+  onRemove: () => void;
+  getPanes: () => { overlayLayer?: HTMLElement } | null;
+  getProjection: () => {
+    fromLatLngToDivPixel: (latLng: GoogleLatLngInstance) => {
+      x: number;
+      y: number;
+    } | null;
+  };
+};
 
 const viewModes: Array<{ id: ViewMode; label: string }> = [
   { id: "overview", label: "Overview" },
@@ -146,7 +173,6 @@ export function SolarAnalysis({
   const [satelliteImage, setSatelliteImage] = useState<string | null>(null);
   const [annualFluxUrl, setAnnualFluxUrl] = useState<string | null>(null);
   const [solarMaskUrl, setSolarMaskUrl] = useState<string | null>(null);
-  const [imageBounds, setImageBounds] = useState<RoofGeoBounds | null>(null);
   const [roofData, setRoofData] = useState<RoofAnalysis | null>(null);
   const [resolvedProperty, setResolvedProperty] =
     useState<ResolvedProperty | null>(null);
@@ -164,7 +190,6 @@ export function SolarAnalysis({
         setSatelliteImage(null);
         setAnnualFluxUrl(null);
         setSolarMaskUrl(null);
-        setImageBounds(null);
         setRoofData(null);
         setSelectedPanelCount(0);
         setResolvedProperty(null);
@@ -231,7 +256,6 @@ export function SolarAnalysis({
 
         const dataUri = `data:${imagePayload.mimeType};base64,${imagePayload.base64}`;
         setSatelliteImage(dataUri);
-        setImageBounds(imagePayload.bounds ?? null);
         if (dataLayersResponse?.ok) {
           const dataLayersPayload: SolarDataLayersPayload = await dataLayersResponse
             .json()
@@ -327,47 +351,6 @@ export function SolarAnalysis({
     };
   }, [address, location, onAnalysisChange]);
 
-  const overlay = useMemo(() => {
-    if (!roofData) {
-      return null;
-    }
-
-    const footprint = projectPolygonToImage(
-      roofData.roofOutline,
-      roofData.roofBounds,
-      imageBounds
-    );
-    const usable = projectPolygonToImage(
-      roofData.usableOutline,
-      roofData.roofBounds,
-      imageBounds
-    );
-    const panels = projectSolarPanels(roofData, imageBounds);
-    const obstructions = roofData.obstructionOutlines.map((outline) =>
-      projectPolygonToImage(outline, roofData.roofBounds, imageBounds)
-    );
-    const segments = roofData.roofSegments.map((segment) => ({
-      ...segment,
-      outline: projectPolygonToImage(
-        segment.outline,
-        roofData.roofBounds,
-        imageBounds
-      ),
-    }));
-    const bounds = getBounds(footprint);
-    const measurements = buildMeasurementLines(footprint, bounds, roofData);
-
-    return {
-      footprint,
-      usable,
-      segments,
-      panels,
-      obstructions,
-      bounds,
-      measurements,
-    };
-  }, [roofData, imageBounds]);
-
   const selectedPanels = useMemo(() => {
     if (!roofData) {
       return [];
@@ -404,27 +387,31 @@ export function SolarAnalysis({
       1,
       Math.max(1, roofData.panelCount)
     );
-    const totalAnnualKwh =
-      selectedPanels.length > 0
-        ? selectedPanels.reduce(
-            (sum, panel) => sum + Math.max(panel.yearlyEnergyDcKwh, 0),
-            0
-          )
-        : roofData.annualKwh;
+    const selectedConfig = findNearestPanelConfig(
+      roofData.solarPanelConfigs,
+      livePanelCount
+    );
+    const totalAnnualKwh = roofData.annualKwh;
     const perPanelKwh =
-      roofData.panelCount > 0 ? totalAnnualKwh / Math.max(roofData.panelCount, 1) : 0;
+      roofData.panelCount > 0
+        ? totalAnnualKwh / Math.max(roofData.panelCount, 1)
+        : 0;
     const selectedAnnualKwh = Math.max(
       0,
       Math.round(
-        selectedPanels.length > 0
-          ? totalAnnualKwh
-          : perPanelKwh * livePanelCount
+        selectedConfig?.yearlyEnergyDcKwh ??
+          (selectedPanels.length > 0
+            ? selectedPanels.reduce(
+                (sum, panel) => sum + Math.max(panel.yearlyEnergyDcKwh, 0),
+                0
+              )
+            : perPanelKwh * livePanelCount)
       )
     );
     const selectedAnnualSavingsUSD = Math.round(selectedAnnualKwh * 0.13);
     const selectedSystemKw = Math.round(((livePanelCount * panelCapacityWatts) / 1000) * 10) / 10;
     const monthlySavings = Math.round(selectedAnnualSavingsUSD / 12);
-    const estimatedNetCost = selectedSystemKw * 2550 * 0.74;
+    const estimatedNetCost = livePanelCount * panelCapacityWatts * 2.75;
     const roiYears = estimatedNetCost / Math.max(selectedAnnualSavingsUSD, 1);
     const carbonOffsetLbs = Math.round(selectedAnnualKwh * 1.54);
     const carbonOffsetTons = carbonOffsetLbs / 2000;
@@ -458,9 +445,9 @@ export function SolarAnalysis({
     stage === "resolving"
       ? { label: "Resolving property coordinates...", pct: 14 }
       : stage === "fetching"
-        ? { label: "Pulling high-zoom rooftop imagery...", pct: 38 }
+        ? { label: "Analyzing roof with satellite data...", pct: 38 }
         : stage === "analyzing"
-          ? { label: "Running roof analysis...", pct: 76 }
+          ? { label: "Analyzing roof with satellite data...", pct: 76 }
           : null;
 
   if (stage === "error") {
@@ -535,10 +522,10 @@ export function SolarAnalysis({
                     Processing
                   </p>
                   <p className="mt-3 text-base font-medium text-white">
-                    Building the roof analysis view
+                    Analyzing roof with satellite data...
                   </p>
                   <p className="mt-2 text-sm leading-6 text-slate-300">
-                    Measuring roof edges, usable area, and likely panel zones.
+                    Waiting for Google Solar API roof geometry, panel coordinates, and annual flux layers.
                   </p>
                 </div>
               </div>
@@ -549,7 +536,7 @@ export function SolarAnalysis({
         </div>
       ) : null}
 
-      {stage === "done" && roofData && overlay && metrics ? (
+      {stage === "done" && roofData && metrics ? (
         <div className="space-y-6">
           <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_23rem]">
             <article className="overflow-hidden rounded-[1.95rem] border border-white/10 bg-slate-950/82 shadow-[0_14px_44px_rgba(2,8,20,0.36)]">
@@ -565,7 +552,8 @@ export function SolarAnalysis({
                     annualFluxUrl={annualFluxUrl}
                     solarMaskUrl={solarMaskUrl}
                     address={resolvedProperty?.address ?? address}
-                    overlay={overlay}
+                    property={resolvedProperty}
+                    roofData={roofData}
                     viewMode={viewMode}
                     selectedPanelCount={metrics.selectedPanelCount}
                   />
@@ -713,7 +701,8 @@ function ViewportCanvas({
   annualFluxUrl,
   solarMaskUrl,
   address,
-  overlay,
+  property,
+  roofData,
   viewMode,
   selectedPanelCount,
 }: {
@@ -721,29 +710,139 @@ function ViewportCanvas({
   annualFluxUrl: string | null;
   solarMaskUrl: string | null;
   address: string;
-  overlay: {
-    footprint: Point[];
-    usable: Point[];
-    segments: RoofAnalysis["roofSegments"];
-    panels: PanelRect[];
-    obstructions: Point[][];
-    bounds: Bounds;
-    measurements: MeasurementLine[];
-  };
+  property: ResolvedProperty | null;
+  roofData: RoofAnalysis;
   viewMode: ViewMode;
   selectedPanelCount: number;
 }) {
-  const footprintPoints = pointsToString(overlay.footprint);
-  const usablePoints = pointsToString(overlay.usable);
-  const showPanels = viewMode === "panels";
-  const showObstructions = viewMode === "panels" || viewMode === "irradiance";
-  const showMeasurements = viewMode === "overview";
-  const showSegmentLabels = viewMode !== "overview";
-  const showSegmentFills = viewMode === "panels";
+  const mapElementRef = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<GoogleMapInstance | null>(null);
+  const overlayRefs = useRef<GoogleMapOverlayInstance[]>([]);
+  const mapsApiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
+  const center = useMemo(
+    () =>
+      property
+        ? { lat: property.lat, lng: property.lng }
+        : getRoofBoundsCenter(roofData.roofBounds),
+    [property, roofData.roofBounds]
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const setupMap = async () => {
+      if (!mapElementRef.current || !center || !mapsApiKey) {
+        return;
+      }
+
+      const googleApi = await loadGoogleMapsApi(mapsApiKey);
+      if (cancelled || !mapElementRef.current) {
+        return;
+      }
+
+      if (!mapRef.current) {
+        mapRef.current = new googleApi.maps.Map(mapElementRef.current, {
+          center,
+          zoom: 19,
+          tilt: 0,
+          mapTypeId: googleApi.maps.MapTypeId.SATELLITE,
+          disableDefaultUI: true,
+          clickableIcons: false,
+          keyboardShortcuts: false,
+          gestureHandling: "greedy",
+        });
+      }
+
+      mapRef.current.setCenter(center);
+      mapRef.current.setZoom(19);
+      mapRef.current.setTilt(0);
+      mapRef.current.setMapTypeId(googleApi.maps.MapTypeId.SATELLITE);
+    };
+
+    void setupMap();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [center, mapsApiKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const drawOverlays = async () => {
+      if (!mapRef.current || !mapsApiKey) {
+        return;
+      }
+
+      const googleApi = await loadGoogleMapsApi(mapsApiKey);
+      if (cancelled || !mapRef.current) {
+        return;
+      }
+
+      clearGoogleOverlays(overlayRefs.current);
+      overlayRefs.current = [];
+
+      const nextOverlays: GoogleMapOverlayInstance[] = [];
+      const boundsOverlay = createRoofBoundsOverlay(
+        googleApi,
+        roofData.roofBounds,
+        mapRef.current
+      );
+      if (boundsOverlay) {
+        nextOverlays.push(boundsOverlay);
+      }
+
+      if (viewMode === "overview" || viewMode === "irradiance") {
+        const heatmapOverlay = await createAnnualFluxMapOverlay({
+          googleApi,
+          map: mapRef.current,
+          annualFluxUrl,
+          solarMaskUrl,
+          fallbackBounds: roofData.roofBounds,
+          opacity: viewMode === "overview" ? 0.55 : 0.68,
+        });
+
+        if (heatmapOverlay) {
+          nextOverlays.push(heatmapOverlay);
+        }
+      }
+
+      if (viewMode === "panels") {
+        nextOverlays.push(
+          ...createPanelMapOverlays({
+            googleApi,
+            map: mapRef.current,
+            roofData,
+            selectedPanelCount,
+          })
+        );
+      }
+
+      overlayRefs.current = nextOverlays;
+    };
+
+    void drawOverlays();
+
+    return () => {
+      cancelled = true;
+      clearGoogleOverlays(overlayRefs.current);
+      overlayRefs.current = [];
+    };
+  }, [
+    annualFluxUrl,
+    mapsApiKey,
+    roofData,
+    selectedPanelCount,
+    solarMaskUrl,
+    viewMode,
+  ]);
+
+  const showMapFallback = !mapsApiKey;
 
   return (
     <div className="relative min-h-[36rem] overflow-hidden bg-slate-950 lg:min-h-[43rem]">
-      {satelliteImage ? (
+      <div ref={mapElementRef} className="absolute inset-0" />
+      {showMapFallback && satelliteImage ? (
         <Image
           src={satelliteImage}
           alt={`Satellite view of ${address}`}
@@ -752,313 +851,410 @@ function ViewportCanvas({
           className="object-cover"
         />
       ) : null}
-      <div
-        className={`absolute inset-0 ${
-          viewMode === "overview" || viewMode === "irradiance"
-            ? "bg-transparent"
-            : "bg-[linear-gradient(180deg,rgba(4,8,16,0.08),rgba(4,8,16,0.52))]"
-        }`}
-      />
-      <div
-        className={`absolute inset-0 ${
-          viewMode === "overview" || viewMode === "irradiance"
-            ? "bg-transparent"
-            : "bg-[linear-gradient(180deg,rgba(6,10,18,0.02),rgba(6,10,18,0.18))]"
-        }`}
-      />
-      <AnnualFluxCanvasOverlay
-        annualFluxUrl={annualFluxUrl}
-        solarMaskUrl={solarMaskUrl}
-        viewMode={viewMode}
-        clipPath={polygonToCssClipPath(overlay.footprint)}
-      />
-
-      <svg
-        viewBox="0 0 100 100"
-        className="absolute inset-0 h-full w-full"
-        preserveAspectRatio="none"
-        aria-hidden="true"
-      >
-        <defs>
-          <clipPath id="usable-roof-zone">
-            <polygon points={usablePoints} />
-          </clipPath>
-          <linearGradient id="usable-fill" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="rgba(34, 211, 238, 0.24)" />
-            <stop offset="100%" stopColor="rgba(59, 130, 246, 0.08)" />
-          </linearGradient>
-        </defs>
-
-        <polygon
-          points={footprintPoints}
-          fill={viewMode === "overview" ? "rgba(255,255,255,0.01)" : "rgba(3, 7, 18, 0.03)"}
-          stroke={viewMode === "overview" ? "rgba(255,255,255,0.42)" : "rgba(103, 232, 249, 0.82)"}
-          strokeWidth={viewMode === "overview" ? "0.24" : "0.5"}
-          strokeDasharray={viewMode === "overview" ? "0" : "1.2 1.1"}
-        />
-        <polygon
-          points={usablePoints}
-          fill={viewMode === "overview" ? "rgba(255,255,255,0.02)" : "url(#usable-fill)"}
-          stroke={viewMode === "overview" ? "rgba(255,255,255,0.16)" : "rgba(255,255,255,0.38)"}
-          strokeWidth={viewMode === "overview" ? "0.16" : "0.45"}
-        />
-
-        <g clipPath="url(#usable-roof-zone)">
-          {overlay.segments
-            .filter((segment) => segment.outline.length >= 3)
-            .map((segment) => (
-              <g key={`segment-${segment.label}`}>
-                <polygon
-                  points={pointsToString(segment.outline)}
-                  fill={
-                    showSegmentFills
-                      ? segment.usable
-                        ? "rgba(255,255,255,0.05)"
-                        : "rgba(248,113,113,0.08)"
-                      : "rgba(255,255,255,0)"
-                  }
-                  stroke={viewMode === "overview" ? "rgba(255,255,255,0.12)" : segment.usable ? "rgba(255,255,255,0.22)" : "rgba(248,113,113,0.34)"}
-                  strokeWidth={viewMode === "overview" ? "0.12" : "0.16"}
-                />
-                {showSegmentLabels ? (
-                  <>
-                    <text
-                      x={getPolygonCenter(segment.outline).x}
-                      y={getPolygonCenter(segment.outline).y - 0.7}
-                      textAnchor="middle"
-                      fontSize="1.05"
-                      fill="rgba(255,255,255,0.84)"
-                      letterSpacing="0.08em"
-                    >
-                      {segment.label.toUpperCase()}
-                    </text>
-                    <text
-                      x={getPolygonCenter(segment.outline).x}
-                      y={getPolygonCenter(segment.outline).y + 1.1}
-                      textAnchor="middle"
-                      fontSize="0.86"
-                      fill="rgba(255,255,255,0.72)"
-                      letterSpacing="0.04em"
-                    >
-                      {`${segment.areaM2.toFixed(1)} m²`}
-                    </text>
-                  </>
-                ) : null}
-              </g>
-            ))}
-          {showPanels
-            ? overlay.panels.slice(0, selectedPanelCount).map((panel) => (
-                <rect
-                  key={panel.id}
-                  x={panel.x}
-                  y={panel.y}
-                  width={panel.width}
-                  height={panel.height}
-                  rx="0.14"
-                  fill="rgba(43, 112, 255, 0.72)"
-                  stroke="rgba(255,255,255,0.72)"
-                  strokeWidth="0.12"
-                  transform={`rotate(${panel.rotation} ${panel.x + panel.width / 2} ${
-                    panel.y + panel.height / 2
-                  })`}
-                />
-              ))
-            : null}
-        </g>
-
-        {showObstructions
-          ? overlay.obstructions.map((zone, index) => (
-              <g key={`zone-${index}`}>
-                <polygon
-                  points={pointsToString(zone)}
-                  fill="rgba(248,113,113,0.18)"
-                  stroke="rgba(248,113,113,0.66)"
-                  strokeWidth="0.22"
-                  strokeDasharray="0.8 0.6"
-                />
-              </g>
-            ))
-          : null}
-
-        {showMeasurements ? overlay.measurements.map((measurement) => (
-          <g key={measurement.id}>
-            <line
-              x1={measurement.x1}
-              y1={measurement.y1}
-              x2={measurement.x2}
-              y2={measurement.y2}
-              stroke="rgba(255,255,255,0.82)"
-              strokeWidth="0.24"
-            />
-            <line
-              x1={measurement.x1}
-              y1={measurement.y1}
-              x2={measurement.x1 + (measurement.x1 === measurement.x2 ? -1.1 : 0)}
-              y2={measurement.y1 + (measurement.y1 === measurement.y2 ? -1.1 : 0)}
-              stroke="rgba(255,255,255,0.82)"
-              strokeWidth="0.24"
-            />
-            <line
-              x1={measurement.x2}
-              y1={measurement.y2}
-              x2={measurement.x2 + (measurement.x1 === measurement.x2 ? -1.1 : 0)}
-              y2={measurement.y2 + (measurement.y1 === measurement.y2 ? -1.1 : 0)}
-              stroke="rgba(255,255,255,0.82)"
-              strokeWidth="0.24"
-            />
-            <rect
-              x={measurement.labelX - 5.8}
-              y={measurement.labelY - 2}
-              width="11.6"
-              height="4"
-              rx="1.2"
-              fill="rgba(8, 12, 20, 0.82)"
-              stroke="rgba(255,255,255,0.16)"
-              strokeWidth="0.12"
-            />
-            <text
-              x={measurement.labelX}
-              y={measurement.labelY + 0.35}
-              textAnchor="middle"
-              fontSize="1.25"
-              fill="rgba(255,255,255,0.92)"
-              letterSpacing="0.06em"
-            >
-              {measurement.label}
-            </text>
-          </g>
-        )) : null}
-      </svg>
-
+      {showMapFallback ? (
+        <div className="absolute inset-0 flex items-center justify-center bg-slate-950/72 px-6 text-center">
+          <p className="max-w-sm text-sm leading-6 text-slate-300">
+            Google Maps browser key is missing. Add
+            {" "}
+            <span className="font-semibold text-white">NEXT_PUBLIC_GOOGLE_MAPS_API_KEY</span>
+            {" "}
+            to render live map overlays.
+          </p>
+        </div>
+      ) : null}
     </div>
   );
 }
 
-function AnnualFluxCanvasOverlay({
+function loadGoogleMapsApi(apiKey: string) {
+  const browserWindow = window as GoogleMapsWindow;
+
+  if (browserWindow.google?.maps) {
+    return Promise.resolve(browserWindow.google);
+  }
+
+  if (!browserWindow.__solarMapsPromise) {
+    browserWindow.__solarMapsPromise = new Promise((resolve, reject) => {
+      const existingScript = document.getElementById("google-maps-js");
+      const callbackName = "__initSolarGoogleMaps";
+      const callbacks = browserWindow as unknown as Record<
+        string,
+        (() => void) | undefined
+      >;
+
+      callbacks[callbackName] = () => {
+        if (browserWindow.google?.maps) {
+          resolve(browserWindow.google);
+        } else {
+          reject(new Error("Google Maps failed to initialize."));
+        }
+      };
+
+      if (existingScript) {
+        return;
+      }
+
+      const script = document.createElement("script");
+      script.id = "google-maps-js";
+      script.async = true;
+      script.defer = true;
+      script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(
+        apiKey
+      )}&callback=${callbackName}`;
+      script.onerror = () => reject(new Error("Google Maps script failed to load."));
+      document.head.appendChild(script);
+    });
+  }
+
+  return browserWindow.__solarMapsPromise;
+}
+
+function clearGoogleOverlays(overlays: GoogleMapOverlayInstance[]) {
+  overlays.forEach((overlay) => overlay.setMap(null));
+}
+
+function createRoofBoundsOverlay(
+  googleApi: GoogleMapsApi,
+  bounds: RoofGeoBounds | null,
+  map: GoogleMapInstance
+) {
+  if (!bounds) {
+    return null;
+  }
+
+  const rectangle = new googleApi.maps.Rectangle({
+    bounds: {
+      north: bounds.northeast.lat,
+      south: bounds.southwest.lat,
+      east: bounds.northeast.lng,
+      west: bounds.southwest.lng,
+    },
+    clickable: false,
+    fillOpacity: 0,
+    map,
+    strokeColor: "#22d3ee",
+    strokeOpacity: 0.9,
+    strokeWeight: 2,
+  });
+
+  return rectangle;
+}
+
+function createPanelMapOverlays({
+  googleApi,
+  map,
+  roofData,
+  selectedPanelCount,
+}: {
+  googleApi: GoogleMapsApi;
+  map: GoogleMapInstance;
+  roofData: RoofAnalysis;
+  selectedPanelCount: number;
+}) {
+  return roofData.solarPanels
+    .slice(0, selectedPanelCount)
+    .map((panel) => {
+      const segment = roofData.roofSegments[panel.segmentIndex];
+      const azimuth = Number.isFinite(panel.azimuthDeg)
+        ? panel.azimuthDeg
+        : segment?.azimuthDeg ?? roofData.primaryRoofAzimuth;
+      const path = buildPanelPath(googleApi, {
+        centerLat: panel.center.lat,
+        centerLng: panel.center.lng,
+        orientation: panel.orientation,
+        azimuthDeg: azimuth,
+      });
+
+      return new googleApi.maps.Polygon({
+        clickable: false,
+        fillColor: "#3b82f6",
+        fillOpacity: 0.7,
+        map,
+        paths: path,
+        strokeColor: "#ffffff",
+        strokeOpacity: 0.92,
+        strokeWeight: 1,
+      });
+    });
+}
+
+async function createAnnualFluxMapOverlay({
+  googleApi,
+  map,
   annualFluxUrl,
   solarMaskUrl,
-  viewMode,
-  clipPath,
+  fallbackBounds,
+  opacity,
 }: {
+  googleApi: GoogleMapsApi;
+  map: GoogleMapInstance;
   annualFluxUrl: string | null;
   solarMaskUrl: string | null;
-  viewMode: ViewMode;
-  clipPath: string;
+  fallbackBounds: RoofGeoBounds | null;
+  opacity: number;
 }) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  if (!annualFluxUrl) {
+    return null;
+  }
 
-  useEffect(() => {
-    let cancelled = false;
-    const canvas = canvasRef.current;
+  const heatmap = await buildAnnualFluxCanvas({
+    annualFluxUrl,
+    solarMaskUrl,
+    fallbackBounds,
+  });
 
-    if (!canvas || !annualFluxUrl || (viewMode !== "overview" && viewMode !== "irradiance")) {
-      const context = canvas?.getContext("2d");
-      if (canvas && context) {
-        context.clearRect(0, 0, canvas.width, canvas.height);
-      }
-      return undefined;
+  if (!heatmap) {
+    return null;
+  }
+
+  const container = document.createElement("div");
+  container.style.position = "absolute";
+  container.style.pointerEvents = "none";
+  container.style.opacity = String(opacity);
+  container.style.mixBlendMode = "screen";
+
+  heatmap.canvas.style.width = "100%";
+  heatmap.canvas.style.height = "100%";
+  container.appendChild(heatmap.canvas);
+
+  const overlay = new googleApi.maps.OverlayView();
+  overlay.onAdd = function onAdd() {
+    this.getPanes()?.overlayLayer?.appendChild(container);
+  };
+  overlay.draw = function draw() {
+    const projection = this.getProjection();
+    const ne = projection.fromLatLngToDivPixel(
+      new googleApi.maps.LatLng(
+        heatmap.bounds.northeast.lat,
+        heatmap.bounds.northeast.lng
+      )
+    );
+    const sw = projection.fromLatLngToDivPixel(
+      new googleApi.maps.LatLng(
+        heatmap.bounds.southwest.lat,
+        heatmap.bounds.southwest.lng
+      )
+    );
+
+    if (!ne || !sw) {
+      return;
     }
 
-    const drawHeatmap = async () => {
-      const [fluxResponse, maskResponse] = await Promise.all([
-        fetch(annualFluxUrl, { cache: "no-store" }),
-        solarMaskUrl ? fetch(solarMaskUrl, { cache: "no-store" }).catch(() => null) : Promise.resolve(null),
-      ]);
+    container.style.left = `${sw.x}px`;
+    container.style.top = `${ne.y}px`;
+    container.style.width = `${ne.x - sw.x}px`;
+    container.style.height = `${sw.y - ne.y}px`;
+  };
+  overlay.onRemove = function onRemove() {
+    container.remove();
+  };
+  overlay.setMap(map);
 
-      if (!fluxResponse.ok) {
-        throw new Error("Unable to load annual flux heatmap.");
-      }
+  return overlay;
+}
 
-      const fluxBuffer = await fluxResponse.arrayBuffer();
-      const { fromArrayBuffer } = await import("geotiff");
-      const fluxTiff = await fromArrayBuffer(fluxBuffer);
-      const fluxImage = await fluxTiff.getImage();
-      const width = fluxImage.getWidth();
-      const height = fluxImage.getHeight();
-      const fluxRaster = (await fluxImage.readRasters({ interleave: true })) as RasterData;
-      let maskRaster: RasterData | null = null;
+async function buildAnnualFluxCanvas({
+  annualFluxUrl,
+  solarMaskUrl,
+  fallbackBounds,
+}: {
+  annualFluxUrl: string;
+  solarMaskUrl: string | null;
+  fallbackBounds: RoofGeoBounds | null;
+}) {
+  const [fluxResponse, maskResponse] = await Promise.all([
+    fetch(annualFluxUrl, { cache: "no-store" }),
+    solarMaskUrl
+      ? fetch(solarMaskUrl, { cache: "no-store" }).catch(() => null)
+      : Promise.resolve(null),
+  ]);
 
-      if (maskResponse?.ok) {
-        const maskBuffer = await maskResponse.arrayBuffer();
-        const maskTiff = await fromArrayBuffer(maskBuffer);
-        const maskImage = await maskTiff.getImage();
-        maskRaster = (await maskImage.readRasters({ interleave: true })) as RasterData;
-      }
+  if (!fluxResponse.ok) {
+    return null;
+  }
 
-      const validValues = Array.from(fluxRaster).filter(
-        (value, index) =>
-          Number.isFinite(value) &&
-          value > -9990 &&
-          (!maskRaster || Number(maskRaster[index] ?? 0) > 0)
-      ) as number[];
+  const fluxBuffer = await fluxResponse.arrayBuffer();
+  const { fromArrayBuffer } = await import("geotiff");
+  const fluxTiff = await fromArrayBuffer(fluxBuffer);
+  const fluxImage = await fluxTiff.getImage();
+  const width = fluxImage.getWidth();
+  const height = fluxImage.getHeight();
+  const fluxRaster = (await fluxImage.readRasters({
+    interleave: true,
+  })) as RasterData;
+  let maskRaster: RasterData | null = null;
 
-      if (!validValues.length || cancelled) {
-        return;
-      }
+  if (maskResponse?.ok) {
+    const maskTiff = await fromArrayBuffer(await maskResponse.arrayBuffer());
+    const maskImage = await maskTiff.getImage();
+    maskRaster = (await maskImage.readRasters({
+      interleave: true,
+    })) as RasterData;
+  }
 
-      validValues.sort((left, right) => left - right);
-      const low = percentile(validValues, 0.08);
-      const high = percentile(validValues, 0.92);
-      const range = Math.max(high - low, 1);
+  const validValues = Array.from(fluxRaster).filter(
+    (value, index) =>
+      Number.isFinite(value) &&
+      value > -9990 &&
+      (!maskRaster || Number(maskRaster[index] ?? 0) > 0)
+  ) as number[];
 
-      canvas.width = width;
-      canvas.height = height;
-      const context = canvas.getContext("2d");
-      if (!context) {
-        return;
-      }
+  if (!validValues.length) {
+    return null;
+  }
 
-      const imageData = context.createImageData(width, height);
-      const pixels = imageData.data;
+  validValues.sort((left, right) => left - right);
+  const low = percentile(validValues, 0.08);
+  const high = percentile(validValues, 0.92);
+  const range = Math.max(high - low, 1);
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
 
-      for (let index = 0; index < fluxRaster.length; index += 1) {
-        const value = fluxRaster[index];
-        const offset = index * 4;
-        const maskValue = maskRaster ? Number(maskRaster[index] ?? 0) : 1;
+  if (!context) {
+    return null;
+  }
 
-        if (!Number.isFinite(value) || value <= -9990 || maskValue <= 0) {
-          pixels[offset + 3] = 0;
-          continue;
-        }
+  const imageData = context.createImageData(width, height);
+  const pixels = imageData.data;
 
-        const normalized = clamp01((value - low) / range);
-        const boosted = Math.pow(normalized, 0.78);
-        const { r, g, b } = fluxColor(boosted);
-        pixels[offset] = r;
-        pixels[offset + 1] = g;
-        pixels[offset + 2] = b;
-        pixels[offset + 3] = Math.round(120 + boosted * 95);
-      }
+  for (let index = 0; index < fluxRaster.length; index += 1) {
+    const value = fluxRaster[index];
+    const offset = index * 4;
+    const maskValue = maskRaster ? Number(maskRaster[index] ?? 0) : 1;
 
-      if (!cancelled) {
-        context.putImageData(imageData, 0, 0);
-      }
-    };
+    if (!Number.isFinite(value) || value <= -9990 || maskValue <= 0) {
+      pixels[offset + 3] = 0;
+      continue;
+    }
 
-    void drawHeatmap().catch(() => {
-      const context = canvas.getContext("2d");
-      context?.clearRect(0, 0, canvas.width, canvas.height);
+    const normalized = clamp01((value - low) / range);
+    const { r, g, b } = fluxColor(normalized);
+    pixels[offset] = r;
+    pixels[offset + 1] = g;
+    pixels[offset + 2] = b;
+    pixels[offset + 3] = 140;
+  }
+
+  context.putImageData(imageData, 0, 0);
+
+  return {
+    canvas,
+    bounds: getGeoTiffBounds(fluxImage, fallbackBounds),
+  };
+}
+
+function buildPanelPath(
+  googleApi: GoogleMapsApi,
+  params: {
+    centerLat: number;
+    centerLng: number;
+    orientation: "PORTRAIT" | "LANDSCAPE";
+    azimuthDeg: number;
+  }
+) {
+  const widthMeters = params.orientation === "LANDSCAPE" ? 1.7 : 1.0;
+  const heightMeters = params.orientation === "LANDSCAPE" ? 1.0 : 1.7;
+  const halfWidth = widthMeters / 2;
+  const halfHeight = heightMeters / 2;
+  const rotation = (params.azimuthDeg * Math.PI) / 180;
+  const corners = [
+    { east: -halfWidth, north: -halfHeight },
+    { east: halfWidth, north: -halfHeight },
+    { east: halfWidth, north: halfHeight },
+    { east: -halfWidth, north: halfHeight },
+  ];
+
+  return corners.map((corner) => {
+    const rotatedEast =
+      corner.east * Math.cos(rotation) + corner.north * Math.sin(rotation);
+    const rotatedNorth =
+      -corner.east * Math.sin(rotation) + corner.north * Math.cos(rotation);
+    const latLng = offsetLatLngMeters({
+      lat: params.centerLat,
+      lng: params.centerLng,
+      eastMeters: rotatedEast,
+      northMeters: rotatedNorth,
     });
 
-    return () => {
-      cancelled = true;
-    };
-  }, [annualFluxUrl, solarMaskUrl, viewMode]);
+    return new googleApi.maps.LatLng(latLng.lat, latLng.lng);
+  });
+}
+
+function offsetLatLngMeters({
+  lat,
+  lng,
+  eastMeters,
+  northMeters,
+}: {
+  lat: number;
+  lng: number;
+  eastMeters: number;
+  northMeters: number;
+}) {
+  const metersPerDegreeLat = 111_320;
+  const metersPerDegreeLng =
+    metersPerDegreeLat * Math.max(Math.cos((lat * Math.PI) / 180), 0.01);
+
+  return {
+    lat: lat + northMeters / metersPerDegreeLat,
+    lng: lng + eastMeters / metersPerDegreeLng,
+  };
+}
+
+function getGeoTiffBounds(
+  image: unknown,
+  fallbackBounds: RoofGeoBounds | null
+): RoofGeoBounds {
+  const imageWithBounds = image as {
+    getBoundingBox?: () => number[];
+  };
+  const box = imageWithBounds.getBoundingBox?.();
+
+  if (box && box.length >= 4) {
+    const [west, south, east, north] = box.map(Number);
+
+    if (
+      Number.isFinite(west) &&
+      Number.isFinite(south) &&
+      Number.isFinite(east) &&
+      Number.isFinite(north) &&
+      Math.abs(south) <= 90 &&
+      Math.abs(north) <= 90 &&
+      Math.abs(west) <= 180 &&
+      Math.abs(east) <= 180
+    ) {
+      return {
+        northeast: {
+          lat: Math.max(north, south),
+          lng: Math.max(east, west),
+        },
+        southwest: {
+          lat: Math.min(north, south),
+          lng: Math.min(east, west),
+        },
+      };
+    }
+  }
 
   return (
-    <canvas
-      ref={canvasRef}
-      aria-hidden="true"
-      className="absolute inset-0 h-full w-full pointer-events-none opacity-100"
-      style={{
-        clipPath,
-        WebkitClipPath: clipPath,
-        mixBlendMode: "screen",
-        filter: "saturate(1.25) brightness(1.04)",
-        opacity: viewMode === "overview" ? 0.78 : 0.64,
-      }}
-    />
+    fallbackBounds ?? {
+      northeast: { lat: 0, lng: 0 },
+      southwest: { lat: 0, lng: 0 },
+    }
   );
+}
+
+function getRoofBoundsCenter(bounds: RoofGeoBounds | null) {
+  if (!bounds) {
+    return null;
+  }
+
+  return {
+    lat: (bounds.northeast.lat + bounds.southwest.lat) / 2,
+    lng: (bounds.northeast.lng + bounds.southwest.lng) / 2,
+  };
 }
 
 function PanelSelectionSlider({
@@ -1265,9 +1461,9 @@ function RoofStatsPanel({
 }
 
 function fluxColor(value: number) {
-  const shade = { r: 88, g: 54, b: 123 };
-  const warm = { r: 244, g: 128, b: 36 };
-  const sunny = { r: 255, g: 230, b: 38 };
+  const shade = { r: 30, g: 64, b: 175 };
+  const warm = { r: 251, g: 191, b: 36 };
+  const sunny = { r: 249, g: 115, b: 22 };
 
   if (value <= 0.5) {
     return blendColor(shade, warm, value / 0.5);
@@ -1305,6 +1501,25 @@ function percentile(values: number[], ratio: number) {
 
 function clamp01(value: number) {
   return Math.max(0, Math.min(1, value));
+}
+
+function findNearestPanelConfig(
+  configs: RoofAnalysis["solarPanelConfigs"],
+  panelCount: number
+) {
+  if (!configs.length) {
+    return null;
+  }
+
+  return (
+    configs.find((config) => config.panelsCount === panelCount) ??
+    configs.reduce((closest, config) =>
+      Math.abs(config.panelsCount - panelCount) <
+      Math.abs(closest.panelsCount - panelCount)
+        ? config
+        : closest
+    )
+  );
 }
 
 function AnalysisSidebarSkeleton() {
@@ -1461,13 +1676,6 @@ function Pill({ label, tone = "slate" }: { label: string; tone?: "slate" | "cyan
   );
 }
 
-type Bounds = {
-  minX: number;
-  maxX: number;
-  minY: number;
-  maxY: number;
-};
-
 async function resolveProperty(
   address: string,
   signal: AbortSignal
@@ -1498,273 +1706,6 @@ async function resolveProperty(
     lat: Number(payload.lat),
     lng: Number(payload.lng),
   };
-}
-
-function getBounds(points: Point[]): Bounds {
-  return points.reduce(
-    (accumulator, point) => ({
-      minX: Math.min(accumulator.minX, point.x),
-      maxX: Math.max(accumulator.maxX, point.x),
-      minY: Math.min(accumulator.minY, point.y),
-      maxY: Math.max(accumulator.maxY, point.y),
-    }),
-    {
-      minX: Number.POSITIVE_INFINITY,
-      maxX: Number.NEGATIVE_INFINITY,
-      minY: Number.POSITIVE_INFINITY,
-      maxY: Number.NEGATIVE_INFINITY,
-    }
-  );
-}
-
-function buildMeasurementLines(
-  outline: Point[],
-  bounds: Bounds,
-  roofData: RoofAnalysis
-): MeasurementLine[] {
-  if (!outline.length) {
-    return [];
-  }
-
-  const topY = Math.max(8, bounds.minY - 5.4);
-  const rightX = Math.min(94, bounds.maxX + 4.8);
-  const topPoints = [...outline].sort((left, right) => left.y - right.y).slice(0, 2);
-  const rightPoints = [...outline].sort((left, right) => right.x - left.x).slice(0, 2);
-  const topLeft = topPoints.sort((left, right) => left.x - right.x)[0] ?? { x: bounds.minX, y: bounds.minY };
-  const topRight =
-    topPoints.sort((left, right) => right.x - left.x)[0] ?? { x: bounds.maxX, y: bounds.minY };
-  const rightTop = rightPoints.sort((left, right) => left.y - right.y)[0] ?? { x: bounds.maxX, y: bounds.minY };
-  const rightBottom =
-    rightPoints.sort((left, right) => right.y - left.y)[0] ?? { x: bounds.maxX, y: bounds.maxY };
-
-  return [
-    {
-      id: "width",
-      x1: topLeft.x,
-      y1: topY,
-      x2: topRight.x,
-      y2: topY,
-      labelX: (topLeft.x + topRight.x) / 2,
-      labelY: topY - 2.3,
-      label: `${roofData.widthM.toFixed(1)} m`,
-    },
-    {
-      id: "depth",
-      x1: rightX,
-      y1: rightTop.y,
-      x2: rightX,
-      y2: rightBottom.y,
-      labelX: rightX + 1.8,
-      labelY: (rightTop.y + rightBottom.y) / 2,
-      label: `${roofData.depthM.toFixed(1)} m`,
-    },
-  ];
-}
-
-function projectSolarPanels(
-  analysis: RoofAnalysis,
-  imageBounds: RoofGeoBounds | null
-): PanelRect[] {
-  if (!imageBounds || analysis.solarPanels.length === 0) {
-    return [];
-  }
-  const projectedRoofOutline = projectPolygonToImage(
-    analysis.roofOutline,
-    analysis.roofBounds,
-    imageBounds
-  );
-  const panelWidthPct = Math.max(
-    0.9,
-    (analysis.panelWidthMeters / Math.max(analysis.widthM, analysis.panelWidthMeters)) * 100
-  );
-  const panelHeightPct = Math.max(
-    1.2,
-    (analysis.panelHeightMeters / Math.max(analysis.depthM, analysis.panelHeightMeters)) * 100
-  );
-
-  return analysis.solarPanels
-    .map((panel, index) => {
-      const centerPoint = latLngToViewportPoint(
-        panel.center.lat,
-        panel.center.lng,
-        imageBounds
-      );
-      if (!centerPoint) {
-        return null;
-      }
-      const segment = analysis.roofSegments[panel.segmentIndex] ?? analysis.roofSegments[0];
-      const rotation = segment
-        ? normalizePanelRotation(segment.azimuthDeg)
-        : normalizePanelRotation(analysis.primaryRoofAzimuth);
-      const projectedSegmentOutline =
-        segment?.outline?.length
-          ? projectPolygonToImage(segment.outline, analysis.roofBounds, imageBounds)
-          : projectPolygonToImage(
-              analysis.usableOutline,
-              analysis.roofBounds,
-              imageBounds
-            );
-      const width =
-        panel.orientation === "LANDSCAPE" ? panelHeightPct : panelWidthPct;
-      const height =
-        panel.orientation === "LANDSCAPE" ? panelWidthPct : panelHeightPct;
-      const panelRect: PanelRect = {
-        id: `panel-${index}`,
-        x: centerPoint.x - width / 2,
-        y: centerPoint.y - height / 2,
-        width,
-        height,
-        rotation,
-      };
-
-      if (
-        !Number.isFinite(centerPoint.x) ||
-        !Number.isFinite(centerPoint.y) ||
-        !pointInPolygon(centerPoint, projectedRoofOutline) ||
-        (projectedSegmentOutline.length >= 3 &&
-          !panelFitsOutline(panelRect, projectedSegmentOutline))
-      ) {
-        return null;
-      }
-
-      return panelRect;
-    })
-    .filter((panel): panel is PanelRect => Boolean(panel));
-}
-
-function pointsToString(points: Point[]) {
-  return points.map((point) => `${point.x},${point.y}`).join(" ");
-}
-
-function projectPolygonToImage(
-  polygon: Point[],
-  roofBounds: RoofGeoBounds | null,
-  imageBounds: RoofGeoBounds | null
-) {
-  if (!polygon.length || !roofBounds || !imageBounds) {
-    return polygon;
-  }
-
-  return polygon
-    .map((point) => {
-      const geo = viewportPointToLatLng(point, roofBounds);
-      return latLngToViewportPoint(geo.lat, geo.lng, imageBounds);
-    })
-    .filter((point): point is Point => Boolean(point));
-}
-
-function viewportPointToLatLng(point: Point, bounds: RoofGeoBounds) {
-  const lat =
-    bounds.northeast.lat -
-    ((point.y / 100) * (bounds.northeast.lat - bounds.southwest.lat));
-  const lng =
-    bounds.southwest.lng +
-    ((point.x / 100) * (bounds.northeast.lng - bounds.southwest.lng));
-
-  return { lat, lng };
-}
-
-function latLngToViewportPoint(
-  lat: number,
-  lng: number,
-  bounds: RoofGeoBounds
-): Point | null {
-  const latSpan = Math.max(bounds.northeast.lat - bounds.southwest.lat, 0.000001);
-  const lngSpan = Math.max(bounds.northeast.lng - bounds.southwest.lng, 0.000001);
-  const x = ((lng - bounds.southwest.lng) / lngSpan) * 100;
-  const y = ((bounds.northeast.lat - lat) / latSpan) * 100;
-
-  if (!Number.isFinite(x) || !Number.isFinite(y)) {
-    return null;
-  }
-
-  return {
-    x,
-    y,
-  };
-}
-
-function polygonToCssClipPath(points: Point[]) {
-  if (!points.length) {
-    return "inset(0)";
-  }
-
-  return `polygon(${points.map((point) => `${point.x}% ${point.y}%`).join(", ")})`;
-}
-
-function panelFitsOutline(panel: PanelRect, outline: Point[]) {
-  const corners = getRotatedPanelCorners(panel);
-
-  return corners.every((corner) => pointInPolygon(corner, outline));
-}
-
-function pointInPolygon(point: Point, polygon: Point[]) {
-  let inside = false;
-
-  for (let current = 0, previous = polygon.length - 1; current < polygon.length; previous = current++) {
-    const currentPoint = polygon[current];
-    const previousPoint = polygon[previous];
-    const intersects =
-      currentPoint.y > point.y !== previousPoint.y > point.y &&
-      point.x <
-        ((previousPoint.x - currentPoint.x) * (point.y - currentPoint.y)) /
-          (previousPoint.y - currentPoint.y || 0.00001) +
-          currentPoint.x;
-
-    if (intersects) {
-      inside = !inside;
-    }
-  }
-
-  return inside;
-}
-
-function getPolygonCenter(points: Point[]) {
-  return points.reduce(
-    (accumulator, point) => ({
-      x: accumulator.x + point.x / points.length,
-      y: accumulator.y + point.y / points.length,
-    }),
-    { x: 0, y: 0 }
-  );
-}
-
-function getRotatedPanelCorners(panel: PanelRect) {
-  const center = {
-    x: panel.x + panel.width / 2,
-    y: panel.y + panel.height / 2,
-  };
-  const localCorners = [
-    { x: -panel.width / 2, y: -panel.height / 2 },
-    { x: panel.width / 2, y: -panel.height / 2 },
-    { x: panel.width / 2, y: panel.height / 2 },
-    { x: -panel.width / 2, y: panel.height / 2 },
-  ];
-
-  return localCorners.map((corner) => {
-    const rotated = rotatePoint(corner, panel.rotation);
-    return {
-      x: center.x + rotated.x,
-      y: center.y + rotated.y,
-    };
-  });
-}
-
-function rotatePoint(point: Point, rotationDeg: number) {
-  const radians = (rotationDeg * Math.PI) / 180;
-  const cos = Math.cos(radians);
-  const sin = Math.sin(radians);
-
-  return {
-    x: point.x * cos - point.y * sin,
-    y: point.x * sin + point.y * cos,
-  };
-}
-
-function normalizePanelRotation(azimuthDeg: number) {
-  const normalized = ((azimuthDeg % 360) + 360) % 360;
-  const rotation = normalized > 180 ? normalized - 360 : normalized;
-  return clampNumber(rotation - 180, -90, 90);
 }
 
 function formatAzimuth(value: number) {

@@ -1,5 +1,3 @@
-import { buildSolarReport } from "@/lib/solar-report";
-
 export type FollowUpChannel = "email" | "sms";
 export type FollowUpStatus = "queued" | "sent" | "scheduled" | "failed" | "skipped";
 
@@ -19,6 +17,7 @@ type FollowUpInput = {
   name: string;
   address: string;
   monthlyBill: number;
+  annualSavings?: number | null;
   createdAt?: string | Date;
 };
 
@@ -33,11 +32,14 @@ function addDays(base: Date, days: number) {
 export function createFollowUpSequence({
   name,
   address,
-  monthlyBill,
+  annualSavings,
   createdAt = new Date(),
 }: FollowUpInput): FollowUpStep[] {
   const baseDate = createdAt instanceof Date ? createdAt : new Date(createdAt);
-  const report = buildSolarReport(monthlyBill);
+  const savingsCopy =
+    Number.isFinite(Number(annualSavings)) && Number(annualSavings) > 0
+      ? `${formatMoney(Number(annualSavings))} annual savings estimate`
+      : "Solar API savings estimate";
 
   return [
     {
@@ -52,7 +54,7 @@ export function createFollowUpSequence({
       stepOrder: 2,
       channel: "sms",
       title: "One-day SMS follow-up",
-      message: `Check in with a short reminder about the ${formatMoney(report.annualSavings)} annual savings estimate.`,
+      message: `Check in with a short reminder about the ${savingsCopy}.`,
       scheduledFor: addDays(baseDate, 1).toISOString(),
       status: "queued",
     },

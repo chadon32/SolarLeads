@@ -8,8 +8,8 @@ import { ButtonLink } from "@/components/ui/button";
 import { createFollowUpSequence, type FollowUpStep } from "@/lib/follow-ups";
 import type { RoofAnalysis } from "@/lib/roof-analysis";
 import {
-  buildSolarReport,
   buildSolarReportFromAnalysis,
+  buildSolarReportFromSolarValues,
   type SolarReport,
 } from "@/lib/solar-report";
 
@@ -54,6 +54,7 @@ export function SolarReportGenerator({
         name,
         address,
         monthlyBill,
+        annualSavings: analysis?.annualSavingsUSD,
       })
   );
   const emailedLeadIdRef = useRef<string | null>(null);
@@ -62,7 +63,11 @@ export function SolarReportGenerator({
     () =>
       analysis
         ? buildSolarReportFromAnalysis(analysis, monthlyBill)
-        : buildSolarReport(monthlyBill),
+        : buildSolarReportFromSolarValues({
+            annualSavings: 0,
+            panelCount: 0,
+            monthlyBill,
+          }),
     [analysis, monthlyBill]
   );
   const statusLabel =
@@ -264,7 +269,7 @@ export function SolarReportGenerator({
           <PreviewCard
             title="Estimated savings"
             value={formatMoney(report.annualSavings)}
-            description={`Estimated annual savings based on the selected bill: ${formatMoney(monthlyBill)}/mo.`}
+            description="Estimated annual savings from the Solar API roof production model."
             metric={formatPercent(report.annualEnergyOffset)}
           />
 

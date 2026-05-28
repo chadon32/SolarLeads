@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { Resend } from "resend";
-import { buildSolarReport } from "@/lib/solar-report";
+import type { SolarReport } from "@/lib/solar-report";
 import { buildReportPdfUrl } from "@/lib/report-access";
 import { enforceRateLimit } from "@/lib/rate-limit";
 
@@ -10,6 +10,7 @@ type ReportEmailBody = {
   email?: string;
   address?: string;
   monthlyBill?: number;
+  report?: SolarReport;
 };
 
 const resendApiKey = process.env.RESEND_API_KEY;
@@ -48,14 +49,21 @@ export async function POST(request: Request) {
 
     const body = (await request.json()) as ReportEmailBody;
 
-    if (!body.email || !body.name || !body.address || !body.monthlyBill || !body.leadId) {
+    if (
+      !body.email ||
+      !body.name ||
+      !body.address ||
+      !body.monthlyBill ||
+      !body.leadId ||
+      !isCompleteReport(body.report)
+    ) {
       return NextResponse.json(
-        { message: "Missing required report fields." },
+        { message: "Missing required Solar API report fields." },
         { status: 400 }
       );
     }
 
-    const report = buildSolarReport(body.monthlyBill);
+    const report = body.report;
     const reportUrl = buildReportPdfUrl(body.leadId, { absolute: true });
     const resend = new Resend(resendApiKey);
 
@@ -159,6 +167,21 @@ function money(value: number) {
     currency: "USD",
     maximumFractionDigits: 0,
   }).format(value);
+}
+
+function isCompleteReport(report: unknown): report is SolarReport {
+  if (!report || typeof report !== "object") {
+    return false;
+  }
+
+  const candidate = report as Partial<Record<keyof SolarReport, unknown>>;
+  return (
+    Number(candidate.annualSavings) > 0 &&
+    Number(candidate.panelCount) > 0 &&
+    Number.isFinite(Number(candidate.estimatedRoiYears)) &&
+    Number.isFinite(Number(candidate.annualImpactLbs)) &&
+    Number.isFinite(Number(candidate.annualEnergyOffset))
+  );
 }
 
 function escapeHtml(value: string) {

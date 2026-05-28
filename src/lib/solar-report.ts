@@ -8,12 +8,42 @@ export type SolarReport = {
   panelCount: number;
 };
 
-export function buildSolarReport(monthlyBill: number): SolarReport {
-  const annualSavings = Math.round(monthlyBill * 12 * 0.78);
-  const estimatedRoiYears = Number(Math.max(4.2, Math.min(8.8, 19.5 - monthlyBill / 110)).toFixed(1));
-  const annualImpactLbs = Math.round(annualSavings * 2.48);
-  const annualEnergyOffset = Math.min(92, Math.round(58 + monthlyBill / 8));
-  const panelCount = Math.max(16, Math.round(monthlyBill / 10));
+type SolarReportValues = {
+  annualSavings: number;
+  panelCount: number;
+  annualKwh?: number | null;
+  systemKw?: number | null;
+  monthlyBill?: number | null;
+};
+
+export function buildSolarReportFromSolarValues(values: SolarReportValues): SolarReport {
+  const annualSavings = Math.max(0, Math.round(values.annualSavings));
+  const panelCount = Math.max(0, Math.round(values.panelCount));
+  const annualKwh =
+    Number.isFinite(Number(values.annualKwh)) && Number(values.annualKwh) > 0
+      ? Number(values.annualKwh)
+      : annualSavings > 0
+        ? annualSavings / 0.13
+        : 0;
+  const systemKw =
+    Number.isFinite(Number(values.systemKw)) && Number(values.systemKw) > 0
+      ? Number(values.systemKw)
+      : (panelCount * 400) / 1000;
+  const estimatedSystemCost =
+    panelCount > 0 ? panelCount * 400 * 2.75 : systemKw * 1000 * 2.75;
+  const estimatedRoiYears =
+    annualSavings > 0
+      ? Number((estimatedSystemCost / annualSavings).toFixed(1))
+      : 0;
+  const annualImpactLbs = Math.round(annualKwh * 1.54);
+  const annualHouseholdKwh =
+    Number.isFinite(Number(values.monthlyBill)) && Number(values.monthlyBill) > 0
+      ? (Number(values.monthlyBill) * 12) / 0.13
+      : 0;
+  const annualEnergyOffset =
+    annualHouseholdKwh > 0
+      ? Math.min(100, Math.round((annualKwh / annualHouseholdKwh) * 100))
+      : 0;
 
   return {
     annualSavings,
@@ -28,23 +58,11 @@ export function buildSolarReportFromAnalysis(
   analysis: RoofAnalysis,
   monthlyBill: number
 ): SolarReport {
-  const annualSavings = analysis.annualSavingsUSD;
-  const estimatedSystemCost = analysis.systemKw * 1000 * 2.8;
-  const estimatedRoiYears = Number(
-    Math.max(4.2, Math.min(12.8, estimatedSystemCost / Math.max(annualSavings, 1))).toFixed(1)
-  );
-  const annualImpactLbs = Math.round(analysis.annualKwh * 1.54);
-  const billBasedOffset = Number.isFinite(monthlyBill) && monthlyBill > 0 ? monthlyBill * 12 : 2400;
-  const annualEnergyOffset = Math.min(
-    96,
-    Math.max(42, Math.round((analysis.annualKwh / billBasedOffset) * 100))
-  );
-
-  return {
-    annualSavings,
-    estimatedRoiYears,
-    annualImpactLbs,
-    annualEnergyOffset,
+  return buildSolarReportFromSolarValues({
+    annualSavings: analysis.annualSavingsUSD,
+    annualKwh: analysis.annualKwh,
     panelCount: analysis.panelCount,
-  };
+    systemKw: analysis.systemKw,
+    monthlyBill,
+  });
 }

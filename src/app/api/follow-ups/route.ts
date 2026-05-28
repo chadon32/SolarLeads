@@ -42,7 +42,7 @@ export async function POST(request: Request) {
 
     const { data: lead, error: leadError } = await supabase
       .from("leads")
-      .select("id, name, address, monthly_bill, created_at")
+      .select("id, name, address, monthly_bill, annual_savings, estimated_savings, created_at")
       .eq("id", body.leadId)
       .single();
 
@@ -57,6 +57,7 @@ export async function POST(request: Request) {
       name: lead.name,
       address: lead.address,
       monthlyBill: lead.monthly_bill,
+      annualSavings: lead.annual_savings ?? lead.estimated_savings,
       createdAt: lead.created_at,
     });
 

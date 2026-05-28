@@ -7,6 +7,7 @@ import {
   type RoofPlaneLabel,
   type RoofPoint,
   type RoofSegment,
+  type SolarPanelConfigEstimate,
   type SolarPanelPlacement,
   type ShadingRisk,
 } from "@/lib/roof-analysis";
@@ -80,6 +81,9 @@ type SolarPanel = {
     longitude?: number;
   };
   orientation?: "PORTRAIT" | "LANDSCAPE";
+  azimuthDegrees?: number;
+  rowIndex?: number;
+  columnIndex?: number;
   yearlyEnergyDcKwh?: number;
   segmentIndex?: number;
 };
@@ -266,8 +270,8 @@ export async function fetchSolarDataLayers(
   const url = new URL("https://solar.googleapis.com/v1/dataLayers:get");
   url.searchParams.set("location.latitude", String(lat));
   url.searchParams.set("location.longitude", String(lng));
-  url.searchParams.set("radiusMeters", "100");
-  url.searchParams.set("view", "IMAGERY_AND_ANNUAL_FLUX_LAYERS");
+  url.searchParams.set("radiusMeters", "50");
+  url.searchParams.set("view", "FULL_LAYERS");
   url.searchParams.set("requiredQuality", "HIGH");
   url.searchParams.set("exactQualityRequired", "true");
   url.searchParams.set("pixelSizeMeters", "0.5");
@@ -316,6 +320,10 @@ export function buildSolarRoofAnalysis(params: {
       0,
     0
   );
+  const usableRoofAreaM2 = Math.max(
+    0,
+    Math.min(solarPotential.maxArrayAreaMeters2 ?? 0, roofAreaM2)
+  );
   const maxArrayPanelsCount = Math.max(
     Math.round(solarPotential.maxArrayPanelsCount ?? 0),
     0
@@ -332,43 +340,22 @@ export function buildSolarRoofAnalysis(params: {
     Number(solarPotential.panelHeightMeters ?? 1.7),
     1
   );
-  const panelFootprintM2 = Math.max(panelWidthMeters * panelHeightMeters, 0.5);
-  const usableRoofAreaM2 = Math.max(
-    Math.min(solarPotential.maxArrayAreaMeters2 ?? roofAreaM2, roofAreaM2),
-    0
+  const rawSolarPanelConfigs = [...(solarPotential.solarPanelConfigs ?? [])].sort(
+    (left, right) => (left.panelsCount ?? 0) - (right.panelsCount ?? 0)
   );
-  const solarPanelConfigs = [...(solarPotential.solarPanelConfigs ?? [])].sort(
-    (left, right) =>
-      (right.yearlyEnergyDcKwh ?? 0) -
-      (left.yearlyEnergyDcKwh ?? 0) ||
-      (right.panelsCount ?? 0) - (left.panelsCount ?? 0)
+  const solarPanelConfigs = normalizeSolarPanelConfigs(
+    rawSolarPanelConfigs
   );
-  const bestConfig = solarPanelConfigs[0];
-  const rawRecommendedPanelCount = Math.max(
-    0,
-    Math.round(bestConfig?.panelsCount ?? maxArrayPanelsCount)
-  );
-  const physicalPanelLimit = Math.max(
-    0,
-    Math.floor(
-      usableRoofAreaM2 /
-        Math.max(panelFootprintM2 * 1.08, 0.5)
-    )
-  );
-  const practicalResidentialPanelLimit = Math.max(
-    0,
-    Math.floor((usableRoofAreaM2 * 0.46) / panelFootprintM2)
-  );
+  const maxConfig =
+    findPanelConfig(solarPanelConfigs, maxArrayPanelsCount) ??
+    solarPanelConfigs.at(-1);
+  const rawMaxConfig =
+    rawSolarPanelConfigs.find(
+      (config) => Math.round(config.panelsCount ?? 0) === maxConfig?.panelsCount
+    ) ?? rawSolarPanelConfigs.at(-1);
   const recommendedPanelCount = Math.max(
     0,
-    Math.min(
-      rawRecommendedPanelCount || maxArrayPanelsCount,
-      physicalPanelLimit || rawRecommendedPanelCount || maxArrayPanelsCount,
-      practicalResidentialPanelLimit ||
-        physicalPanelLimit ||
-        rawRecommendedPanelCount ||
-        maxArrayPanelsCount
-    )
+    Math.round(maxConfig?.panelsCount ?? maxArrayPanelsCount)
   );
   const roofSegments = [...(solarPotential.roofSegmentStats ?? [])].sort(
     (left, right) =>
@@ -402,7 +389,7 @@ export function buildSolarRoofAnalysis(params: {
   );
   const usablePctRoof = clamp(
     Math.round(
-      roofAreaM2 > 0 ? (Math.min(solarPotential.maxArrayAreaMeters2 ?? 0, roofAreaM2) / roofAreaM2) * 100 : 0
+      roofAreaM2 > 0 ? (usableRoofAreaM2 / roofAreaM2) * 100 : 0
     ),
     0,
     100
@@ -418,7 +405,15 @@ export function buildSolarRoofAnalysis(params: {
     0,
     359
   );
-  const pitchDeg = roundTo(primarySegment?.pitchDegrees ?? 0, 1);
+  const pitchDeg = roundTo(
+    roofSegments.length > 0
+      ? roofSegments.reduce(
+          (sum, segment) => sum + Math.max(Number(segment.pitchDegrees ?? 0), 0),
+          0
+        ) / roofSegments.length
+      : Number(primarySegment?.pitchDegrees ?? 0),
+    1
+  );
   const rawWidthM = estimateLongitudeSpanMeters(renderBounds);
   const rawDepthM = estimateLatitudeSpanMeters(renderBounds);
   const inferredFootprint = inferRoofDimensions({
@@ -430,29 +425,28 @@ export function buildSolarRoofAnalysis(params: {
   const depthM = inferredFootprint.depthM;
   const shadingRisk = classifyShadingRisk(solarPotential, roofSegments);
   const obstructionOutlines = buildObstructionOutlines(roofSegments, renderBounds, shadingRisk);
-  const panelCount = Math.min(
-    recommendedPanelCount || maxArrayPanelsCount,
-    maxArrayPanelsCount || recommendedPanelCount
-  );
+  const panelCount = recommendedPanelCount || maxArrayPanelsCount;
   const trimmedSolarPanels =
     solarPanels.length > panelCount ? solarPanels.slice(0, panelCount) : solarPanels;
   const energyPerPanelKwh =
-    rawRecommendedPanelCount > 0 && Number(bestConfig?.yearlyEnergyDcKwh ?? 0) > 0
-      ? Number(bestConfig?.yearlyEnergyDcKwh ?? 0) / rawRecommendedPanelCount
+    panelCount > 0 && Number(maxConfig?.yearlyEnergyDcKwh ?? 0) > 0
+      ? Number(maxConfig?.yearlyEnergyDcKwh ?? 0) / panelCount
       : panelCapacityWatts * 4.8;
   const annualKwh = Math.round(
-    trimmedSolarPanels.length > 0
-      ? trimmedSolarPanels.reduce(
-          (sum, panel) => sum + Math.max(panel.yearlyEnergyDcKwh, 0),
-          0
-        )
-      : panelCount * energyPerPanelKwh
+    Number(maxConfig?.yearlyEnergyDcKwh ?? 0) > 0
+      ? Number(maxConfig?.yearlyEnergyDcKwh ?? 0)
+      : trimmedSolarPanels.length > 0
+        ? trimmedSolarPanels.reduce(
+            (sum, panel) => sum + Math.max(panel.yearlyEnergyDcKwh, 0),
+            0
+          )
+        : panelCount * energyPerPanelKwh
   );
   const annualSavingsUSD = Math.round(annualKwh * AZ_RATE_PER_KWH);
   const roofSegmentsOut = buildRoofSegmentOutlines(
     roofSegments,
     renderBounds,
-    bestConfig?.roofSegmentSummaries ?? [],
+    rawMaxConfig?.roofSegmentSummaries ?? [],
     panelCount,
     pitchDeg,
     primaryRoofAzimuth
@@ -510,6 +504,8 @@ export function buildSolarRoofAnalysis(params: {
       roofShape,
       widthM,
       depthM,
+      grossRoofAreaM2: roundTo(roofAreaM2, 1),
+      usableRoofAreaM2: roundTo(usableRoofAreaM2, 1),
       pitchDeg,
       usablePctRoof,
       primaryRoofAzimuth,
@@ -530,6 +526,7 @@ export function buildSolarRoofAnalysis(params: {
       roofBounds,
       roofSegments: roofSegmentsOut,
       solarPanels: trimmedSolarPanels,
+      solarPanelConfigs,
       confidence,
       confidenceNote: buildConfidenceNote(
         params.insights.imageryQuality ?? "UNKNOWN",
@@ -552,9 +549,47 @@ function normalizeSolarPanel(panel: SolarPanel): SolarPanelPlacement {
       lng: Number(panel.center?.longitude ?? 0),
     },
     orientation: panel.orientation === "LANDSCAPE" ? "LANDSCAPE" : "PORTRAIT",
+    azimuthDeg: clamp(Math.round(Number(panel.azimuthDegrees ?? 180)), 0, 359),
+    rowIndex: Number.isFinite(Number(panel.rowIndex))
+      ? Math.round(Number(panel.rowIndex))
+      : null,
+    columnIndex: Number.isFinite(Number(panel.columnIndex))
+      ? Math.round(Number(panel.columnIndex))
+      : null,
     yearlyEnergyDcKwh: Math.max(0, Number(panel.yearlyEnergyDcKwh ?? 0)),
     segmentIndex: Math.max(0, Math.round(Number(panel.segmentIndex ?? 0))),
   };
+}
+
+function normalizeSolarPanelConfigs(
+  configs: SolarPanelConfig[]
+): SolarPanelConfigEstimate[] {
+  return configs
+    .map((config) => ({
+      panelsCount: Math.max(0, Math.round(Number(config.panelsCount ?? 0))),
+      yearlyEnergyDcKwh: Math.max(0, Number(config.yearlyEnergyDcKwh ?? 0)),
+    }))
+    .filter((config) => config.panelsCount > 0 && config.yearlyEnergyDcKwh > 0)
+    .sort((left, right) => left.panelsCount - right.panelsCount);
+}
+
+function findPanelConfig(
+  configs: SolarPanelConfigEstimate[],
+  panelsCount: number
+) {
+  if (!configs.length) {
+    return null;
+  }
+
+  return (
+    configs.find((config) => config.panelsCount === panelsCount) ??
+    configs.reduce((closest, config) =>
+      Math.abs(config.panelsCount - panelsCount) <
+      Math.abs(closest.panelsCount - panelsCount)
+        ? config
+        : closest
+    )
+  );
 }
 
 function deriveRoofShape(segments: RoofSegmentStats[]) {

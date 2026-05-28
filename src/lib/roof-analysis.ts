@@ -49,8 +49,16 @@ export type SolarPanelPlacement = {
     lng: number;
   };
   orientation: "PORTRAIT" | "LANDSCAPE";
+  azimuthDeg: number;
+  rowIndex: number | null;
+  columnIndex: number | null;
   yearlyEnergyDcKwh: number;
   segmentIndex: number;
+};
+
+export type SolarPanelConfigEstimate = {
+  panelsCount: number;
+  yearlyEnergyDcKwh: number;
 };
 
 export type RoofAnalysis = {
@@ -61,6 +69,8 @@ export type RoofAnalysis = {
   roofShape: RoofShape;
   widthM: number;
   depthM: number;
+  grossRoofAreaM2: number;
+  usableRoofAreaM2: number;
   pitchDeg: number;
   usablePctRoof: number;
   primaryRoofAzimuth: number;
@@ -81,6 +91,7 @@ export type RoofAnalysis = {
   roofBounds: RoofGeoBounds | null;
   roofSegments: RoofSegment[];
   solarPanels: SolarPanelPlacement[];
+  solarPanelConfigs: SolarPanelConfigEstimate[];
   confidence: AnalysisConfidence;
   confidenceNote: string;
   source: "solar-api" | "vision-api" | "modeled";
@@ -168,6 +179,8 @@ export function buildFallbackRoofAnalysis(params: {
     roofShape,
     widthM,
     depthM,
+    grossRoofAreaM2: roundTo(widthM * depthM, 1),
+    usableRoofAreaM2: usableAreaM2,
     pitchDeg,
     usablePctRoof,
     primaryRoofAzimuth: 182,
@@ -188,6 +201,7 @@ export function buildFallbackRoofAnalysis(params: {
     roofBounds: null,
     roofSegments,
     solarPanels: [],
+    solarPanelConfigs: [],
     confidence: span < 0.005 ? "medium" : "low",
     confidenceNote:
       "Using a conservative Arizona fallback because detailed roof analysis was unavailable.",
@@ -216,6 +230,8 @@ export function buildInvalidRoofAnalysis(params: {
     systemKw: 0,
     annualKwh: 0,
     annualSavingsUSD: 0,
+    grossRoofAreaM2: 0,
+    usableRoofAreaM2: 0,
     panelCapacityWatts: fallback.panelCapacityWatts,
     panelWidthMeters: fallback.panelWidthMeters,
     panelHeightMeters: fallback.panelHeightMeters,
@@ -228,6 +244,7 @@ export function buildInvalidRoofAnalysis(params: {
     roofBounds: null,
     roofSegments: [],
     solarPanels: [],
+    solarPanelConfigs: [],
     confidence: "low",
     confidenceNote:
       params.confidenceNote ??
@@ -257,6 +274,14 @@ export function normalizeRoofAnalysis(
   const roofShape = roofShapeOrFallback(input.roofShape, fallback.roofShape);
   const widthM = roundTo(numberOrFallback(input.widthM, fallback.widthM), 1);
   const depthM = roundTo(numberOrFallback(input.depthM, fallback.depthM), 1);
+  const grossRoofAreaM2 = roundTo(
+    Math.max(0, numberOrFallback(input.grossRoofAreaM2, fallback.grossRoofAreaM2)),
+    1
+  );
+  const usableRoofAreaM2 = roundTo(
+    Math.max(0, numberOrFallback(input.usableRoofAreaM2, fallback.usableRoofAreaM2)),
+    1
+  );
   const pitchDeg = roundTo(
     clamp(numberOrFallback(input.pitchDeg, fallback.pitchDeg), 0, 45),
     1
@@ -321,6 +346,10 @@ export function normalizeRoofAnalysis(
     input.solarPanels,
     fallback.solarPanels
   );
+  const solarPanelConfigs = normalizeSolarPanelConfigs(
+    input.solarPanelConfigs,
+    fallback.solarPanelConfigs
+  );
   const panelCapacityWatts = Math.max(
     1,
     numberOrFallback(input.panelCapacityWatts, fallback.panelCapacityWatts)
@@ -360,6 +389,8 @@ export function normalizeRoofAnalysis(
     roofShape,
     widthM,
     depthM,
+    grossRoofAreaM2,
+    usableRoofAreaM2,
     pitchDeg,
     usablePctRoof,
     primaryRoofAzimuth,
@@ -384,6 +415,7 @@ export function normalizeRoofAnalysis(
     roofBounds,
     roofSegments,
     solarPanels,
+    solarPanelConfigs,
     confidence: confidenceOrFallback(input.confidence, fallback.confidence),
     confidenceNote: stringOrFallback(
       input.confidenceNote,
@@ -394,6 +426,10 @@ export function normalizeRoofAnalysis(
 }
 
 export function getRoofAreaM2(analysis: RoofAnalysis) {
+  if (analysis.grossRoofAreaM2 > 0) {
+    return roundTo(analysis.grossRoofAreaM2, 1);
+  }
+
   const segmentArea = analysis.roofSegments.reduce(
     (sum, segment) => sum + Math.max(segment.areaM2, 0),
     0
@@ -407,6 +443,10 @@ export function getRoofAreaM2(analysis: RoofAnalysis) {
 }
 
 export function getUsableAreaM2(analysis: RoofAnalysis) {
+  if (analysis.usableRoofAreaM2 > 0) {
+    return roundTo(analysis.usableRoofAreaM2, 1);
+  }
+
   const usableSegmentArea = analysis.roofSegments
     .filter((segment) => segment.usable)
     .reduce((sum, segment) => sum + Math.max(segment.areaM2, 0), 0);
@@ -609,6 +649,13 @@ function normalizeSolarPanels(value: unknown, fallback: SolarPanelPlacement[]) {
           lng,
         },
         orientation,
+        azimuthDeg: clamp(
+          Math.round(numberOrFallback(input.azimuthDeg, 180)),
+          0,
+          359
+        ),
+        rowIndex: nullableInteger(input.rowIndex),
+        columnIndex: nullableInteger(input.columnIndex),
         yearlyEnergyDcKwh: Math.max(
           0,
           numberOrFallback(input.yearlyEnergyDcKwh, 0)
@@ -620,6 +667,45 @@ function normalizeSolarPanels(value: unknown, fallback: SolarPanelPlacement[]) {
       } satisfies SolarPanelPlacement;
     })
     .filter((panel): panel is SolarPanelPlacement => Boolean(panel));
+}
+
+function normalizeSolarPanelConfigs(
+  value: unknown,
+  fallback: SolarPanelConfigEstimate[]
+) {
+  if (!Array.isArray(value) || value.length === 0) {
+    return fallback;
+  }
+
+  const configs = value
+    .map((config) => {
+      if (!config || typeof config !== "object") {
+        return null;
+      }
+
+      const input = config as Record<string, unknown>;
+      const panelsCount = Math.max(
+        0,
+        Math.round(numberOrFallback(input.panelsCount, 0))
+      );
+      const yearlyEnergyDcKwh = Math.max(
+        0,
+        numberOrFallback(input.yearlyEnergyDcKwh, 0)
+      );
+
+      if (!panelsCount || !yearlyEnergyDcKwh) {
+        return null;
+      }
+
+      return {
+        panelsCount,
+        yearlyEnergyDcKwh,
+      } satisfies SolarPanelConfigEstimate;
+    })
+    .filter((config): config is SolarPanelConfigEstimate => Boolean(config))
+    .sort((left, right) => left.panelsCount - right.panelsCount);
+
+  return configs.length ? configs : fallback;
 }
 
 function normalizeBounds(
@@ -838,6 +924,11 @@ function stringOrNullable(value: unknown, fallback: string | null) {
 function numberOrFallback(value: unknown, fallback: number) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function nullableInteger(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.round(parsed) : null;
 }
 
 function roundTo(value: number, precision: number) {

@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { FollowUpTimeline } from "@/components/follow-up-timeline";
 import { Button, ButtonLink } from "@/components/ui/button";
-import { buildSolarReport } from "@/lib/solar-report";
+import { buildSolarReportFromSolarValues } from "@/lib/solar-report";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
 import type { FollowUpStep } from "@/lib/follow-ups";
 import { buildReportPdfPath } from "@/lib/report-access";
@@ -30,7 +30,9 @@ export default async function DashboardPage({
 
   const { data: leads, error: leadsError } = await supabase
     .from("leads")
-    .select("id, name, email, phone, address, monthly_bill, estimated_savings, created_at")
+    .select(
+      "id, name, email, phone, address, monthly_bill, estimated_savings, panel_count, system_size_kw, annual_savings, annual_energy_kwh, created_at"
+    )
     .order("created_at", { ascending: false })
     .limit(10);
 
@@ -131,7 +133,13 @@ export default async function DashboardPage({
 
             <div className="mt-6 grid gap-4">
               {leadList.map((lead) => {
-                const report = buildSolarReport(lead.monthly_bill);
+                const report = buildSolarReportFromSolarValues({
+                  annualSavings: Number(lead.annual_savings ?? lead.estimated_savings ?? 0),
+                  annualKwh: Number(lead.annual_energy_kwh ?? 0),
+                  panelCount: Number(lead.panel_count ?? 0),
+                  systemKw: Number(lead.system_size_kw ?? 0),
+                  monthlyBill: Number(lead.monthly_bill),
+                });
 
                 return (
                   <article

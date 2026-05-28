@@ -4,7 +4,11 @@ import type { FormEvent, InputHTMLAttributes } from "react";
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import type { RoofAnalysis } from "@/lib/roof-analysis";
+import {
+  getRoofAreaM2,
+  getUsableAreaM2,
+  type RoofAnalysis,
+} from "@/lib/roof-analysis";
 
 const SolarReportGenerator = dynamic(
   () =>
@@ -131,10 +135,8 @@ export function LeadCaptureForm({
       return analysis.annualSavingsUSD;
     }
 
-    const monthly = Number(values.monthlyBill);
-    if (!Number.isFinite(monthly) || monthly <= 0) return 0;
-    return Math.round(monthly * 12 * 0.78);
-  }, [analysis?.annualSavingsUSD, values.monthlyBill]);
+    return 0;
+  }, [analysis?.annualSavingsUSD]);
 
   const handleEmailStatusChange = useCallback(
     (nextStatus: "idle" | "sending" | "sent" | "error", nextMessage: string) => {
@@ -188,6 +190,12 @@ export function LeadCaptureForm({
     if (status === "submitting") return;
     if (!validate()) return;
 
+    if (!analysis?.validSite || !analysis.annualSavingsUSD) {
+      setStatus("error");
+      setMessage("Complete a valid Solar API roof analysis before generating the report.");
+      return;
+    }
+
     const fingerprint = buildFingerprint(values);
     if (fingerprint === lastSubmittedFingerprint.current) {
       setStatus("error");
@@ -199,7 +207,7 @@ export function LeadCaptureForm({
     setMessage("Saving your lead...");
 
     const monthlyBill = Number(values.monthlyBill);
-    const savings = analysis?.annualSavingsUSD ?? Math.round(monthlyBill * 12 * 0.78);
+    const savings = analysis.annualSavingsUSD;
 
     try {
       const response = await fetch("/api/leads", {
@@ -213,22 +221,14 @@ export function LeadCaptureForm({
           phone: values.phone.trim(),
           address: values.address.trim(),
           monthlyBill,
-          panelCount: analysis?.panelCount,
-          systemSizeKw: analysis?.systemKw,
-          annualSavings: analysis?.annualSavingsUSD,
-          monthlySavings: analysis ? Math.round(analysis.annualSavingsUSD / 12) : undefined,
-          annualEnergyKwh: analysis?.annualKwh,
-          roofAreaSqm: analysis ? Math.round(analysis.widthM * analysis.depthM * 10) / 10 : undefined,
-          usableAreaSqm:
-            analysis
-              ? Math.round(
-                  analysis.widthM *
-                    analysis.depthM *
-                    (analysis.usablePctRoof / 100) *
-                    10
-                ) / 10
-              : undefined,
-          roofPitchDegrees: analysis?.pitchDeg,
+          panelCount: analysis.panelCount,
+          systemSizeKw: analysis.systemKw,
+          annualSavings: analysis.annualSavingsUSD,
+          monthlySavings: Math.round(analysis.annualSavingsUSD / 12),
+          annualEnergyKwh: analysis.annualKwh,
+          roofAreaSqm: getRoofAreaM2(analysis),
+          usableAreaSqm: getUsableAreaM2(analysis),
+          roofPitchDegrees: analysis.pitchDeg,
           lat,
           lng,
         }),
@@ -339,7 +339,7 @@ export function LeadCaptureForm({
             <div className="text-sm text-slate-400">
               Estimated annual savings:{" "}
               <span className="font-semibold text-white">
-                {formatMoney(estimatedSavings)}
+                {estimatedSavings > 0 ? formatMoney(estimatedSavings) : "Run roof analysis first"}
               </span>
             </div>
             {status === "success" ? (

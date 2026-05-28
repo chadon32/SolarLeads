@@ -1,5 +1,5 @@
 import { Resend } from "resend";
-import { buildSolarReport } from "@/lib/solar-report";
+import { buildSolarReportFromSolarValues } from "@/lib/solar-report";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
 
 type FollowUpRow = {
@@ -21,6 +21,11 @@ type LeadRow = {
   phone: string;
   address: string;
   monthly_bill: number;
+  estimated_savings?: number | null;
+  annual_savings?: number | null;
+  annual_energy_kwh?: number | null;
+  panel_count?: number | null;
+  system_size_kw?: number | null;
 };
 
 type ProcessResult = {
@@ -110,7 +115,7 @@ async function processSingleFollowUp(
 ) {
   const { data: lead, error: leadError } = await supabase
     .from("leads")
-    .select("id, name, email, phone, address, monthly_bill")
+    .select("id, name, email, phone, address, monthly_bill, estimated_savings, annual_savings, annual_energy_kwh, panel_count, system_size_kw")
     .eq("id", step.lead_id)
     .single<LeadRow>();
 
@@ -189,7 +194,13 @@ async function sendFollowUpEmail(
 
   try {
     const resend = new Resend(resendApiKey);
-    const report = buildSolarReport(lead.monthly_bill);
+    const report = buildSolarReportFromSolarValues({
+      annualSavings: Number(lead.annual_savings ?? lead.estimated_savings ?? 0),
+      annualKwh: Number(lead.annual_energy_kwh ?? 0),
+      panelCount: Number(lead.panel_count ?? 0),
+      systemKw: Number(lead.system_size_kw ?? 0),
+      monthlyBill: lead.monthly_bill,
+    });
     const { error } = await resend.emails.send({
       from: resendFromEmail,
       to: lead.email,

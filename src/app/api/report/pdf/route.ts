@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
-import { buildSolarReport } from "@/lib/solar-report";
+import {
+  buildSolarReportFromSolarValues,
+  type SolarReport,
+} from "@/lib/solar-report";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { verifyReportSignature } from "@/lib/report-access";
@@ -52,7 +55,9 @@ export async function GET(request: Request) {
     const supabase = getSupabaseAdminClient();
     const { data: lead, error } = await supabase
       .from("leads")
-      .select("id, name, email, phone, address, monthly_bill, created_at")
+      .select(
+        "id, name, email, phone, address, monthly_bill, created_at, panel_count, system_size_kw, annual_savings, annual_energy_kwh"
+      )
       .eq("id", leadId)
       .single();
 
@@ -63,7 +68,23 @@ export async function GET(request: Request) {
       );
     }
 
-    const report = buildSolarReport(lead.monthly_bill);
+    if (!lead.annual_savings || !lead.panel_count) {
+      return NextResponse.json(
+        {
+          message:
+            "This lead does not have Solar API analysis fields saved yet. Re-run the rooftop analysis before generating a report.",
+        },
+        { status: 409 }
+      );
+    }
+
+    const report = buildSolarReportFromSolarValues({
+      annualSavings: Number(lead.annual_savings),
+      annualKwh: Number(lead.annual_energy_kwh),
+      panelCount: Number(lead.panel_count),
+      systemKw: Number(lead.system_size_kw),
+      monthlyBill: Number(lead.monthly_bill),
+    });
     const pdf = await PDFDocument.create();
     const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
     const regular = await pdf.embedFont(StandardFonts.Helvetica);
@@ -126,7 +147,7 @@ function drawCoverPage({
     created_at: string;
     monthly_bill: number;
   };
-  report: ReturnType<typeof buildSolarReport>;
+  report: SolarReport;
   bold: import("pdf-lib").PDFFont;
   regular: import("pdf-lib").PDFFont;
   colors: Record<string, Color>;
@@ -291,7 +312,7 @@ function drawDetailPage({
     address: string;
     monthly_bill: number;
   };
-  report: ReturnType<typeof buildSolarReport>;
+  report: SolarReport;
   bold: import("pdf-lib").PDFFont;
   regular: import("pdf-lib").PDFFont;
   colors: Record<string, Color>;
@@ -452,7 +473,7 @@ function drawFinancingPage({
     address: string;
     monthly_bill: number;
   };
-  report: ReturnType<typeof buildSolarReport>;
+  report: SolarReport;
   bold: import("pdf-lib").PDFFont;
   regular: import("pdf-lib").PDFFont;
   colors: Record<string, Color>;
@@ -812,7 +833,7 @@ function drawMetricBarChart(
   y: number,
   width: number,
   height: number,
-  report: ReturnType<typeof buildSolarReport>,
+  report: SolarReport,
   colors: Record<string, Color>,
   bold: import("pdf-lib").PDFFont,
   regular: import("pdf-lib").PDFFont
