@@ -328,7 +328,7 @@ export function buildSolarRoofAnalysis(params: {
     });
   }
 
-  const roofOutline = boxToOutline(roofBox);
+  const roofOutline = buildDetectedRoofOutline(roofSegments, roofBox);
   const usablePctRoof = clamp(
     Math.round(
       roofAreaM2 > 0 ? (Math.min(solarPotential.maxArrayAreaMeters2 ?? 0, roofAreaM2) / roofAreaM2) * 100 : 0
@@ -552,6 +552,23 @@ function buildRoofSegmentOutlines(
   });
 }
 
+function buildDetectedRoofOutline(
+  segments: RoofSegmentStats[],
+  roofBox: LatLngBox
+): RoofPoint[] {
+  const segmentPoints = segments
+    .flatMap((segment) =>
+      segment.boundingBox ? boxToOutline(segment.boundingBox, roofBox) : []
+    )
+    .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y));
+
+  if (segmentPoints.length >= 3) {
+    return convexHull(segmentPoints);
+  }
+
+  return boxToOutline(roofBox);
+}
+
 function buildObstructionOutlines(
   segments: RoofSegmentStats[],
   roofBox: LatLngBox,
@@ -589,6 +606,41 @@ function buildFallbackSegmentOutline(index: number): RoofPoint[] {
     { x: 44 + offset, y: 54 + offset },
     { x: 20 + offset, y: 52 + offset },
   ];
+}
+
+function convexHull(points: RoofPoint[]) {
+  const sorted = [...points].sort((left, right) =>
+    left.x === right.x ? left.y - right.y : left.x - right.x
+  );
+
+  if (sorted.length <= 3) {
+    return sorted;
+  }
+
+  const lower: RoofPoint[] = [];
+  for (const point of sorted) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], point) <= 0) {
+      lower.pop();
+    }
+    lower.push(point);
+  }
+
+  const upper: RoofPoint[] = [];
+  for (let index = sorted.length - 1; index >= 0; index -= 1) {
+    const point = sorted[index];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], point) <= 0) {
+      upper.pop();
+    }
+    upper.push(point);
+  }
+
+  lower.pop();
+  upper.pop();
+  return [...lower, ...upper];
+}
+
+function cross(origin: RoofPoint, left: RoofPoint, right: RoofPoint) {
+  return (left.x - origin.x) * (right.y - origin.y) - (left.y - origin.y) * (right.x - origin.x);
 }
 
 function boxToOutline(box: LatLngBox, rootBox?: LatLngBox): RoofPoint[] {

@@ -35,11 +35,15 @@ export async function GET(request: Request) {
     }
 
     const dataLayers = await fetchSolarDataLayers(lat, lng);
+    const proxyUrl = (sourceUrl?: string) =>
+      sourceUrl
+        ? `/api/solar/geotiff?url=${encodeURIComponent(sourceUrl)}`
+        : null;
 
     return NextResponse.json({
-      annualFluxUrl: dataLayers.annualFluxUrl ?? null,
-      maskUrl: dataLayers.maskUrl ?? null,
-      rgbUrl: dataLayers.rgbUrl ?? null,
+      annualFluxUrl: proxyUrl(dataLayers.annualFluxUrl),
+      maskUrl: proxyUrl(dataLayers.maskUrl),
+      rgbUrl: proxyUrl(dataLayers.rgbUrl),
       imageryQuality: dataLayers.imageryQuality ?? null,
       imageryDate: dataLayers.imageryDate ?? null,
       imageryProcessedDate: dataLayers.imageryProcessedDate ?? null,

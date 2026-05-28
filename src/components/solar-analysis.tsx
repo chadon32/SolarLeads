@@ -714,7 +714,10 @@ function ViewportCanvas({
   const footprintPoints = pointsToString(overlay.footprint);
   const usablePoints = pointsToString(overlay.usable);
   const showPanels = viewMode === "panels";
-  const showObstructions = viewMode === "overview" || viewMode === "irradiance";
+  const showObstructions = viewMode === "panels" || viewMode === "irradiance";
+  const showMeasurements = viewMode !== "overview";
+  const showSegmentLabels = viewMode !== "overview";
+  const showSegmentFills = viewMode !== "overview";
 
   return (
     <div className="relative min-h-[36rem] overflow-hidden bg-slate-950 lg:min-h-[43rem]">
@@ -730,14 +733,14 @@ function ViewportCanvas({
       <div
         className={`absolute inset-0 ${
           viewMode === "overview" || viewMode === "irradiance"
-            ? "bg-[linear-gradient(180deg,rgba(4,8,16,0.04),rgba(4,8,16,0.2))]"
+            ? "bg-transparent"
             : "bg-[linear-gradient(180deg,rgba(4,8,16,0.08),rgba(4,8,16,0.52))]"
         }`}
       />
       <div
         className={`absolute inset-0 ${
           viewMode === "overview" || viewMode === "irradiance"
-            ? "bg-[linear-gradient(180deg,rgba(6,10,18,0.01),rgba(6,10,18,0.08))]"
+            ? "bg-transparent"
             : "bg-[linear-gradient(180deg,rgba(6,10,18,0.02),rgba(6,10,18,0.18))]"
         }`}
       />
@@ -766,16 +769,16 @@ function ViewportCanvas({
 
         <polygon
           points={footprintPoints}
-          fill="rgba(3, 7, 18, 0.03)"
-          stroke="rgba(103, 232, 249, 0.82)"
-          strokeWidth="0.5"
-          strokeDasharray="1.2 1.1"
+          fill={viewMode === "overview" ? "rgba(255,255,255,0.01)" : "rgba(3, 7, 18, 0.03)"}
+          stroke={viewMode === "overview" ? "rgba(255,255,255,0.42)" : "rgba(103, 232, 249, 0.82)"}
+          strokeWidth={viewMode === "overview" ? "0.24" : "0.5"}
+          strokeDasharray={viewMode === "overview" ? "0" : "1.2 1.1"}
         />
         <polygon
           points={usablePoints}
-          fill="url(#usable-fill)"
-          stroke="rgba(255,255,255,0.38)"
-          strokeWidth="0.45"
+          fill={viewMode === "overview" ? "rgba(255,255,255,0.02)" : "url(#usable-fill)"}
+          stroke={viewMode === "overview" ? "rgba(255,255,255,0.16)" : "rgba(255,255,255,0.38)"}
+          strokeWidth={viewMode === "overview" ? "0.16" : "0.45"}
         />
 
         <g clipPath="url(#usable-roof-zone)">
@@ -785,30 +788,40 @@ function ViewportCanvas({
               <g key={`segment-${segment.label}`}>
                 <polygon
                   points={pointsToString(segment.outline)}
-                  fill={segment.usable ? "rgba(255,255,255,0.05)" : "rgba(248,113,113,0.08)"}
-                  stroke={segment.usable ? "rgba(255,255,255,0.22)" : "rgba(248,113,113,0.34)"}
-                  strokeWidth="0.16"
+                  fill={
+                    showSegmentFills
+                      ? segment.usable
+                        ? "rgba(255,255,255,0.05)"
+                        : "rgba(248,113,113,0.08)"
+                      : "rgba(255,255,255,0)"
+                  }
+                  stroke={viewMode === "overview" ? "rgba(255,255,255,0.12)" : segment.usable ? "rgba(255,255,255,0.22)" : "rgba(248,113,113,0.34)"}
+                  strokeWidth={viewMode === "overview" ? "0.12" : "0.16"}
                 />
-                <text
-                  x={getPolygonCenter(segment.outline).x}
-                  y={getPolygonCenter(segment.outline).y - 0.7}
-                  textAnchor="middle"
-                  fontSize="1.05"
-                  fill="rgba(255,255,255,0.84)"
-                  letterSpacing="0.08em"
-                >
-                  {segment.label.toUpperCase()}
-                </text>
-                <text
-                  x={getPolygonCenter(segment.outline).x}
-                  y={getPolygonCenter(segment.outline).y + 1.1}
-                  textAnchor="middle"
-                  fontSize="0.86"
-                  fill="rgba(255,255,255,0.72)"
-                  letterSpacing="0.04em"
-                >
-                  {`${segment.areaM2.toFixed(1)} m²`}
-                </text>
+                {showSegmentLabels ? (
+                  <>
+                    <text
+                      x={getPolygonCenter(segment.outline).x}
+                      y={getPolygonCenter(segment.outline).y - 0.7}
+                      textAnchor="middle"
+                      fontSize="1.05"
+                      fill="rgba(255,255,255,0.84)"
+                      letterSpacing="0.08em"
+                    >
+                      {segment.label.toUpperCase()}
+                    </text>
+                    <text
+                      x={getPolygonCenter(segment.outline).x}
+                      y={getPolygonCenter(segment.outline).y + 1.1}
+                      textAnchor="middle"
+                      fontSize="0.86"
+                      fill="rgba(255,255,255,0.72)"
+                      letterSpacing="0.04em"
+                    >
+                      {`${segment.areaM2.toFixed(1)} m²`}
+                    </text>
+                  </>
+                ) : null}
               </g>
             ))}
           {showPanels
@@ -845,7 +858,7 @@ function ViewportCanvas({
             ))
           : null}
 
-        {overlay.measurements.map((measurement) => (
+        {showMeasurements ? overlay.measurements.map((measurement) => (
           <g key={measurement.id}>
             <line
               x1={measurement.x1}
@@ -892,7 +905,7 @@ function ViewportCanvas({
               {measurement.label}
             </text>
           </g>
-        ))}
+        )) : null}
       </svg>
 
     </div>
@@ -1014,10 +1027,12 @@ function AnnualFluxCanvasOverlay({
     <canvas
       ref={canvasRef}
       aria-hidden="true"
-      className="absolute inset-0 h-full w-full pointer-events-none opacity-90 mix-blend-screen"
+      className="absolute inset-0 h-full w-full pointer-events-none opacity-100"
       style={{
         clipPath,
         WebkitClipPath: clipPath,
+        mixBlendMode: "screen",
+        filter: "saturate(1.45) brightness(1.1)",
       }}
     />
   );
