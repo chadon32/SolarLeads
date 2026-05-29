@@ -338,8 +338,21 @@ function FinancingTab({
           Financing values are illustrative only. Final pricing, incentives, APR,
           and terms require installer and lender confirmation.
         </p>
+        <p className="mt-2 text-xs leading-5 text-white/48">
+          These fields are read-only outputs. Adjust the monthly bill and panel
+          count in the estimate controls to update the model.
+        </p>
         <div className="mt-4 grid gap-2">
-          <MiniReadout label="Upfront after incentives" source="illustrative" value={formatMoney(values.upfrontAfterIncentives)} />
+          <MiniReadout
+            label="Upfront after incentives"
+            note={
+              financingMode === "buy"
+                ? "Cash purchase estimate after incentive placeholder."
+                : "Assumes no upfront payment for this financing type."
+            }
+            source="illustrative"
+            value={formatMoney(values.upfrontAfterIncentives)}
+          />
           <MiniReadout label="20-year savings" source="illustrative" value={formatMoney(values.totalSavings)} />
         </div>
         <AssumptionTable rows={values.financingAssumptions} />
@@ -509,10 +522,12 @@ function CompactInfo({
 
 function MiniReadout({
   label,
+  note,
   source,
   value,
 }: {
   label: string;
+  note?: string;
   source: MetricSource;
   value: string;
 }) {
@@ -525,6 +540,7 @@ function MiniReadout({
         <SourceBadge source={source} />
       </div>
       <p className="mt-1 text-base font-semibold text-white">{value}</p>
+      {note ? <p className="mt-1 text-xs leading-5 text-white/44">{note}</p> : null}
     </div>
   );
 }
