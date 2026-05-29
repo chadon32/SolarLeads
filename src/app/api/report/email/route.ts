@@ -3,8 +3,10 @@ import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { Resend } from "resend";
 import type { SolarReport } from "@/lib/solar-report";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { buildReportPdfUrl } from "@/lib/report-access";
 
 type ReportEmailBody = {
+  leadId?: string;
   name?: string;
   email?: string;
   address?: string;
@@ -61,6 +63,9 @@ export async function POST(request: Request) {
     }
 
     const report = body.report;
+    const reportUrl = body.leadId
+      ? buildReportPdfUrl(body.leadId, { absolute: true })
+      : null;
     const pdfBuffer = await buildReportPdfAttachment({
       address: body.address,
       email: body.email,
@@ -74,7 +79,7 @@ export async function POST(request: Request) {
         <div style="max-width:720px; margin:0 auto; background:linear-gradient(135deg, rgba(17,24,39,0.95), rgba(10,15,24,0.95)); border:1px solid rgba(148,163,184,0.18); border-radius:28px; overflow:hidden;">
           <div style="padding:28px 32px; border-bottom:1px solid rgba(255,255,255,0.08);">
             <div style="font-size:12px; letter-spacing:0.32em; text-transform:uppercase; color:#67e8f9;">AI Solar Report</div>
-            <h1 style="margin:14px 0 0; font-size:28px; line-height:1.1;">Your PDF report is attached.</h1>
+            <h1 style="margin:14px 0 0; font-size:28px; line-height:1.1;">Your PDF report is attached${body.name ? `, ${escapeHtml(body.name)}` : ""}.</h1>
             <p style="margin:12px 0 0; color:#cbd5e1; font-size:15px; line-height:1.6;">We generated a tailored solar preview for ${escapeHtml(body.address)}.</p>
           </div>
           <div style="padding:24px 32px 32px;">
@@ -110,7 +115,7 @@ export async function POST(request: Request) {
               <div style="margin-top:6px; font-size:14px; color:#cbd5e1;">Sent to ${escapeHtml(body.email)}</div>
             </div>
             <div style="margin-top:16px; font-size:13px; line-height:1.6; color:#cbd5e1;">
-              Your PDF copy is attached to this email. This preliminary estimate is not a final installation quote.
+              Your PDF copy is attached to this email.${reportUrl ? ` You can also download it here: <a href="${escapeHtml(reportUrl)}" style="color:#67e8f9;">View PDF report</a>.` : ""} This preliminary estimate is not a final installation quote.
             </div>
           </div>
         </div>
@@ -124,9 +129,12 @@ export async function POST(request: Request) {
       `Estimated ROI: ${report.estimatedRoiYears} years`,
       `Environmental impact: ${report.annualImpactLbs.toLocaleString()} lbs CO2`,
       "Your PDF copy is attached to this email.",
+      reportUrl ? `Download link: ${reportUrl}` : "",
       "",
       "Thanks for requesting the report.",
-    ].join("\n");
+    ]
+      .filter(Boolean)
+      .join("\n");
 
     const { error } = await resend.emails.send({
       from: resendFromEmail,
@@ -306,7 +314,7 @@ async function buildReportPdfAttachment({
     color: colors.ink,
   });
   detail.drawText(
-    "This report email was generated without creating a Supabase lead record. The email address is used for report delivery.",
+    "This report email was generated from the saved report record and submitted monthly bill. The estimate remains preliminary until installer confirmation.",
     {
       x: 36,
       y: 432,

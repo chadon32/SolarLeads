@@ -501,11 +501,11 @@ function SectionIntro({
 }) {
   const displayTitle =
     eyebrow === "Generate report"
-      ? "Ready to see your full report? Send yourself a PDF copy."
+      ? "Ready to see your full report? Enter your details and we'll send it instantly."
       : title;
   const displayCopy =
     eyebrow === "Generate report"
-      ? "Enter your email and monthly bill to generate the PDF. We do not store this as a lead."
+      ? "We'll save the report details for your dashboard and send a PDF copy to your email."
       : copy;
 
   return (

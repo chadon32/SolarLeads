@@ -10,6 +10,26 @@ import { verifyReportSignature } from "@/lib/report-access";
 
 type Color = ReturnType<typeof rgb>;
 
+type ReportLead = {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  address: string;
+  monthly_bill: number;
+  estimated_savings?: number | null;
+  created_at: string;
+  panel_count?: number | null;
+  system_size_kw?: number | null;
+  annual_savings?: number | null;
+  annual_energy_kwh?: number | null;
+};
+
+type LeadQueryResult = {
+  data: ReportLead | null;
+  error: { message: string } | null;
+};
+
 export async function GET(request: Request) {
   try {
     const rateLimit = await enforceRateLimit({
@@ -55,13 +75,29 @@ export async function GET(request: Request) {
     }
 
     const supabase = getSupabaseAdminClient();
-    const { data: lead, error } = await supabase
+    const extendedLeadSelect =
+      "id, name, email, phone, address, monthly_bill, estimated_savings, created_at, panel_count, system_size_kw, annual_savings, annual_energy_kwh";
+    const baseLeadSelect =
+      "id, name, email, phone, address, monthly_bill, estimated_savings, created_at";
+
+    let leadResult = await supabase
       .from("leads")
-      .select(
-        "id, name, email, phone, address, monthly_bill, created_at, panel_count, system_size_kw, annual_savings, annual_energy_kwh"
-      )
+      .select(extendedLeadSelect)
       .eq("id", leadId)
-      .single();
+      .single() as unknown as LeadQueryResult;
+
+    if (
+      leadResult.error &&
+      shouldRetryLegacySelect(leadResult.error.message)
+    ) {
+      leadResult = await supabase
+        .from("leads")
+        .select(baseLeadSelect)
+        .eq("id", leadId)
+        .single() as unknown as LeadQueryResult;
+    }
+
+    const { data: lead, error } = leadResult;
 
     if (error || !lead) {
       return NextResponse.json(
@@ -70,18 +106,8 @@ export async function GET(request: Request) {
       );
     }
 
-    if (!lead.annual_savings || !lead.panel_count) {
-      return NextResponse.json(
-        {
-          message:
-            "This lead does not have Solar API analysis fields saved yet. Re-run the rooftop analysis before generating a report.",
-        },
-        { status: 409 }
-      );
-    }
-
     const report = buildSolarReportFromSolarValues({
-      annualSavings: Number(lead.annual_savings),
+      annualSavings: Number(lead.annual_savings ?? lead.estimated_savings ?? 0),
       annualKwh: Number(lead.annual_energy_kwh),
       panelCount: Number(lead.panel_count),
       systemKw: Number(lead.system_size_kw),
@@ -912,4 +938,13 @@ function formatMoney(value: number) {
     currency: "USD",
     maximumFractionDigits: 0,
   }).format(value);
+}
+
+function shouldRetryLegacySelect(message: string) {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("column") ||
+    normalized.includes("schema cache") ||
+    normalized.includes("could not find")
+  );
 }
