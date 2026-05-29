@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { RoofAnalysis } from "@/lib/roof-analysis";
+import { buildSolarMetrics } from "@/lib/solar-metrics";
 
 const scanLog = [
   "Detecting roof edge...",
@@ -34,6 +35,8 @@ export function InstallReadouts({
     return null;
   }
 
+  const metrics = buildSolarMetrics(analysis);
+
   return (
     <section className="relative mx-auto w-full max-w-7xl px-6 pb-8 md:px-10 lg:px-12">
       <div className="grid gap-4 lg:grid-cols-3 lg:items-stretch">
@@ -51,13 +54,13 @@ export function InstallReadouts({
             <div className="flex items-center justify-between gap-4 border-b border-white/8 pb-3">
               <span className="text-slate-400">Roof slope</span>
               <span className="font-semibold text-white">
-                {analysis.pitchDeg.toFixed(1)} deg
+                {metrics.avgPitchDeg.toFixed(1)} deg
               </span>
             </div>
             <div className="flex items-center justify-between gap-4 border-b border-white/8 pb-3">
               <span className="text-slate-400">Usable area</span>
               <span className="font-semibold text-white">
-                {analysis.usablePctRoof}%
+                {metrics.usablePctRoof}%
               </span>
             </div>
             <div className="flex items-center justify-between gap-4">
@@ -124,7 +127,7 @@ export function InstallReadouts({
                           Math.min(
                             100,
                             Math.round(
-                              (segment.panelsFit / Math.max(analysis.panelCount, 1)) * 100
+                              (segment.panelsFit / Math.max(metrics.panelCount, 1)) * 100
                             )
                           )
                         )}%`,

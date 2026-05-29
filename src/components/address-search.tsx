@@ -32,14 +32,6 @@ type PlaceDetailsPayload = {
   }>;
 };
 
-const demoSuggestions = [
-  "7140 E Via Dona Rd, Scottsdale, AZ",
-  "8420 E Shea Blvd, Scottsdale, AZ",
-  "2405 E Camelback Rd, Phoenix, AZ",
-  "117 W Orchid Ln, Phoenix, AZ",
-  "11310 N Scottsdale Rd, Scottsdale, AZ",
-];
-
 const lookupUnavailableMessage =
   "Address lookup is temporarily unavailable. Please try again or call us at (602) 555-0100.";
 
@@ -59,14 +51,7 @@ function buildFallbackSuggestions(query: string) {
         ]
       : [];
 
-  const demoMatches = demoSuggestions
-    .filter((address) => address.toLowerCase().includes(query.toLowerCase()))
-    .map((address, index) => ({
-      description: address,
-      place_id: `demo-${index}`,
-    }));
-
-  return [...typedSuggestion, ...demoMatches].slice(0, 5);
+  return typedSuggestion;
 }
 
 function isArizonaAddress(address: string) {
@@ -181,10 +166,7 @@ export function AddressSearch({
       setActiveIndex(-1);
       setOpen(false);
 
-      if (
-        prediction.place_id.startsWith("demo-") ||
-        prediction.place_id.startsWith("manual-")
-      ) {
+      if (prediction.place_id.startsWith("manual-")) {
         if (!isArizonaAddress(address)) {
           setAddressError(
             "We currently only serve Arizona homes. Please enter an AZ address."
@@ -258,12 +240,8 @@ export function AddressSearch({
       if (!open) return;
 
       if (!trimmed) {
-        const fallback = demoSuggestions.map((address, index) => ({
-          description: address,
-          place_id: `demo-${index}`,
-        }));
-        setPredictions(fallback);
-        setActiveIndex(fallback.length ? 0 : -1);
+        setPredictions([]);
+        setActiveIndex(-1);
         setStatus("Start typing to search real addresses.");
         setAddressError(null);
         setSearching(false);

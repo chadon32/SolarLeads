@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { RoofAnalysis } from "@/lib/roof-analysis";
+import { buildSolarMetrics } from "@/lib/solar-metrics";
 
 type Stat = {
   label: string;
@@ -147,29 +148,25 @@ export function SavingsStats({
     return null;
   }
 
-  const coverage = Math.min(
-    96,
-    Math.max(54, Math.round(analysis.systemKw * 7.3))
-  );
-  const carbonOffset = Math.round(analysis.annualKwh * 1.54);
+  const metrics = buildSolarMetrics(analysis);
 
   const stats: Stat[] = [
     {
       label: "Annual savings",
       suffix: "/yr",
-      value: analysis.annualSavingsUSD,
+      value: metrics.annualSavings,
       description: "Modeled annual utility savings for this address.",
     },
     {
       label: "Coverage",
       suffix: "%",
-      value: coverage,
+      value: metrics.coveragePct,
       description: "Estimated portion of household usage offset by the array.",
     },
     {
       label: "Carbon offset",
       suffix: " lbs",
-      value: carbonOffset,
+      value: metrics.co2OffsetLbs,
       description: "Modeled yearly CO2 reduction based on this address estimate.",
     },
   ];

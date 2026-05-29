@@ -7,6 +7,7 @@ import { FollowUpTimeline } from "@/components/follow-up-timeline";
 import { ButtonLink } from "@/components/ui/button";
 import { createFollowUpSequence, type FollowUpStep } from "@/lib/follow-ups";
 import type { RoofAnalysis } from "@/lib/roof-analysis";
+import { buildSolarMetrics } from "@/lib/solar-metrics";
 import {
   buildSolarReportFromAnalysis,
   buildSolarReportFromSolarValues,
@@ -54,7 +55,9 @@ export function SolarReportGenerator({
         name,
         address,
         monthlyBill,
-        annualSavings: analysis?.annualSavingsUSD,
+        annualSavings: analysis?.validSite
+          ? buildSolarMetrics(analysis).annualSavings
+          : undefined,
       })
   );
   const emailedLeadIdRef = useRef<string | null>(null);

@@ -1,4 +1,5 @@
 import type { RoofAnalysis } from "@/lib/roof-analysis";
+import { buildSolarMetrics } from "@/lib/solar-metrics";
 
 export type SolarReport = {
   annualSavings: number;
@@ -42,7 +43,7 @@ export function buildSolarReportFromSolarValues(values: SolarReportValues): Sola
     annualSavings > 0
       ? Number((estimatedSystemCost / annualSavings).toFixed(1))
       : 0;
-  const annualImpactLbs = Math.round(annualKwh * 1.54);
+  const annualImpactLbs = Math.round(annualKwh * 0.39 * 2.205);
   const annualHouseholdKwh =
     toFiniteNumber(values.monthlyBill) > 0
       ? (Number(values.monthlyBill) * 12) / 0.13
@@ -70,11 +71,13 @@ export function buildSolarReportFromAnalysis(
   analysis: RoofAnalysis,
   monthlyBill: number
 ): SolarReport {
+  const metrics = buildSolarMetrics(analysis);
+
   return buildSolarReportFromSolarValues({
-    annualSavings: analysis.annualSavingsUSD,
-    annualKwh: analysis.annualKwh,
-    panelCount: analysis.panelCount,
-    systemKw: analysis.systemKw,
+    annualSavings: metrics.annualSavings,
+    annualKwh: metrics.annualKwh,
+    panelCount: metrics.panelCount,
+    systemKw: metrics.systemKw,
     monthlyBill,
   });
 }

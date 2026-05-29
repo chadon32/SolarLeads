@@ -3,12 +3,14 @@
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ButtonLink } from "@/components/ui/button";
+import { type RoofGeoBounds, type RoofAnalysis } from "@/lib/roof-analysis";
 import {
-  getRoofAreaM2,
-  getUsableAreaM2,
-  type RoofGeoBounds,
-  type RoofAnalysis,
-} from "@/lib/roof-analysis";
+  buildSolarMetrics,
+  ARIZONA_AVG_RATE_PER_KWH,
+  findNearestPanelConfig as findSharedPanelConfig,
+  formatCompassDirection,
+  STANDARD_PANEL_WATTS,
+} from "@/lib/solar-metrics";
 
 type ResolvedProperty = {
   address: string;
@@ -169,25 +171,6 @@ const viewModes: Array<{ id: ViewMode; label: string }> = [
 const dsmPlaneExtractionCache = new Map<string, Promise<DsmPlaneExtraction | null>>();
 const PANEL_MODULE_GAP_METERS = 0.2032;
 const PANEL_COLLISION_EPSILON_METERS = 0.01;
-
-const azimuthLabels = [
-  "N",
-  "NNE",
-  "NE",
-  "ENE",
-  "E",
-  "ESE",
-  "SE",
-  "SSE",
-  "S",
-  "SSW",
-  "SW",
-  "WSW",
-  "W",
-  "WNW",
-  "NW",
-  "NNW",
-] as const;
 
 export function SolarAnalysis({
   address,
@@ -395,66 +378,21 @@ export function SolarAnalysis({
     };
   }, [address, location, onAnalysisChange, setSelectedPanelCount]);
 
-  const selectedPanels = useMemo(() => {
-    if (!roofData) {
-      return [];
-    }
-
-    const maxSelectablePanels = getMaxSelectablePanelCount(roofData);
-    const count = clampNumber(selectedPanelCount || maxSelectablePanels, 1, maxSelectablePanels);
-
-    return roofData.solarPanels.slice(0, count);
-  }, [roofData, selectedPanelCount]);
-
   const metrics = useMemo(() => {
     if (!roofData) {
       return null;
     }
 
-    const roofArea = getRoofAreaM2(roofData);
-    const usableArea = getUsableAreaM2(roofData);
-    const averageRoofPitch =
-      roofData.roofSegments.length > 0
-        ? Math.round(
-            (roofData.roofSegments.reduce(
-              (sum, segment) => sum + Math.max(segment.pitchDeg, 0),
-              0
-            ) / roofData.roofSegments.length) * 10
-          ) / 10
-        : roofData.pitchDeg;
-    const panelCapacityWatts = roofData.panelCapacityWatts || 400;
     const livePanelCount = clampNumber(
       selectedPanelCount || getMaxSelectablePanelCount(roofData),
       1,
       getMaxSelectablePanelCount(roofData)
     );
-    const selectedConfig = findNearestPanelConfig(
-      roofData.solarPanelConfigs,
-      livePanelCount
-    );
-    const totalAnnualKwh = roofData.annualKwh;
-    const perPanelKwh =
-      roofData.panelCount > 0
-        ? totalAnnualKwh / Math.max(roofData.panelCount, 1)
-        : 0;
-    const selectedAnnualKwh = Math.max(
-      0,
-      Math.round(
-        selectedConfig?.yearlyEnergyDcKwh ??
-          (selectedPanels.length > 0
-            ? selectedPanels.reduce(
-                (sum, panel) => sum + Math.max(panel.yearlyEnergyDcKwh, 0),
-                0
-              )
-            : perPanelKwh * livePanelCount)
-      )
-    );
-    const selectedAnnualSavingsUSD = Math.round(selectedAnnualKwh * 0.13);
-    const selectedSystemKw = Math.round(((livePanelCount * panelCapacityWatts) / 1000) * 10) / 10;
-    const monthlySavings = Math.round(selectedAnnualSavingsUSD / 12);
-    const estimatedNetCost = livePanelCount * panelCapacityWatts * 2.75;
-    const roiYears = estimatedNetCost / Math.max(selectedAnnualSavingsUSD, 1);
-    const carbonOffsetLbs = Math.round(selectedAnnualKwh * 1.54);
+    const sharedMetrics = buildSolarMetrics(roofData, {
+      selectedPanelCount: livePanelCount,
+    });
+    const estimatedNetCost = livePanelCount * STANDARD_PANEL_WATTS * 2.75;
+    const carbonOffsetLbs = sharedMetrics.co2OffsetLbs;
     const carbonOffsetTons = carbonOffsetLbs / 2000;
     const treesEquivalent = Math.max(1, Math.round(carbonOffsetLbs / 48));
     const recommendedSegment =
@@ -463,24 +401,24 @@ export function SolarAnalysis({
         .find((segment) => segment.usable) ?? roofData.roofSegments[0];
 
     return {
-      roofArea,
-      usableArea,
-      averageRoofPitch,
-      annualSunlightHours: roofData.annualSunlightHours,
-      selectedPanelCount: livePanelCount,
-      selectedSystemKw,
-      selectedAnnualKwh,
-      selectedAnnualSavingsUSD,
-      monthlySavings,
-      roiYears,
+      roofArea: sharedMetrics.grossRoofAreaM2,
+      usableArea: sharedMetrics.usableRoofAreaM2,
+      averageRoofPitch: sharedMetrics.avgPitchDeg,
+      annualSunlightHours: sharedMetrics.annualSunlightHours,
+      selectedPanelCount: sharedMetrics.panelCount,
+      selectedSystemKw: sharedMetrics.systemKw,
+      selectedAnnualKwh: sharedMetrics.annualKwh,
+      selectedAnnualSavingsUSD: sharedMetrics.annualSavings,
+      monthlySavings: sharedMetrics.monthlySavings,
+      roiYears: sharedMetrics.paybackYears,
       carbonOffsetLbs,
       carbonOffsetTons,
       treesEquivalent,
       recommendedSegment,
       financingFrom: Math.round(estimatedNetCost / 300),
-      orientationLabel: formatAzimuth(roofData.primaryRoofAzimuth),
+      orientationLabel: sharedMetrics.primaryOrientationLabel,
     };
-  }, [roofData, selectedPanels, selectedPanelCount]);
+  }, [roofData, selectedPanelCount]);
 
   const stageStep =
     stage === "resolving"
@@ -861,6 +799,11 @@ function ViewportCanvas({
         });
       }
 
+      mapRef.current.setCenter(center);
+      mapRef.current.setZoom(19);
+      mapRef.current.setTilt(0);
+      mapRef.current.setMapTypeId(googleApi.maps.MapTypeId.SATELLITE);
+
       if (cameraFitTimeoutRef.current !== null) {
         window.clearTimeout(cameraFitTimeoutRef.current);
         cameraFitTimeoutRef.current = null;
@@ -872,8 +815,6 @@ function ViewportCanvas({
         target: cameraTarget,
       });
       cameraFitKeyRef.current = cameraTargetKey;
-      mapRef.current.setTilt(0);
-      mapRef.current.setMapTypeId(googleApi.maps.MapTypeId.SATELLITE);
     };
 
     void setupMap();
@@ -1747,7 +1688,7 @@ function buildAcceptedPanelAnalysis(analysis: RoofAnalysis): RoofAnalysis {
   const cappedConfigs = analysis.solarPanelConfigs.filter(
     (config) => config.panelsCount <= acceptedPanelCount
   );
-  const selectedConfig = findNearestPanelConfig(
+  const selectedConfig = findSharedPanelConfig(
     cappedConfigs.length ? cappedConfigs : analysis.solarPanelConfigs,
     acceptedPanelCount
   );
@@ -1777,7 +1718,7 @@ function buildAcceptedPanelAnalysis(analysis: RoofAnalysis): RoofAnalysis {
     ...analysis,
     acceptedPanelCount,
     annualKwh,
-    annualSavingsUSD: Math.round(annualKwh * 0.13),
+    annualSavingsUSD: Math.round(annualKwh * ARIZONA_AVG_RATE_PER_KWH),
     originalPanelCandidateCount,
     panelCount: acceptedPanelCount,
     rejectedPanelCandidateCount,
@@ -1789,7 +1730,7 @@ function buildAcceptedPanelAnalysis(analysis: RoofAnalysis): RoofAnalysis {
     solarPanels: acceptedPanels,
     systemKw:
       Math.round(
-        ((acceptedPanelCount * (analysis.panelCapacityWatts || 400)) / 1000) * 10
+        ((acceptedPanelCount * STANDARD_PANEL_WATTS) / 1000) * 10
       ) / 10,
   };
 }
@@ -2939,28 +2880,6 @@ function clamp01(value: number) {
   return Math.max(0, Math.min(1, value));
 }
 
-function findNearestPanelConfig(
-  configs: RoofAnalysis["solarPanelConfigs"],
-  panelCount: number
-) {
-  if (!configs.length) {
-    return null;
-  }
-
-  return (
-    configs.find((config) => config.panelsCount === panelCount) ??
-    configs
-      .filter((config) => config.panelsCount <= panelCount)
-      .at(-1) ??
-    configs.reduce((closest, config) =>
-      Math.abs(config.panelsCount - panelCount) <
-      Math.abs(closest.panelsCount - panelCount)
-        ? config
-        : closest
-    )
-  );
-}
-
 function AnalysisSidebarSkeleton() {
   return (
     <aside className="space-y-4">
@@ -3187,9 +3106,7 @@ async function resolveProperty(
 }
 
 function formatAzimuth(value: number) {
-  const normalized = ((value % 360) + 360) % 360;
-  const index = Math.round(normalized / 22.5) % 16;
-  return azimuthLabels[index];
+  return formatCompassDirection(value);
 }
 
 function clampNumber(value: number, min: number, max: number) {

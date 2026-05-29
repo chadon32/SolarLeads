@@ -57,7 +57,7 @@ const BUSINESS_PHONE_HREF = "tel:+16025550100";
 
 export function HomeClient() {
   const [selectedAddress, setSelectedAddress] = useState("");
-  const [roofAnalysis, setRoofAnalysis] = useState<RoofAnalysis | null>(null);
+  const [solarData, setSolarData] = useState<RoofAnalysis | null>(null);
   const [activePanelCount, setActivePanelCount] = useState(0);
   const [selectedLocation, setSelectedLocation] = useState<{
     address: string;
@@ -65,7 +65,8 @@ export function HomeClient() {
     lng: number;
   } | null>(null);
   const [showStickyCta, setShowStickyCta] = useState(false);
-  const hasValidAnalysis = Boolean(roofAnalysis?.validSite);
+  const roofAnalysis = solarData;
+  const hasValidAnalysis = Boolean(solarData?.validSite);
   const heroCompact = Boolean(selectedAddress);
 
   useEffect(() => {
@@ -231,7 +232,7 @@ export function HomeClient() {
                 selectedAddress={selectedAddress}
                 onSelect={(property) => {
                   setSelectedAddress(property.address);
-                  setRoofAnalysis(null);
+                  setSolarData(null);
                   setActivePanelCount(0);
                   setSelectedLocation(
                     property.address &&
@@ -331,7 +332,7 @@ export function HomeClient() {
                   address={selectedAddress}
                   compact
                   location={selectedLocation}
-                  onAnalysisChange={setRoofAnalysis}
+                  onAnalysisChange={setSolarData}
                   activePanelCount={activePanelCount || null}
                   onActivePanelCountChange={setActivePanelCount}
                 />
@@ -362,7 +363,8 @@ export function HomeClient() {
           <div className="mt-5">
             <LeadCaptureForm
               initialAddress={selectedAddress}
-              analysis={roofAnalysis}
+              analysis={solarData}
+              activePanelCount={activePanelCount}
               lat={selectedLocation?.lat}
               lng={selectedLocation?.lng}
             />

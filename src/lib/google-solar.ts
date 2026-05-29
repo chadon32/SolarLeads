@@ -68,6 +68,7 @@ type SolarPotential = {
   panelWidthMeters?: number;
   maxArrayAreaMeters2?: number;
   maxSunshineHoursPerYear?: number;
+  carbonOffsetFactorKgPerMwh?: number;
   wholeRoofStats?: SizeAndSunshineStats;
   buildingStats?: SizeAndSunshineStats;
   roofSegmentStats?: RoofSegmentStats[];
@@ -329,10 +330,7 @@ export function buildSolarRoofAnalysis(params: {
     Math.round(solarPotential.maxArrayPanelsCount ?? 0),
     0
   );
-  const panelCapacityWatts = Math.max(
-    Number(solarPotential.panelCapacityWatts ?? 400),
-    1
-  );
+  const panelCapacityWatts = 400;
   const panelWidthMeters = Math.max(
     Number(solarPotential.panelWidthMeters ?? 1.1),
     0.5
@@ -421,8 +419,8 @@ export function buildSolarRoofAnalysis(params: {
     rawWidthM,
     rawDepthM,
   });
-  const widthM = inferredFootprint.widthM;
-  const depthM = inferredFootprint.depthM;
+  const widthM = roundTo(rawWidthM > 0 ? rawWidthM : inferredFootprint.widthM, 1);
+  const depthM = roundTo(rawDepthM > 0 ? rawDepthM : inferredFootprint.depthM, 1);
   const shadingRisk = classifyShadingRisk(solarPotential, roofSegments);
   const obstructionOutlines = buildObstructionOutlines(roofSegments, roofBox, shadingRisk);
   const panelCount = recommendedPanelCount || maxArrayPanelsCount;
@@ -519,6 +517,10 @@ export function buildSolarRoofAnalysis(params: {
       systemKw: roundTo((panelCount * panelCapacityWatts) / 1000, 1),
       annualKwh,
       annualSavingsUSD,
+      carbonOffsetFactorKgPerMwh: Math.max(
+        0,
+        Number(solarPotential.carbonOffsetFactorKgPerMwh ?? 390)
+      ),
       panelCapacityWatts,
       panelWidthMeters,
       panelHeightMeters,

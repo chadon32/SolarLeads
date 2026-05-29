@@ -81,6 +81,7 @@ export type RoofAnalysis = {
   systemKw: number;
   annualKwh: number;
   annualSavingsUSD: number;
+  carbonOffsetFactorKgPerMwh?: number;
   panelCapacityWatts: number;
   panelWidthMeters: number;
   panelHeightMeters: number;
@@ -194,6 +195,7 @@ export function buildFallbackRoofAnalysis(params: {
     systemKw,
     annualKwh,
     annualSavingsUSD,
+    carbonOffsetFactorKgPerMwh: 390,
     panelCapacityWatts: 400,
     panelWidthMeters: 1.1,
     panelHeightMeters: 1.7,
@@ -239,6 +241,7 @@ export function buildInvalidRoofAnalysis(params: {
     systemKw: 0,
     annualKwh: 0,
     annualSavingsUSD: 0,
+    carbonOffsetFactorKgPerMwh: fallback.carbonOffsetFactorKgPerMwh,
     grossRoofAreaM2: 0,
     usableRoofAreaM2: 0,
     panelCapacityWatts: fallback.panelCapacityWatts,
@@ -343,6 +346,13 @@ export function normalizeRoofAnalysis(
       numberOrFallback(input.annualSavingsUSD, Math.round(annualKwh * 0.13))
     )
   );
+  const carbonOffsetFactorKgPerMwh = Math.max(
+    0,
+    numberOrFallback(
+      input.carbonOffsetFactorKgPerMwh,
+      fallback.carbonOffsetFactorKgPerMwh ?? 390
+    )
+  );
   const primaryRoofAzimuth = clamp(
     Math.round(
       numberOrFallback(input.primaryRoofAzimuth, fallback.primaryRoofAzimuth)
@@ -435,6 +445,7 @@ export function normalizeRoofAnalysis(
     systemKw,
     annualKwh,
     annualSavingsUSD,
+    carbonOffsetFactorKgPerMwh,
     panelCapacityWatts,
     panelWidthMeters,
     panelHeightMeters,

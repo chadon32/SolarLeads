@@ -12,7 +12,12 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useMemo, useState } from "react";
-import { getUsableAreaM2, type RoofAnalysis } from "@/lib/roof-analysis";
+import type { RoofAnalysis } from "@/lib/roof-analysis";
+import {
+  buildSolarMetrics,
+  INSTALLED_COST_PER_WATT,
+  STANDARD_PANEL_WATTS,
+} from "@/lib/solar-metrics";
 
 type SolarReportDashboardProps = {
   address: string;
@@ -603,42 +608,17 @@ function buildDashboardValues(
   financingMode: FinancingMode,
   activePanelCount?: number
 ) {
-  const usableAreaM2 = getUsableAreaM2(analysis);
-  const usableAreaSqFt = Math.round(usableAreaM2 * 10.7639);
-  const maxPanelCount = Math.max(
-    1,
-    analysis.solarPanels.length || analysis.acceptedPanelCount || analysis.panelCount
-  );
+  const baseMetrics = buildSolarMetrics(analysis);
+  const maxPanelCount = Math.max(1, baseMetrics.maxPanelCount);
   const panelCount = Math.round(
     clamp(activePanelCount || maxPanelCount, 1, maxPanelCount)
   );
-  const rejectedPanelCandidateCount = Math.max(
-    0,
-    analysis.rejectedPanelCandidateCount ??
-      Math.max(0, (analysis.originalPanelCandidateCount ?? maxPanelCount) - maxPanelCount)
-  );
-  const selectedConfig = findNearestPanelConfig(analysis.solarPanelConfigs, panelCount);
-  const panelEnergyTotal = analysis.solarPanels
-    .slice(0, panelCount)
-    .reduce((sum, panel) => sum + Math.max(panel.yearlyEnergyDcKwh, 0), 0);
-  const annualKwh = Math.round(
-    selectedConfig?.yearlyEnergyDcKwh ??
-      (panelEnergyTotal > 0
-        ? panelEnergyTotal
-        : (analysis.annualKwh / Math.max(analysis.panelCount, 1)) * panelCount)
-  );
-  const recommendedKw = roundTo(
-    (panelCount * Math.max(analysis.panelCapacityWatts || 400, 1)) / 1000,
-    1
-  );
-  const baseAnnualSavings = Math.round(annualKwh * 0.13);
-  const annualSavings = Math.round(
-    clamp(
-      baseAnnualSavings,
-      monthlyBill * 12 * 0.18,
-      monthlyBill * 12 * 0.92
-    )
-  );
+  const metrics = buildSolarMetrics(analysis, { selectedPanelCount: panelCount });
+  const usableAreaSqFt = Math.round(metrics.usableRoofAreaM2 * 10.7639);
+  const rejectedPanelCandidateCount = metrics.rejectedCandidateCount;
+  const annualKwh = metrics.annualKwh;
+  const recommendedKw = metrics.systemKw;
+  const annualSavings = metrics.annualSavings;
   const twentyYearSavings = Math.round(annualSavings * 20);
   const panelAreaSqFt =
     analysis.panelWidthMeters > 0 && analysis.panelHeightMeters > 0
@@ -651,15 +631,14 @@ function buildDashboardValues(
       Math.max(usableAreaSqFt, panelCount * panelAreaSqFt)
     )
   );
-  const carbonMetricTons = roundTo(annualKwh * 0.00039, 1);
+  const carbonMetricTons = roundTo(metrics.co2OffsetLbs / 2205, 1);
   const carsRemoved = roundTo(carbonMetricTons / 4.6, 1);
   const treesEquivalent = roundTo(carbonMetricTons * 16.7, 1);
   const azRatePerKwh = 0.13;
-  const installedCostPerWatt = 2.75;
   const buyIncentiveRate = 0.3;
   const utilityEscalationRate = 0.03;
   const loanPaymentMultiplier = 1.38;
-  const installedCost = Math.round(recommendedKw * 1000 * installedCostPerWatt);
+  const installedCost = Math.round(panelCount * STANDARD_PANEL_WATTS * INSTALLED_COST_PER_WATT);
   const totalCostWithoutSolar = Math.round(
     Array.from({ length: 20 }).reduce<number>(
       (sum, _, year) => sum + monthlyBill * 12 * (1 + utilityEscalationRate) ** year,
@@ -691,7 +670,7 @@ function buildDashboardValues(
     ],
     financingAssumptions: [
       { label: "Arizona electricity rate", value: `$${azRatePerKwh.toFixed(2)}/kWh` },
-      { label: "Installed cost basis", value: `$${installedCostPerWatt.toFixed(2)}/W` },
+      { label: "Installed cost basis", value: `$${INSTALLED_COST_PER_WATT.toFixed(2)}/W` },
       { label: "Utility escalation", value: `${Math.round(utilityEscalationRate * 100)}% / yr` },
       { label: "Buy incentive placeholder", value: `${Math.round(buyIncentiveRate * 100)}%` },
       { label: "Loan payment multiplier", value: `${loanPaymentMultiplier.toFixed(2)}x installed cost` },
@@ -737,26 +716,4 @@ function roundTo(value: number, precision: number) {
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
-}
-
-function findNearestPanelConfig(
-  configs: RoofAnalysis["solarPanelConfigs"],
-  panelCount: number
-) {
-  if (!configs.length) {
-    return null;
-  }
-
-  return (
-    configs.find((config) => config.panelsCount === panelCount) ??
-    configs
-      .filter((config) => config.panelsCount <= panelCount)
-      .at(-1) ??
-    configs.reduce((closest, config) =>
-      Math.abs(config.panelsCount - panelCount) <
-      Math.abs(closest.panelsCount - panelCount)
-        ? config
-        : closest
-    )
-  );
 }

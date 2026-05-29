@@ -9,6 +9,7 @@ import {
   getUsableAreaM2,
   type RoofAnalysis,
 } from "@/lib/roof-analysis";
+import { buildSolarMetrics } from "@/lib/solar-metrics";
 
 const SolarReportGenerator = dynamic(
   () =>
@@ -23,6 +24,7 @@ const SolarReportGenerator = dynamic(
 type LeadCaptureFormProps = {
   initialAddress: string;
   analysis?: RoofAnalysis | null;
+  activePanelCount?: number;
   lat?: number;
   lng?: number;
 };
@@ -97,6 +99,7 @@ function buildFingerprint(values: FormValues) {
 export function LeadCaptureForm({
   initialAddress,
   analysis,
+  activePanelCount,
   lat,
   lng,
 }: LeadCaptureFormProps) {
@@ -131,12 +134,14 @@ export function LeadCaptureForm({
   }, [initialAddress]);
 
   const estimatedSavings = useMemo(() => {
-    if (analysis?.annualSavingsUSD) {
-      return analysis.annualSavingsUSD;
+    if (analysis?.validSite) {
+      return buildSolarMetrics(analysis, {
+        selectedPanelCount: activePanelCount,
+      }).annualSavings;
     }
 
     return 0;
-  }, [analysis?.annualSavingsUSD]);
+  }, [activePanelCount, analysis]);
 
   const handleEmailStatusChange = useCallback(
     (nextStatus: "idle" | "sending" | "sent" | "error", nextMessage: string) => {
@@ -190,7 +195,11 @@ export function LeadCaptureForm({
     if (status === "submitting") return;
     if (!validate()) return;
 
-    if (!analysis?.validSite || !analysis.annualSavingsUSD) {
+    const metrics = analysis?.validSite
+      ? buildSolarMetrics(analysis, { selectedPanelCount: activePanelCount })
+      : null;
+
+    if (!analysis?.validSite || !metrics || !metrics.annualSavings) {
       setStatus("error");
       setMessage("Complete a valid Solar API roof analysis before generating the report.");
       return;
@@ -208,7 +217,7 @@ export function LeadCaptureForm({
     setMessage("Saving your lead...");
 
     const monthlyBill = Number(values.monthlyBill);
-    const savings = analysis.annualSavingsUSD;
+    const savings = metrics.annualSavings;
 
     try {
       const response = await fetch("/api/leads", {
@@ -222,14 +231,14 @@ export function LeadCaptureForm({
           phone: values.phone.trim(),
           address: values.address.trim(),
           monthlyBill,
-          panelCount: analysis.panelCount,
-          systemSizeKw: analysis.systemKw,
-          annualSavings: analysis.annualSavingsUSD,
-          monthlySavings: Math.round(analysis.annualSavingsUSD / 12),
-          annualEnergyKwh: analysis.annualKwh,
+          panelCount: metrics.panelCount,
+          systemSizeKw: metrics.systemKw,
+          annualSavings: metrics.annualSavings,
+          monthlySavings: metrics.monthlySavings,
+          annualEnergyKwh: metrics.annualKwh,
           roofAreaSqm: getRoofAreaM2(analysis),
           usableAreaSqm: getUsableAreaM2(analysis),
-          roofPitchDegrees: analysis.pitchDeg,
+          roofPitchDegrees: metrics.avgPitchDeg,
           lat,
           lng,
         }),
