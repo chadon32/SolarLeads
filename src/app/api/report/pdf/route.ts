@@ -107,11 +107,13 @@ export async function GET(request: Request) {
     }
 
     const report = buildSolarReportFromSolarValues({
-      annualSavings: Number(lead.annual_savings ?? lead.estimated_savings ?? 0),
-      annualKwh: Number(lead.annual_energy_kwh),
-      panelCount: Number(lead.panel_count),
-      systemKw: Number(lead.system_size_kw),
-      monthlyBill: Number(lead.monthly_bill),
+      annualSavings: toFiniteNumber(
+        lead.annual_savings ?? lead.estimated_savings
+      ),
+      annualKwh: toFiniteNumber(lead.annual_energy_kwh),
+      panelCount: toFiniteNumber(lead.panel_count),
+      systemKw: toFiniteNumber(lead.system_size_kw),
+      monthlyBill: toFiniteNumber(lead.monthly_bill),
     });
     const pdf = await PDFDocument.create();
     const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
@@ -907,7 +909,10 @@ function drawMetricBarChart(
 
   bars.forEach((bar, index) => {
     const barY = y + 18 + index * 20;
-    const barWidth = Math.max(0, Math.round(((width - 150) * bar.value) / bar.max));
+    const barWidth = Math.max(
+      0,
+      Math.round(((width - 150) * toFiniteNumber(bar.value)) / Math.max(1, toFiniteNumber(bar.max, 1)))
+    );
     page.drawText(bar.label, {
       x: x + 14,
       y: barY + 2,
@@ -947,4 +952,9 @@ function shouldRetryLegacySelect(message: string) {
     normalized.includes("schema cache") ||
     normalized.includes("could not find")
   );
+}
+
+function toFiniteNumber(value: unknown, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
 }
