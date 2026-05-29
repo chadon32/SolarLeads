@@ -187,10 +187,11 @@ const defaultLayerVisibility: LayerVisibility = {
 };
 
 const dsmPlaneExtractionCache = new Map<string, Promise<DsmPlaneExtraction | null>>();
-const DISPLAY_PANEL_HEIGHT_METERS = 1.65;
-const DISPLAY_PANEL_WIDTH_METERS = 0.99;
+const DISPLAY_PANEL_HEIGHT_METERS = 1.7;
+const DISPLAY_PANEL_WIDTH_METERS = 1.0;
 const PANEL_MODULE_GAP_METERS = 0.2032;
 const PANEL_COLLISION_EPSILON_METERS = 0.01;
+const PANEL_VISUAL_INSET_METERS = -0.04;
 
 export function SolarAnalysis({
   address,
@@ -864,7 +865,7 @@ function ViewportCanvas({
       if (!mapRef.current) {
         mapRef.current = new googleApi.maps.Map(mapElementRef.current, {
           center,
-          zoom: 19,
+          zoom: 20,
           tilt: 0,
           mapTypeId: googleApi.maps.MapTypeId.SATELLITE,
           disableDefaultUI: true,
@@ -875,7 +876,7 @@ function ViewportCanvas({
       }
 
       mapRef.current.setCenter(center);
-      mapRef.current.setZoom(19);
+      mapRef.current.setZoom(20);
       mapRef.current.setTilt(0);
       mapRef.current.setMapTypeId(googleApi.maps.MapTypeId.SATELLITE);
 
@@ -990,6 +991,7 @@ function ViewportCanvas({
           const heatmapOverlay = await createAnnualFluxMapOverlay({
             googleApi,
             annualFluxUrl,
+            clipPolygons: getRoofHeatmapClipPolygons(roofData),
             solarMaskUrl,
             fallbackBounds: roofData.roofBounds,
             opacity: 0.6,
@@ -1112,7 +1114,18 @@ function ViewportCanvas({
             layerVisibility={layerVisibility}
             onLayerVisibilityChange={onLayerVisibilityChange}
           />
-          <MapEvidenceOverlay layerVisibility={layerVisibility} />
+          <MapEvidenceOverlay
+            layerVisibility={layerVisibility}
+            panelCount={Math.min(selectedPanelCount, getMaxSelectablePanelCount(roofData))}
+            systemKw={
+              Math.round(
+                ((Math.min(selectedPanelCount, getMaxSelectablePanelCount(roofData)) *
+                  STANDARD_PANEL_WATTS) /
+                  1000) *
+                  10
+              ) / 10
+            }
+          />
         </>
       ) : null}
     </div>
@@ -1210,13 +1223,22 @@ function LayerControl({
 
 function MapEvidenceOverlay({
   layerVisibility,
+  panelCount,
+  systemKw,
 }: {
   layerVisibility: LayerVisibility;
+  panelCount: number;
+  systemKw: number;
 }) {
   return (
     <>
-      <div className="pointer-events-none absolute left-3 top-3 z-10 max-w-[calc(100%-1.5rem)] rounded-full border border-white/10 bg-slate-950/35 px-2.5 py-1.5 text-[0.58rem] font-semibold uppercase tracking-[0.16em] text-cyan-100/90 shadow-none backdrop-blur-[2px]">
-        Google Solar API roof model
+      <div className="pointer-events-none absolute left-3 top-3 z-10 flex max-w-[calc(100%-1.5rem)] flex-wrap items-center gap-1.5">
+        <span className="rounded-full border border-white/10 bg-slate-950/35 px-2.5 py-1.5 text-[0.58rem] font-semibold uppercase tracking-[0.16em] text-cyan-100/90 shadow-none backdrop-blur-[2px]">
+          Google Solar API roof model
+        </span>
+        <span className="rounded-full border border-white/10 bg-slate-950/55 px-2.5 py-1.5 text-[0.58rem] font-semibold uppercase tracking-[0.12em] text-white/90 shadow-none backdrop-blur-[2px]">
+          {panelCount} panels {"\u00b7"} {systemKw.toFixed(1)} kW
+        </span>
       </div>
       <div className="pointer-events-none absolute bottom-8 left-3 z-10 max-w-[min(15rem,calc(100%-1.5rem))] rounded-[0.85rem] border border-white/30 bg-white/68 p-2.5 text-[0.66rem] font-medium text-slate-900 shadow-[0_8px_18px_rgba(15,23,42,0.16)] backdrop-blur-md sm:bottom-3">
         <div className="flex items-center justify-between gap-2 border-b border-slate-900/10 pb-1.5">
@@ -1294,17 +1316,14 @@ function fitMapToRoofTarget({
         map.setCenter(target.center);
       }
 
-      const zoom = map.getZoom?.();
-      if (typeof zoom === "number" && Number.isFinite(zoom) && zoom > 18) {
-        map.setZoom(zoom - 1);
-      }
+      map.setZoom(20);
     }, 180);
   }
 
   if (target.center) {
     map.setCenter(target.center);
   }
-  map.setZoom(19);
+  map.setZoom(20);
 
   return null;
 }
@@ -1383,7 +1402,9 @@ function buildRoofMapFitTarget({
 
   return {
     bounds,
-    center: getLatLngCentroid(centroidSource.filter(isValidLatLngPoint)) ??
+    center:
+      getRoofBoundsCenter(roofData.roofBounds) ??
+      getLatLngCentroid(centroidSource.filter(isValidLatLngPoint)) ??
       getRoofBoundsCenter(bounds),
   };
 }
@@ -1680,6 +1701,29 @@ function getSunlightQualityMapColors(tone: RoofQualityTone) {
   };
 }
 
+function getRoofHeatmapClipPolygons(roofData: RoofAnalysis) {
+  const segmentBoundsPolygons = roofData.roofSegments
+    .map((segment) => boundsToLatLngPoints(segment.bounds))
+    .filter((polygon) => polygon.length >= 3);
+
+  if (segmentBoundsPolygons.length) {
+    return segmentBoundsPolygons;
+  }
+
+  const usablePolygon = outlineToLatLngPoints(
+    roofData.usableOutline,
+    roofData.roofBounds
+  );
+
+  if (usablePolygon.length >= 3) {
+    return [usablePolygon];
+  }
+
+  const roofPolygon = outlineToLatLngPoints(roofData.roofOutline, roofData.roofBounds);
+
+  return roofPolygon.length >= 3 ? [roofPolygon] : [];
+}
+
 function createSolarPanelOverlays({
   googleApi,
   map,
@@ -1828,6 +1872,19 @@ function getSelectedHomeMarkerPoint({
   property: ResolvedProperty | null;
   roofData: RoofAnalysis;
 }) {
+  if (roofData.roofBounds) {
+    const center = getRoofBoundsCenter(roofData.roofBounds);
+
+    if (center) {
+      return offsetLatLngMeters({
+        lat: roofData.roofBounds.northeast.lat,
+        lng: center.lng,
+        eastMeters: 0,
+        northMeters: 6,
+      });
+    }
+  }
+
   const roofCenter = getLatLngCentroid(
     outlineToLatLngPoints(roofData.roofOutline, roofData.roofBounds).filter(
       isValidLatLngPoint
@@ -1874,6 +1931,10 @@ function buildProfessionalPanelLayout({
 
   for (const panel of orderedPanels) {
     const segment = roofData.roofSegments[panel.segmentIndex];
+    if (!isPanelCenterInRoofSegment(panel, roofData)) {
+      continue;
+    }
+
     const azimuth = Number.isFinite(panel.azimuthDeg)
       ? panel.azimuthDeg
       : segment?.azimuthDeg ?? roofData.primaryRoofAzimuth;
@@ -1882,21 +1943,24 @@ function buildProfessionalPanelLayout({
     const displayPath = buildPanelCornerPoints({
       centerLat: panel.center.lat,
       centerLng: panel.center.lng,
-      dimensionAdjustmentMeters: -PANEL_MODULE_GAP_METERS,
+      dimensionAdjustmentMeters: PANEL_VISUAL_INSET_METERS,
       orientation: panel.orientation,
       panelHeightMeters: DISPLAY_PANEL_HEIGHT_METERS,
       panelWidthMeters: DISPLAY_PANEL_WIDTH_METERS,
       rotationDeg,
     });
 
-    if (!isPanelInsideBoundary(displayPath, boundary)) {
+    if (
+      !isPanelInsideBoundary(displayPath, boundary) ||
+      !isPanelPathInsideBounds(displayPath, segment?.bounds ?? null)
+    ) {
       continue;
     }
 
     const collisionPathMeters = buildPanelCornerPoints({
       centerLat: panel.center.lat,
       centerLng: panel.center.lng,
-      dimensionAdjustmentMeters: 0,
+      dimensionAdjustmentMeters: PANEL_MODULE_GAP_METERS,
       orientation: panel.orientation,
       panelHeightMeters: DISPLAY_PANEL_HEIGHT_METERS,
       panelWidthMeters: DISPLAY_PANEL_WIDTH_METERS,
@@ -2069,6 +2133,12 @@ function getPanelBoundaryPolygon(
   roofData: RoofAnalysis
 ) {
   const segment = roofData.roofSegments[panel.segmentIndex];
+  const segmentBoundsPolygon = boundsToLatLngPoints(segment?.bounds ?? null);
+
+  if (segmentBoundsPolygon.length >= 3) {
+    return segmentBoundsPolygon;
+  }
+
   const segmentPolygon = segment
     ? outlineToLatLngPoints(segment.outline, roofData.roofBounds)
     : [];
@@ -2089,6 +2159,25 @@ function getPanelBoundaryPolygon(
   return outlineToLatLngPoints(roofData.roofOutline, roofData.roofBounds);
 }
 
+function isPanelCenterInRoofSegment(
+  panel: RoofAnalysis["solarPanels"][number],
+  roofData: RoofAnalysis
+) {
+  const segment = roofData.roofSegments[panel.segmentIndex];
+
+  if (!segment || !segment.usable || !isValidLatLngPoint(panel.center)) {
+    return false;
+  }
+
+  if (segment.bounds && !isLatLngPointInBounds(panel.center, segment.bounds)) {
+    return false;
+  }
+
+  const segmentPolygon = outlineToLatLngPoints(segment.outline, roofData.roofBounds);
+
+  return segmentPolygon.length < 3 || isLatLngPointInPolygon(panel.center, segmentPolygon);
+}
+
 function isPanelInsideBoundary(
   panelPath: LatLngPoint[],
   boundary: LatLngPoint[]
@@ -2098,6 +2187,26 @@ function isPanelInsideBoundary(
   }
 
   return panelPath.every((point) => isLatLngPointInPolygon(point, boundary));
+}
+
+function isPanelPathInsideBounds(
+  panelPath: LatLngPoint[],
+  bounds: RoofGeoBounds | null
+) {
+  if (!bounds) {
+    return true;
+  }
+
+  return panelPath.every((point) => isLatLngPointInBounds(point, bounds));
+}
+
+function isLatLngPointInBounds(point: LatLngPoint, bounds: RoofGeoBounds) {
+  return (
+    point.lat <= bounds.northeast.lat &&
+    point.lat >= bounds.southwest.lat &&
+    point.lng <= bounds.northeast.lng &&
+    point.lng >= bounds.southwest.lng
+  );
 }
 
 function isLatLngPointInPolygon(point: LatLngPoint, polygon: LatLngPoint[]) {
@@ -2213,12 +2322,14 @@ function projectPolygon(points: MeterPoint[], axis: MeterPoint) {
 async function createAnnualFluxMapOverlay({
   googleApi,
   annualFluxUrl,
+  clipPolygons,
   solarMaskUrl,
   fallbackBounds,
   opacity,
 }: {
   googleApi: GoogleMapsApi;
   annualFluxUrl: string | null;
+  clipPolygons: LatLngPoint[][];
   solarMaskUrl: string | null;
   fallbackBounds: RoofGeoBounds | null;
   opacity: number;
@@ -2229,6 +2340,7 @@ async function createAnnualFluxMapOverlay({
 
   const heatmap = await buildAnnualFluxCanvas({
     annualFluxUrl,
+    clipPolygons,
     solarMaskUrl,
     fallbackBounds,
   });
@@ -2284,10 +2396,12 @@ async function createAnnualFluxMapOverlay({
 
 async function buildAnnualFluxCanvas({
   annualFluxUrl,
+  clipPolygons,
   solarMaskUrl,
   fallbackBounds,
 }: {
   annualFluxUrl: string;
+  clipPolygons: LatLngPoint[][];
   solarMaskUrl: string | null;
   fallbackBounds: RoofGeoBounds | null;
 }) {
@@ -2347,13 +2461,20 @@ async function buildAnnualFluxCanvas({
 
   const imageData = context.createImageData(width, height);
   const pixels = imageData.data;
+  const heatmapBounds = getGeoTiffBounds(fluxImage, fallbackBounds);
 
   for (let index = 0; index < fluxRaster.length; index += 1) {
     const value = fluxRaster[index];
     const offset = index * 4;
     const maskValue = maskRaster ? Number(maskRaster[index] ?? 0) : 1;
+    const point = rasterIndexToLatLng(index, width, height, heatmapBounds);
 
-    if (!Number.isFinite(value) || value <= -9990 || maskValue <= 0) {
+    if (
+      !Number.isFinite(value) ||
+      value <= -9990 ||
+      maskValue <= 0 ||
+      !isPointInsideAnyPolygon(point, clipPolygons)
+    ) {
       pixels[offset + 3] = 0;
       continue;
     }
@@ -2370,8 +2491,42 @@ async function buildAnnualFluxCanvas({
 
   return {
     canvas,
-    bounds: getGeoTiffBounds(fluxImage, fallbackBounds),
+    bounds: heatmapBounds,
   };
+}
+
+function rasterIndexToLatLng(
+  index: number,
+  width: number,
+  height: number,
+  bounds: RoofGeoBounds
+): LatLngPoint {
+  const column = index % width;
+  const row = Math.floor(index / width);
+  const x = (column + 0.5) / width;
+  const y = (row + 0.5) / height;
+
+  return {
+    lat:
+      bounds.northeast.lat -
+      (bounds.northeast.lat - bounds.southwest.lat) * y,
+    lng:
+      bounds.southwest.lng +
+      (bounds.northeast.lng - bounds.southwest.lng) * x,
+  };
+}
+
+function isPointInsideAnyPolygon(
+  point: LatLngPoint,
+  polygons: LatLngPoint[][]
+) {
+  if (!polygons.length) {
+    return true;
+  }
+
+  return polygons.some(
+    (polygon) => polygon.length >= 3 && isLatLngPointInPolygon(point, polygon)
+  );
 }
 
 async function getDsmPlaneExtraction({
@@ -2804,8 +2959,8 @@ function boundsToLatLngPoints(bounds: RoofGeoBounds | null): LatLngPoint[] {
   return [
     { lat: bounds.northeast.lat, lng: bounds.northeast.lng },
     { lat: bounds.northeast.lat, lng: bounds.southwest.lng },
-    { lat: bounds.southwest.lat, lng: bounds.northeast.lng },
     { lat: bounds.southwest.lat, lng: bounds.southwest.lng },
+    { lat: bounds.southwest.lat, lng: bounds.northeast.lng },
   ];
 }
 
