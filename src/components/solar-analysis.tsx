@@ -8,6 +8,7 @@ import {
   calculateSunlightQuality,
   type RoofQualityTone,
 } from "@/lib/solar-advisor";
+import { trackEvent } from "@/lib/analytics";
 import { type RoofGeoBounds, type RoofAnalysis } from "@/lib/roof-analysis";
 import {
   buildSolarMetrics,
@@ -389,6 +390,11 @@ export function SolarAnalysis({
         );
         onAnalysisChange?.(panelSyncedRoofData);
         setStage("done");
+        trackEvent("solar_data_loaded", {
+          address: formatDisplayAddress(trimmedAddress),
+          panel_count: panelSyncedRoofData.panelCount,
+          system_kw: panelSyncedRoofData.systemKw,
+        });
         setNotice(
           panelSyncedRoofData.confidence !== "high" ? panelSyncedRoofData.confidenceNote : null
         );
@@ -470,7 +476,15 @@ export function SolarAnalysis({
     return (
       <section className="space-y-5">
         <div className="rounded-[1.8rem] border border-rose-400/20 bg-rose-950/20 p-6 text-sm leading-7 text-rose-200">
-          Could not complete roof analysis: {errorMessage}
+          <p className="text-base font-semibold text-white">
+            Solar data not available for this address.
+          </p>
+          <p className="mt-2">
+            Try a residential address in Arizona.
+          </p>
+          {errorMessage ? (
+            <p className="mt-3 text-xs text-rose-100/62">Detail: {errorMessage}</p>
+          ) : null}
         </div>
       </section>
     );

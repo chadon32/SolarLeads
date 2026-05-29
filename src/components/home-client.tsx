@@ -14,6 +14,7 @@ import { LeadCaptureForm } from "@/components/lead-capture-form";
 import { SolarAnalysis } from "@/components/solar-analysis";
 import { SolarReportDashboard } from "@/components/solar-report-dashboard";
 import { formatDisplayAddress } from "@/lib/address-format";
+import { trackEvent } from "@/lib/analytics";
 import type { RoofAnalysis } from "@/lib/roof-analysis";
 
 const VIDEO_SRC =
@@ -22,7 +23,7 @@ const VIDEO_SRC =
 const featureCards = [
   {
     title: "Address-driven preview",
-    copy: "Choose a real Arizona property and we’ll load the roof story that goes with that home.",
+    copy: "Choose a real Arizona property and we'll load the roof story that goes with that home.",
   },
   {
     title: "Roof-aware placement",
@@ -52,11 +53,16 @@ const testimonials = [
   },
 ] as const;
 
-export function HomeClient() {
-  const [selectedAddress, setSelectedAddress] = useState("");
+type HomeClientProps = {
+  initialAddress?: string;
+};
+
+export function HomeClient({ initialAddress = "" }: HomeClientProps) {
+  const [selectedAddress, setSelectedAddress] = useState(initialAddress);
   const [solarData, setSolarData] = useState<RoofAnalysis | null>(null);
   const [activePanelCount, setActivePanelCount] = useState(0);
   const [monthlyBill, setMonthlyBill] = useState(200);
+  const [shareStatus, setShareStatus] = useState("");
   const [selectedLocation, setSelectedLocation] = useState<{
     address: string;
     lat: number;
@@ -150,6 +156,22 @@ export function HomeClient() {
           </div>
 
           <div className="flex shrink-0 items-center gap-2">
+            <details className="relative lg:hidden">
+              <summary className="grid h-11 w-11 cursor-pointer list-none place-items-center rounded-full border border-white/10 bg-white/[0.06] text-sm font-semibold text-white">
+                Menu
+              </summary>
+              <div className="absolute right-0 top-14 z-30 grid min-w-48 gap-1 rounded-[1rem] border border-white/10 bg-slate-950/92 p-2 text-left text-sm text-white shadow-[0_18px_55px_rgba(0,0,0,0.4)] backdrop-blur-xl">
+                <a className="rounded-[0.8rem] px-3 py-2 hover:bg-white/[0.06]" href="#how-it-works">
+                  How It Works
+                </a>
+                <a className="rounded-[0.8rem] px-3 py-2 hover:bg-white/[0.06]" href="#reviews">
+                  Reviews
+                </a>
+                <a className="rounded-[0.8rem] px-3 py-2 hover:bg-white/[0.06]" href="#solar-workspace">
+                  Report
+                </a>
+              </div>
+            </details>
             <a
               href={hasValidAnalysis ? "#contact" : "#address-estimate"}
               className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-3 text-sm font-semibold text-slate-950 shadow-[0_18px_55px_rgba(255,255,255,0.18)] transition hover:-translate-y-0.5 hover:bg-cyan-100 sm:px-5"
@@ -225,6 +247,12 @@ export function HomeClient() {
                   setSelectedAddress(property.address);
                   setSolarData(null);
                   setActivePanelCount(0);
+                  setShareStatus("");
+                  if (property.address) {
+                    trackEvent("address_selected", {
+                      address: formatDisplayAddress(property.address),
+                    });
+                  }
                   setSelectedLocation(
                     property.address &&
                       Number.isFinite(property.lat) &&
@@ -240,7 +268,7 @@ export function HomeClient() {
               />
               <label className="mt-4 block rounded-[1.35rem] border border-white/10 bg-black/18 px-4 py-3 text-left">
                 <span className="block text-[0.62rem] font-semibold uppercase tracking-[0.26em] text-cyan-100/78">
-                  Monthly electric bill
+                  What is your monthly electric bill?
                 </span>
                 <span className="mt-2 flex items-center gap-3">
                   <span className="text-sm font-semibold text-white/70">$</span>
@@ -320,12 +348,34 @@ export function HomeClient() {
               </p>
             </div>
             {hasValidAnalysis ? (
-              <a
-                href="#contact"
-                className="inline-flex items-center justify-center rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:-translate-y-0.5 hover:bg-cyan-100"
-              >
-                Send My Full Report
-              </a>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (typeof window === "undefined" || !selectedAddress) {
+                      return;
+                    }
+
+                    const shareUrl = `${window.location.origin}/estimate?address=${encodeURIComponent(
+                      selectedAddress
+                    )}`;
+
+                    void navigator.clipboard
+                      ?.writeText(shareUrl)
+                      .then(() => setShareStatus("Link copied!"))
+                      .catch(() => setShareStatus(shareUrl));
+                  }}
+                  className="inline-flex items-center justify-center rounded-full border border-white/12 bg-white/[0.06] px-5 py-3 text-sm font-semibold text-white transition hover:-translate-y-0.5 hover:bg-white/[0.1]"
+                >
+                  {shareStatus || "Share estimate"}
+                </button>
+                <a
+                  href="#contact"
+                  className="inline-flex items-center justify-center rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:-translate-y-0.5 hover:bg-cyan-100"
+                >
+                  Send My Full Report
+                </a>
+              </div>
             ) : null}
           </div>
 
@@ -619,8 +669,11 @@ function ReviewCard({ name, quote }: { name: string; quote: string }) {
           />
         ))}
       </div>
-      <p className="mt-5 text-sm leading-7 text-white/72">“{quote}”</p>
+      <p className="mt-5 text-sm leading-7 text-white/72">"{quote}"</p>
       <p className="mt-5 text-sm font-semibold text-white">{name}</p>
+      <p className="mt-2 text-[0.62rem] font-semibold uppercase tracking-[0.22em] text-cyan-100/66">
+        Verified Arizona homeowner
+      </p>
     </article>
   );
 }

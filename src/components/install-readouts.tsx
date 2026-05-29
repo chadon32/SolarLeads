@@ -36,6 +36,12 @@ export function InstallReadouts({
   }
 
   const metrics = buildSolarMetrics(analysis);
+  const shadeRisk =
+    metrics.annualSunlightHours > 1800
+      ? "Low"
+      : metrics.annualSunlightHours >= 1400
+        ? "Moderate"
+        : "High";
 
   return (
     <section className="relative mx-auto w-full max-w-7xl px-6 pb-8 md:px-10 lg:px-12">
@@ -66,7 +72,7 @@ export function InstallReadouts({
             <div className="flex items-center justify-between gap-4">
               <span className="text-slate-400">Shade risk</span>
               <span className="font-semibold capitalize text-cyan-300">
-                {analysis.shadingRisk}
+                {shadeRisk}
               </span>
             </div>
           </div>
@@ -105,7 +111,7 @@ export function InstallReadouts({
             Final placement
           </p>
           <h3 className="mt-3 text-xl font-semibold tracking-tight text-white">
-            Panels on the garage roof plane.
+            Panel placement by roof plane.
           </h3>
           <p className="mt-2 text-xs uppercase tracking-[0.28em] text-slate-400">
             Matched to {selectedAddress}

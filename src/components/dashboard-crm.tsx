@@ -1,37 +1,16 @@
 "use client";
 
-import {
-  startTransition,
-  type MouseEvent,
-  type ReactNode,
-  useDeferredValue,
-  useMemo,
-  useState,
-} from "react";
-import Link from "next/link";
-import {
-  CalendarClock,
-  CheckCircle2,
-  Clock3,
-  Download,
-  Eye,
-  FileText,
-  Filter,
-  Mail,
-  MapPin,
-  Phone,
-  Search,
-  TrendingUp,
-  UserRound,
-  Workflow,
-} from "lucide-react";
+import { startTransition, useDeferredValue, useEffect, useMemo, useState } from "react";
+import { ArrowDownToLine, Download, Search, SlidersHorizontal } from "lucide-react";
 import { formatDisplayAddress } from "@/lib/address-format";
+import { trackEvent } from "@/lib/analytics";
 
 export type DashboardLeadStatus =
   | "new"
   | "contacted"
-  | "follow-up-due"
-  | "closed";
+  | "quoted"
+  | "closed-won"
+  | "closed-lost";
 
 export type DashboardCrmLead = {
   id: string;
@@ -39,6 +18,7 @@ export type DashboardCrmLead = {
   email: string;
   phone: string;
   address: string;
+  monthlyBill: number;
   createdAt: string;
   annualSavings: number;
   co2OffsetLbs: number;
@@ -47,7 +27,7 @@ export type DashboardCrmLead = {
   systemSizeKw: number;
   reportUrl: string;
   status: DashboardLeadStatus;
-  pdfStatus: "ready";
+  pdfStatus: "ready" | "pending";
 };
 
 export type DashboardCrmFollowUp = {
@@ -64,756 +44,682 @@ export type DashboardCrmFollowUp = {
   deliveryMessage: string | null;
 };
 
-export type DashboardCrmStats = {
-  totalLeads: number;
-  averageSavings: number;
-  queuedFollowUps: number;
-  pdfsGenerated: number;
-  conversionRate: number | null;
-};
-
 type DashboardCrmProps = {
   leads: DashboardCrmLead[];
   followUps: DashboardCrmFollowUp[];
-  stats: DashboardCrmStats;
+  stats: {
+    totalLeads: number;
+    averageSavings: number;
+    queuedFollowUps: number;
+    pdfsGenerated: number;
+    conversionRate: number | null;
+  };
 };
 
-type SortMode = "date-desc" | "date-asc" | "savings-desc" | "savings-asc";
-type StatusFilter = "all" | DashboardLeadStatus;
+const statusColumns: Array<{ id: DashboardLeadStatus; label: string }> = [
+  { id: "new", label: "New" },
+  { id: "contacted", label: "Contacted" },
+  { id: "quoted", label: "Quoted" },
+  { id: "closed-won", label: "Closed Won" },
+  { id: "closed-lost", label: "Closed Lost" },
+];
+
+const sortOptions = [
+  { label: "Newest", value: "newest" },
+  { label: "Savings high", value: "savings-desc" },
+  { label: "Savings low", value: "savings-asc" },
+] as const;
+
+type SortValue = (typeof sortOptions)[number]["value"];
 
 export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
+  const [leadItems, setLeadItems] = useState(leads);
+  const [selectedLeadId, setSelectedLeadId] = useState(leads[0]?.id ?? "");
   const [search, setSearch] = useState("");
-  const deferredSearch = useDeferredValue(search);
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const [sortMode, setSortMode] = useState<SortMode>("date-desc");
-  const [selectedLeadId, setSelectedLeadId] = useState<string | null>(
-    leads[0]?.id ?? null
-  );
+  const [statusFilter, setStatusFilter] = useState<DashboardLeadStatus | "all">("all");
+  const [sortBy, setSortBy] = useState<SortValue>("newest");
   const [pdfUnavailableIds, setPdfUnavailableIds] = useState<Set<string>>(
     () => new Set()
   );
+  const [updatingIds, setUpdatingIds] = useState<Set<string>>(() => new Set());
+  const deferredSearch = useDeferredValue(search);
+
+  useEffect(() => {
+    setLeadItems(leads);
+    setSelectedLeadId((current) => current || leads[0]?.id || "");
+  }, [leads]);
 
   const filteredLeads = useMemo(() => {
-    const normalizedSearch = deferredSearch.trim().toLowerCase();
+    const normalizedQuery = deferredSearch.trim().toLowerCase();
 
-    return leads
+    const nextLeads = leadItems
       .filter((lead) => {
-        const matchesSearch =
-          !normalizedSearch ||
-          [
-            lead.name,
-            lead.address,
-            lead.email,
-            lead.phone,
-            formatMoney(lead.annualSavings),
-          ]
-            .join(" ")
-            .toLowerCase()
-            .includes(normalizedSearch);
-        const matchesStatus =
-          statusFilter === "all" || lead.status === statusFilter;
+        if (statusFilter !== "all" && lead.status !== statusFilter) {
+          return false;
+        }
 
-        return matchesSearch && matchesStatus;
+        if (!normalizedQuery) {
+          return true;
+        }
+
+        return [lead.name, lead.email, lead.address]
+          .join(" ")
+          .toLowerCase()
+          .includes(normalizedQuery);
       })
-      .sort((left, right) => {
-        if (sortMode === "date-asc") {
-          return (
-            new Date(left.createdAt).getTime() -
-            new Date(right.createdAt).getTime()
-          );
+      .sort((a, b) => {
+        if (sortBy === "savings-desc") {
+          return b.annualSavings - a.annualSavings;
         }
 
-        if (sortMode === "savings-desc") {
-          return right.annualSavings - left.annualSavings;
+        if (sortBy === "savings-asc") {
+          return a.annualSavings - b.annualSavings;
         }
 
-        if (sortMode === "savings-asc") {
-          return left.annualSavings - right.annualSavings;
-        }
-
-        return (
-          new Date(right.createdAt).getTime() -
-          new Date(left.createdAt).getTime()
-        );
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
       });
-  }, [deferredSearch, leads, sortMode, statusFilter]);
 
-  const effectiveSelectedLeadId =
-    selectedLeadId && filteredLeads.some((lead) => lead.id === selectedLeadId)
-      ? selectedLeadId
-      : filteredLeads[0]?.id ?? null;
+    return nextLeads;
+  }, [deferredSearch, leadItems, sortBy, statusFilter]);
+
   const selectedLead =
-    leads.find((lead) => lead.id === effectiveSelectedLeadId) ?? null;
-  const selectedFollowUps = useMemo(
-    () =>
-      selectedLead
-        ? followUps
-            .filter((followUp) => followUp.leadId === selectedLead.id)
-            .sort(
-              (left, right) =>
-                new Date(right.scheduledFor).getTime() -
-                new Date(left.scheduledFor).getTime()
-            )
-        : [],
-    [followUps, selectedLead]
-  );
+    leadItems.find((lead) => lead.id === selectedLeadId) ??
+    filteredLeads[0] ??
+    leadItems[0] ??
+    null;
 
-  const selectedFollowUpStatus = getFollowUpSummary(selectedFollowUps);
-  const handlePdfClick = async (
-    event: MouseEvent<HTMLAnchorElement>,
-    lead: DashboardCrmLead
-  ) => {
-    event.preventDefault();
-    event.stopPropagation();
+  const followUpsForSelected = selectedLead
+    ? followUps.filter((followUp) => followUp.leadId === selectedLead.id)
+    : [];
+
+  const handlePdfDownload = async (lead: DashboardCrmLead) => {
+    if (pdfUnavailableIds.has(lead.id)) {
+      return;
+    }
 
     try {
-      const response = await fetch(lead.reportUrl, { cache: "no-store" });
+      const response = await fetch(lead.reportUrl);
 
       if (!response.ok) {
-        setPdfUnavailableIds((current) => new Set(current).add(lead.id));
-        return;
+        throw new Error("PDF unavailable");
       }
 
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
-      window.open(url, "_blank", "noopener,noreferrer");
-      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `solar-report-${lead.id}.pdf`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      trackEvent("pdf_downloaded", {
+        lead_id: lead.id,
+      });
     } catch {
       setPdfUnavailableIds((current) => new Set(current).add(lead.id));
     }
   };
 
+  const handleStatusChange = async (
+    lead: DashboardCrmLead,
+    nextStatus: DashboardLeadStatus
+  ) => {
+    const previousStatus = lead.status;
+
+    setUpdatingIds((current) => new Set(current).add(lead.id));
+    setLeadItems((current) =>
+      current.map((item) =>
+        item.id === lead.id ? { ...item, status: nextStatus } : item
+      )
+    );
+
+    try {
+      const response = await fetch("/api/leads/status", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          leadId: lead.id,
+          status: nextStatus,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Unable to update status");
+      }
+    } catch {
+      setLeadItems((current) =>
+        current.map((item) =>
+          item.id === lead.id ? { ...item, status: previousStatus } : item
+        )
+      );
+    } finally {
+      setUpdatingIds((current) => {
+        const next = new Set(current);
+        next.delete(lead.id);
+        return next;
+      });
+    }
+  };
+
+  const exportCsv = () => {
+    const rows = [
+      [
+        "name",
+        "email",
+        "phone",
+        "address",
+        "monthly_bill",
+        "annual_savings",
+        "roi_years",
+        "co2_offset",
+        "status",
+        "created_at",
+      ],
+      ...leadItems.map((lead) => [
+        lead.name,
+        lead.email,
+        lead.phone,
+        formatDisplayAddress(lead.address),
+        String(Math.round(lead.monthlyBill || 0)),
+        String(Math.round(lead.annualSavings || 0)),
+        String(lead.estimatedRoiYears || ""),
+        String(Math.round(lead.co2OffsetLbs || 0)),
+        getStatusLabel(lead.status),
+        lead.createdAt,
+      ]),
+    ];
+    const csv = rows.map((row) => row.map(escapeCsvCell).join(",")).join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "leads.csv";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  };
+
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(25,72,108,0.3),_transparent_36%),radial-gradient(circle_at_80%_20%,_rgba(0,182,255,0.16),_transparent_26%),linear-gradient(180deg,#05070d_0%,#07111d_36%,#0b1625_68%,#06070b_100%)] text-slate-100">
-      <section className="page-enter mx-auto flex w-full max-w-[92rem] flex-col gap-4 px-4 py-5 sm:px-6 md:px-8 xl:px-10">
-        <header className="flex flex-col gap-4 rounded-[1.6rem] border border-white/10 bg-white/[0.045] p-4 shadow-[0_24px_70px_rgba(2,8,20,0.32)] backdrop-blur-xl md:flex-row md:items-center md:justify-between">
-          <div className="min-w-0">
-            <p className="text-[0.66rem] font-semibold uppercase tracking-[0.34em] text-cyan-300">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(25,72,108,0.28),_transparent_36%),linear-gradient(180deg,#05070d_0%,#07111d_68%,#06070b_100%)] px-4 py-6 text-slate-100 sm:px-6 lg:px-10">
+      <div className="mx-auto max-w-7xl space-y-5">
+        <header className="flex flex-col justify-between gap-4 rounded-[1.6rem] border border-white/10 bg-white/[0.04] px-5 py-4 shadow-[0_18px_70px_rgba(2,8,20,0.32)] backdrop-blur-xl lg:flex-row lg:items-center">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.34em] text-cyan-300">
               Homeowner dashboard
             </p>
-            <h1 className="mt-2 text-2xl font-semibold tracking-tight text-white sm:text-3xl">
-              Solar lead command center.
+            <h1 className="mt-2 text-3xl font-semibold tracking-tight text-white">
+              Solar lead pipeline
             </h1>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
-              Manage saved homeowner reports, follow-up state, and PDF access from one compact CRM surface.
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">
+              Manage leads, download reports, and move each homeowner through the pipeline.
             </p>
           </div>
-          <Link
-            href="/"
-            className="inline-flex items-center justify-center rounded-full border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-semibold text-slate-100 transition hover:border-cyan-200/30 hover:bg-cyan-200/10"
-          >
-            Back home
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={exportCsv}
+              className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.06] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-white/[0.1]"
+            >
+              <ArrowDownToLine className="h-4 w-4" aria-hidden="true" />
+              Export CSV
+            </button>
+            <a
+              href="/"
+              className="inline-flex items-center rounded-full bg-white px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100"
+            >
+              Back to site
+            </a>
+          </div>
         </header>
 
-        <dl className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <section className="grid gap-3 md:grid-cols-5">
+          <KpiCard label="Total Leads" value={formatNumber(stats.totalLeads)} />
+          <KpiCard label="Avg Savings" value={formatMoney(stats.averageSavings)} />
+          <KpiCard label="Queued Follow-ups" value={formatNumber(stats.queuedFollowUps)} />
+          <KpiCard label="PDFs Generated" value={formatNumber(stats.pdfsGenerated)} />
           <KpiCard
-            label="Total leads"
-            value={stats.totalLeads.toString()}
-            helper="Saved homeowner reports"
-            icon={<UserRound className="h-4 w-4" />}
+            label="Conversion Rate"
+            value={stats.conversionRate === null ? "Tracking" : `${stats.conversionRate}%`}
           />
-          <KpiCard
-            label="Avg savings"
-            value={formatMoney(stats.averageSavings)}
-            helper="Modeled annual value"
-            icon={<TrendingUp className="h-4 w-4" />}
-          />
-          <KpiCard
-            label="Queued follow-ups"
-            value={stats.queuedFollowUps.toString()}
-            helper="Pending nurture tasks"
-            icon={<Clock3 className="h-4 w-4" />}
-          />
-          <KpiCard
-            label="PDFs generated"
-            value={stats.pdfsGenerated.toString()}
-            helper="Downloadable reports"
-            icon={<FileText className="h-4 w-4" />}
-          />
-          <KpiCard
-            label="Conversion rate"
-            value={
-              stats.conversionRate === null
-                ? "N/A"
-                : `${Math.round(stats.conversionRate)}%`
-            }
-            helper="Closed data not connected"
-            icon={<CheckCircle2 className="h-4 w-4" />}
-          />
-        </dl>
+        </section>
 
-        <section className="grid gap-4 xl:grid-cols-[minmax(0,7fr)_minmax(330px,3fr)]">
-          <div className="min-w-0 rounded-[1.75rem] border border-white/10 bg-white/[0.045] p-4 shadow-[0_24px_70px_rgba(2,8,20,0.28)] backdrop-blur-xl">
-            <div className="flex flex-col gap-3 border-b border-white/10 pb-4 lg:flex-row lg:items-center lg:justify-between">
-              <div>
-                <p className="text-[0.65rem] font-semibold uppercase tracking-[0.32em] text-cyan-300">
-                  Lead management
-                </p>
-                <h2 className="mt-1.5 text-xl font-semibold tracking-tight text-white">
-                  Recent homeowner reports
-                </h2>
-              </div>
-
-              <div className="grid gap-2 sm:grid-cols-[minmax(220px,1fr)_160px_170px] lg:w-[640px]">
-                <label className="relative">
-                  <span className="sr-only">Search leads</span>
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
-                  <input
-                    value={search}
-                    onChange={(event) =>
-                      startTransition(() => setSearch(event.target.value))
-                    }
-                    placeholder="Search leads, address, email..."
-                    className="h-10 w-full rounded-full border border-white/10 bg-slate-950/35 pl-9 pr-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/35 focus:bg-slate-950/55"
-                  />
-                </label>
-
-                <label className="relative">
-                  <span className="sr-only">Filter by status</span>
-                  <Filter className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
-                  <select
-                    value={statusFilter}
-                    onChange={(event) =>
-                      startTransition(() =>
-                        setStatusFilter(event.target.value as StatusFilter)
-                      )
-                    }
-                    className="h-10 w-full appearance-none rounded-full border border-white/10 bg-slate-950/35 pl-9 pr-3 text-sm text-white outline-none transition focus:border-cyan-300/35"
-                  >
-                    <option value="all">All statuses</option>
-                    <option value="new">New lead</option>
-                    <option value="follow-up-due">Follow-up due</option>
-                    <option value="contacted">Contacted</option>
-                    <option value="closed">Closed</option>
-                  </select>
-                </label>
-
-                <label>
-                  <span className="sr-only">Sort leads</span>
-                  <select
-                    value={sortMode}
-                    onChange={(event) =>
-                      startTransition(() =>
-                        setSortMode(event.target.value as SortMode)
-                      )
-                    }
-                    className="h-10 w-full rounded-full border border-white/10 bg-slate-950/35 px-3 text-sm text-white outline-none transition focus:border-cyan-300/35"
-                  >
-                    <option value="date-desc">Newest first</option>
-                    <option value="date-asc">Oldest first</option>
-                    <option value="savings-desc">Savings high</option>
-                    <option value="savings-asc">Savings low</option>
-                  </select>
-                </label>
+        <section className="grid gap-4 lg:grid-cols-[minmax(0,7fr)_minmax(22rem,3fr)]">
+          <div className="rounded-[1.6rem] border border-white/10 bg-white/[0.04] p-4 shadow-[0_18px_70px_rgba(2,8,20,0.32)] backdrop-blur-xl">
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+              <label className="flex min-h-12 flex-1 items-center gap-3 rounded-full border border-white/10 bg-slate-950/55 px-4 text-sm text-slate-300">
+                <Search className="h-4 w-4 text-cyan-200" aria-hidden="true" />
+                <input
+                  value={search}
+                  onChange={(event) =>
+                    startTransition(() => setSearch(event.target.value))
+                  }
+                  placeholder="Search name, email, or address"
+                  className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-slate-500"
+                />
+              </label>
+              <div className="flex flex-wrap gap-2">
+                <Select
+                  label="Status"
+                  value={statusFilter}
+                  onChange={(value) =>
+                    setStatusFilter(value as DashboardLeadStatus | "all")
+                  }
+                  options={[
+                    { label: "All stages", value: "all" },
+                    ...statusColumns.map((column) => ({
+                      label: column.label,
+                      value: column.id,
+                    })),
+                  ]}
+                />
+                <Select
+                  label="Sort"
+                  value={sortBy}
+                  onChange={(value) => setSortBy(value as SortValue)}
+                  options={sortOptions}
+                />
               </div>
             </div>
 
-            <div className="mt-4 overflow-hidden rounded-[1.2rem] border border-white/10 bg-slate-950/25">
-              {filteredLeads.length ? (
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[900px] border-collapse text-left text-sm">
-                    <thead className="border-b border-white/10 bg-white/[0.04] text-[0.62rem] uppercase tracking-[0.24em] text-slate-400">
-                      <tr>
-                        <th className="px-4 py-3 font-semibold">Name</th>
-                        <th className="px-4 py-3 font-semibold">Address</th>
-                        <th className="px-4 py-3 font-semibold">Date</th>
-                        <th className="px-4 py-3 font-semibold">Annual savings</th>
-                        <th className="px-4 py-3 font-semibold">CO2 offset</th>
-                        <th className="px-4 py-3 font-semibold">Status</th>
-                        <th className="px-4 py-3 text-right font-semibold">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/8">
-                      {filteredLeads.map((lead) => {
-                        const selected = lead.id === selectedLead?.id;
+            {filteredLeads.length ? (
+              <div className="mt-4 grid min-h-[28rem] gap-3 overflow-x-auto pb-2 lg:grid-cols-5">
+                {statusColumns.map((column) => {
+                  const columnLeads = filteredLeads.filter(
+                    (lead) => lead.status === column.id
+                  );
 
-                        return (
-                          <tr
+                  return (
+                    <section
+                      key={column.id}
+                      className="min-w-[15rem] rounded-[1.2rem] border border-white/8 bg-slate-950/38 p-3"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <h2 className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">
+                          {column.label}
+                        </h2>
+                        <span className="rounded-full bg-white/[0.08] px-2 py-1 text-xs font-semibold text-slate-300">
+                          {columnLeads.length}
+                        </span>
+                      </div>
+                      <div className="mt-3 grid gap-2.5">
+                        {columnLeads.map((lead) => (
+                          <LeadPipelineCard
                             key={lead.id}
-                            onClick={() => setSelectedLeadId(lead.id)}
-                            aria-selected={selected}
-                            className={`cursor-pointer transition hover:bg-cyan-300/[0.07] ${
-                              selected ? "bg-cyan-300/[0.1]" : "bg-transparent"
-                            }`}
-                          >
-                            <td className="px-4 py-3">
-                              <div className="flex items-center gap-3">
-                                <InitialsAvatar name={lead.name} />
-                                <div className="min-w-0">
-                                  <p className="truncate font-semibold text-white">
-                                    {lead.name}
-                                  </p>
-                                  <p className="truncate text-xs text-slate-400">
-                                    {lead.email}
-                                  </p>
-                                </div>
-                              </div>
-                            </td>
-                            <td className="max-w-[280px] px-4 py-3">
-                              <p className="truncate text-slate-300">
-                                {formatDisplayAddress(lead.address)}
-                              </p>
-                            </td>
-                            <td className="px-4 py-3 text-slate-300">
-                              {formatDate(lead.createdAt)}
-                            </td>
-                            <td className="px-4 py-3 font-semibold text-white">
-                              {formatMoney(lead.annualSavings)}
-                            </td>
-                            <td className="px-4 py-3 text-slate-300">
-                              {lead.co2OffsetLbs.toLocaleString()} lbs
-                            </td>
-                            <td className="px-4 py-3">
-                              <StatusBadge status={lead.status} />
-                            </td>
-                            <td className="px-4 py-3">
-                              <div className="flex items-center justify-end gap-2">
-                                <button
-                                  type="button"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    setSelectedLeadId(lead.id);
-                                  }}
-                                  className="inline-flex h-8 items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 text-xs font-semibold text-slate-200 transition hover:border-cyan-200/30 hover:bg-cyan-200/10"
-                                >
-                                  <Eye className="h-3.5 w-3.5" />
-                                  View
-                                </button>
-                                {pdfUnavailableIds.has(lead.id) ? (
-                                  <span className="inline-flex h-8 items-center gap-1.5 rounded-full border border-rose-300/20 bg-rose-300/10 px-3 text-xs font-semibold text-rose-200">
-                                    PDF unavailable
-                                  </span>
-                                ) : (
-                                  <a
-                                    href={lead.reportUrl}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    onClick={(event) => handlePdfClick(event, lead)}
-                                    className="inline-flex h-8 items-center gap-1.5 rounded-full border border-cyan-300/20 bg-cyan-300/12 px-3 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-300/20"
-                                  >
-                                    <Download className="h-3.5 w-3.5" />
-                                    PDF
-                                  </a>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <EmptyLeadsState />
-              )}
-            </div>
+                            lead={lead}
+                            isSelected={selectedLead?.id === lead.id}
+                            isUpdating={updatingIds.has(lead.id)}
+                            onDownloadPdf={() => void handlePdfDownload(lead)}
+                            onSelect={() => setSelectedLeadId(lead.id)}
+                            onStatusChange={(nextStatus) =>
+                              void handleStatusChange(lead, nextStatus)
+                            }
+                            pdfUnavailable={pdfUnavailableIds.has(lead.id)}
+                          />
+                        ))}
+                        {!columnLeads.length ? (
+                          <div className="rounded-[1rem] border border-dashed border-white/10 px-3 py-6 text-center text-xs text-slate-500">
+                            No leads in this stage.
+                          </div>
+                        ) : null}
+                      </div>
+                    </section>
+                  );
+                })}
+              </div>
+            ) : (
+              <EmptyState
+                title="No leads match this view"
+                description="Try clearing the search or switching the stage filter."
+              />
+            )}
           </div>
 
-          <LeadDetailPanel
-          lead={selectedLead}
-          followUps={selectedFollowUps}
-          followUpSummary={selectedFollowUpStatus}
-          onPdfClick={handlePdfClick}
-          pdfUnavailable={selectedLead ? pdfUnavailableIds.has(selectedLead.id) : false}
-        />
+          <aside className="space-y-4 lg:sticky lg:top-5 lg:self-start">
+            {selectedLead ? (
+              <LeadDetailPanel
+                followUps={followUpsForSelected}
+                lead={selectedLead}
+                onDownloadPdf={() => void handlePdfDownload(selectedLead)}
+                onStatusChange={(nextStatus) =>
+                  void handleStatusChange(selectedLead, nextStatus)
+                }
+                pdfUnavailable={pdfUnavailableIds.has(selectedLead.id)}
+              />
+            ) : (
+              <EmptyState
+                title="Select a lead"
+                description="Lead details, PDF status, and follow-up actions will appear here."
+              />
+            )}
+          </aside>
         </section>
-      </section>
+      </div>
     </main>
   );
 }
 
-function KpiCard({
-  label,
-  value,
-  helper,
-  icon,
+function KpiCard({ label, value }: { label: string; value: string }) {
+  return (
+    <article className="rounded-[1.25rem] border border-white/10 bg-white/[0.045] p-4 shadow-[0_14px_45px_rgba(2,8,20,0.24)] backdrop-blur-xl">
+      <p className="text-[0.62rem] font-semibold uppercase tracking-[0.22em] text-slate-400">
+        {label}
+      </p>
+      <p className="mt-2 text-2xl font-semibold tracking-tight text-white">{value}</p>
+    </article>
+  );
+}
+
+function LeadPipelineCard({
+  isSelected,
+  isUpdating,
+  lead,
+  onDownloadPdf,
+  onSelect,
+  onStatusChange,
+  pdfUnavailable,
 }: {
-  label: string;
-  value: string;
-  helper: string;
-  icon: ReactNode;
+  isSelected: boolean;
+  isUpdating: boolean;
+  lead: DashboardCrmLead;
+  onDownloadPdf: () => void;
+  onSelect: () => void;
+  onStatusChange: (status: DashboardLeadStatus) => void;
+  pdfUnavailable: boolean;
 }) {
   return (
-    <div className="flex min-h-[118px] flex-col justify-between rounded-[1.35rem] border border-white/10 bg-white/[0.045] p-4 shadow-[0_18px_46px_rgba(2,8,20,0.24)] backdrop-blur-xl">
-      <div className="flex items-center justify-between gap-3">
-        <dt className="text-[0.62rem] font-semibold uppercase tracking-[0.28em] text-slate-400">
-          {label}
-        </dt>
-        <span className="grid h-8 w-8 place-items-center rounded-full border border-cyan-300/15 bg-cyan-300/10 text-cyan-200">
-          {icon}
-        </span>
+    <article
+      className={`rounded-[1rem] border p-3 text-left transition ${
+        isSelected
+          ? "border-cyan-300/45 bg-cyan-300/10"
+          : "border-white/8 bg-white/[0.04] hover:border-white/18 hover:bg-white/[0.06]"
+      }`}
+    >
+      <button type="button" onClick={onSelect} className="block w-full text-left">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <h3 className="truncate text-sm font-semibold text-white">{lead.name}</h3>
+            <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-400">
+              {formatDisplayAddress(lead.address)}
+            </p>
+          </div>
+          <StatusBadge status={lead.status} />
+        </div>
+        <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+          <MiniMetric label="Savings" value={formatMoney(lead.annualSavings)} />
+          <MiniMetric label="ROI" value={`${formatDecimal(lead.estimatedRoiYears)} yrs`} />
+        </div>
+      </button>
+      <div className="mt-3 flex items-center justify-between gap-2 border-t border-white/8 pt-3">
+        <StatusSelect
+          disabled={isUpdating}
+          value={lead.status}
+          onChange={onStatusChange}
+        />
+        {pdfUnavailable ? (
+          <span className="text-xs font-semibold text-slate-500">PDF unavailable</span>
+        ) : (
+          <button
+            type="button"
+            onClick={onDownloadPdf}
+            className="inline-flex items-center gap-1.5 rounded-full bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-cyan-100"
+          >
+            <Download className="h-3.5 w-3.5" aria-hidden="true" />
+            PDF
+          </button>
+        )}
       </div>
-      <dd className="mt-3 text-3xl font-semibold tracking-tight text-white">
-        {value}
-      </dd>
-      <p className="mt-1 text-xs leading-5 text-slate-400">{helper}</p>
-    </div>
+    </article>
   );
 }
 
 function LeadDetailPanel({
-  lead,
   followUps,
-  followUpSummary,
-  onPdfClick,
+  lead,
+  onDownloadPdf,
+  onStatusChange,
   pdfUnavailable,
 }: {
-  lead: DashboardCrmLead | null;
   followUps: DashboardCrmFollowUp[];
-  followUpSummary: string;
-  onPdfClick: (event: MouseEvent<HTMLAnchorElement>, lead: DashboardCrmLead) => void;
+  lead: DashboardCrmLead;
+  onDownloadPdf: () => void;
+  onStatusChange: (status: DashboardLeadStatus) => void;
   pdfUnavailable: boolean;
 }) {
-  if (!lead) {
-    return (
-      <aside className="rounded-[1.75rem] border border-white/10 bg-white/[0.045] p-5 backdrop-blur-xl xl:sticky xl:top-5">
-        <EmptyLeadsState compact />
-      </aside>
-    );
-  }
-
   return (
-    <aside className="rounded-[1.75rem] border border-white/10 bg-white/[0.045] p-4 shadow-[0_24px_70px_rgba(2,8,20,0.28)] backdrop-blur-xl xl:sticky xl:top-5 xl:max-h-[calc(100vh-2.5rem)] xl:overflow-y-auto">
-      <div className="flex items-start gap-3">
-        <InitialsAvatar name={lead.name} large />
-        <div className="min-w-0 flex-1">
-          <p className="text-[0.62rem] font-semibold uppercase tracking-[0.3em] text-cyan-300">
+    <section className="rounded-[1.6rem] border border-white/10 bg-white/[0.045] p-5 shadow-[0_18px_70px_rgba(2,8,20,0.32)] backdrop-blur-xl">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-[0.28em] text-cyan-300">
             Lead detail
           </p>
-          <h3 className="mt-1.5 truncate text-2xl font-semibold tracking-tight text-white">
+          <h2 className="mt-2 truncate text-2xl font-semibold tracking-tight text-white">
             {lead.name}
-          </h3>
-          <p className="mt-1 text-sm leading-5 text-slate-400">
-            {formatDate(lead.createdAt)} submitted report
+          </h2>
+          <p className="mt-2 text-sm leading-6 text-slate-400">
+            {formatDisplayAddress(lead.address)}
           </p>
         </div>
-      </div>
-
-      <div className="mt-4 flex flex-wrap gap-2">
         <StatusBadge status={lead.status} />
-        <span className={`rounded-full border px-3 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.22em] ${
-          pdfUnavailable
-            ? "border-rose-300/20 bg-rose-300/10 text-rose-200"
-            : "border-emerald-300/20 bg-emerald-300/10 text-emerald-200"
-        }`}>
-          {pdfUnavailable ? "PDF unavailable" : "PDF ready"}
-        </span>
       </div>
 
-      <div className="mt-5 grid gap-2.5 text-sm">
-        <InfoLine icon={<MapPin className="h-4 w-4" />} label="Address" value={formatDisplayAddress(lead.address)} />
-        <InfoLine icon={<Phone className="h-4 w-4" />} label="Phone" value={lead.phone} />
-        <InfoLine icon={<Mail className="h-4 w-4" />} label="Email" value={lead.email} />
-      </div>
-
-      <div className="mt-5 grid grid-cols-2 gap-2.5">
-        <DetailMetric
-          label="Annual savings"
-          value={formatMoney(lead.annualSavings)}
-        />
-        <DetailMetric
-          label="System size"
-          value={`${formatDecimal(lead.systemSizeKw)} kW`}
-        />
-        <DetailMetric
-          label="Estimated ROI"
-          value={lead.estimatedRoiYears ? `${lead.estimatedRoiYears} yrs` : "N/A"}
-        />
-        <DetailMetric
-          label="CO2 offset"
-          value={`${lead.co2OffsetLbs.toLocaleString()} lbs`}
-        />
+      <div className="mt-5 grid gap-2 text-sm">
+        <DetailRow label="Email" value={lead.email} />
+        <DetailRow label="Phone" value={lead.phone} />
+        <DetailRow label="Monthly bill" value={formatMoney(lead.monthlyBill)} />
+        <DetailRow label="Annual savings" value={formatMoney(lead.annualSavings)} />
+        <DetailRow label="System size" value={`${formatDecimal(lead.systemSizeKw)} kW`} />
+        <DetailRow label="Panel count" value={`${lead.panelCount} panels`} />
+        <DetailRow label="Estimated ROI" value={`${formatDecimal(lead.estimatedRoiYears)} yrs`} />
+        <DetailRow label="CO2 offset" value={`${formatNumber(lead.co2OffsetLbs)} lbs`} />
       </div>
 
       <div className="mt-5 grid gap-2">
+        <StatusSelect value={lead.status} onChange={onStatusChange} />
         {pdfUnavailable ? (
-          <div className="rounded-[1rem] border border-rose-300/20 bg-rose-300/10 px-4 py-3 text-center text-sm font-semibold text-rose-200">
+          <div className="rounded-full border border-white/10 bg-slate-950/42 px-4 py-3 text-center text-sm font-semibold text-slate-500">
             PDF unavailable
           </div>
         ) : (
-          <>
-            <a
-              href={lead.reportUrl}
-              target="_blank"
-              rel="noreferrer"
-              onClick={(event) => onPdfClick(event, lead)}
-              className="inline-flex items-center justify-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/14 px-4 py-3 text-sm font-semibold text-cyan-50 transition hover:bg-cyan-300/22"
-            >
-              <Download className="h-4 w-4" />
-              Download PDF
-            </a>
-            <a
-              href={lead.reportUrl}
-              target="_blank"
-              rel="noreferrer"
-              onClick={(event) => onPdfClick(event, lead)}
-              className="inline-flex items-center justify-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-slate-100 transition hover:border-cyan-200/25 hover:bg-cyan-200/10"
-            >
-              <Eye className="h-4 w-4" />
-              Open Report
-            </a>
-          </>
+          <button
+            type="button"
+            onClick={onDownloadPdf}
+            className="inline-flex items-center justify-center gap-2 rounded-full bg-white px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100"
+          >
+            <Download className="h-4 w-4" aria-hidden="true" />
+            Download PDF
+          </button>
         )}
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            disabled
-            title="CRM write actions are not connected yet."
-            className="rounded-full border border-white/10 bg-white/[0.035] px-3 py-2.5 text-xs font-semibold text-slate-500"
-          >
-            Mark Contacted
-          </button>
-          <button
-            type="button"
-            disabled
-            title="Scheduling is not connected yet."
-            className="rounded-full border border-white/10 bg-white/[0.035] px-3 py-2.5 text-xs font-semibold text-slate-500"
-          >
-            Schedule Follow-up
-          </button>
-        </div>
+        <a
+          href={lead.reportUrl}
+          className="inline-flex items-center justify-center rounded-full border border-white/10 bg-white/[0.05] px-4 py-3 text-sm font-semibold text-white transition hover:bg-white/[0.09]"
+        >
+          Open Report
+        </a>
       </div>
 
-      <div className="mt-5 rounded-[1.25rem] border border-white/10 bg-slate-950/30 p-4">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <p className="text-[0.62rem] font-semibold uppercase tracking-[0.28em] text-cyan-300">
-              Follow-up status
-            </p>
-            <p className="mt-1 text-sm font-semibold text-white">
-              {followUpSummary}
-            </p>
-          </div>
-          <CalendarClock className="h-5 w-5 text-cyan-200" />
+      <div className="mt-6 rounded-[1.2rem] border border-white/8 bg-slate-950/38 p-4">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-300">
+            Lead nurture
+          </p>
+          <SlidersHorizontal className="h-4 w-4 text-slate-500" aria-hidden="true" />
         </div>
-
         {followUps.length ? (
-          <div className="mt-4 grid gap-2">
+          <div className="mt-3 grid gap-2">
             {followUps.slice(0, 4).map((followUp) => (
-              <article
+              <div
                 key={followUp.id}
-                className="rounded-[1rem] border border-white/8 bg-white/[0.035] p-3"
+                className="rounded-[0.9rem] border border-white/8 bg-white/[0.035] px-3 py-2 text-xs text-slate-300"
               >
-                <div className="flex items-center justify-between gap-3">
-                  <p className="truncate text-sm font-semibold text-white">
-                    {followUp.title}
-                  </p>
-                  <FollowUpBadge status={followUp.status} />
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold text-white">{followUp.title}</span>
+                  <span className="rounded-full bg-white/[0.08] px-2 py-0.5 text-[0.58rem] uppercase tracking-[0.14em] text-slate-400">
+                    {followUp.status}
+                  </span>
                 </div>
-                <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-400">
-                  {followUp.message}
-                </p>
-                <p className="mt-2 text-[0.62rem] uppercase tracking-[0.22em] text-slate-500">
-                  {followUp.channel} - {formatDateTime(followUp.scheduledFor)}
-                </p>
-              </article>
+                <p className="mt-1 line-clamp-2 text-slate-500">{followUp.message}</p>
+              </div>
             ))}
           </div>
         ) : (
-          <FollowUpEmptyState />
+          <EmptyState
+            compact
+            title="No follow-ups scheduled yet."
+            description="Create your first follow-up workflow."
+          />
         )}
       </div>
-    </aside>
+    </section>
   );
 }
 
-function InfoLine({
-  icon,
-  label,
-  value,
+function EmptyState({
+  compact = false,
+  description,
+  title,
 }: {
-  icon: ReactNode;
-  label: string;
-  value: string;
+  compact?: boolean;
+  description: string;
+  title: string;
 }) {
   return (
-    <div className="flex gap-3 rounded-[1rem] border border-white/8 bg-slate-950/25 px-3 py-2.5">
-      <span className="mt-0.5 text-cyan-200">{icon}</span>
-      <div className="min-w-0">
-        <p className="text-[0.62rem] font-semibold uppercase tracking-[0.24em] text-slate-500">
-          {label}
-        </p>
-        <p className="mt-1 break-words text-sm text-slate-200">{value}</p>
-      </div>
-    </div>
-  );
-}
-
-function DetailMetric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-[1.1rem] border border-white/10 bg-white/[0.04] p-3">
-      <p className="text-[0.58rem] font-semibold uppercase tracking-[0.24em] text-slate-500">
-        {label}
-      </p>
-      <p className="mt-1.5 text-lg font-semibold tracking-tight text-white">
-        {value}
-      </p>
-    </div>
-  );
-}
-
-function InitialsAvatar({ name, large = false }: { name: string; large?: boolean }) {
-  const initials = name
-    .split(" ")
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase())
-    .join("");
-
-  return (
-    <span
-      className={`grid shrink-0 place-items-center rounded-full border border-cyan-300/20 bg-cyan-300/12 font-semibold text-cyan-100 ${
-        large ? "h-12 w-12 text-base" : "h-9 w-9 text-xs"
+    <div
+      className={`rounded-[1.2rem] border border-dashed border-white/12 bg-white/[0.035] text-center ${
+        compact ? "mt-3 px-3 py-5" : "p-8"
       }`}
     >
-      {initials || "AI"}
-    </span>
+      <div className="mx-auto grid h-10 w-10 place-items-center rounded-full bg-cyan-300/10 text-cyan-200">
+        <Search className="h-4 w-4" aria-hidden="true" />
+      </div>
+      <h3 className="mt-3 text-sm font-semibold text-white">{title}</h3>
+      <p className="mt-1 text-xs leading-5 text-slate-500">{description}</p>
+    </div>
+  );
+}
+
+function MiniMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-[0.8rem] border border-white/8 bg-slate-950/34 px-2.5 py-2">
+      <p className="text-[0.55rem] font-semibold uppercase tracking-[0.16em] text-slate-500">
+        {label}
+      </p>
+      <p className="mt-1 font-semibold text-white">{value}</p>
+    </div>
+  );
+}
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-4 border-b border-white/8 py-2 last:border-b-0">
+      <span className="text-slate-500">{label}</span>
+      <span className="text-right font-semibold text-white">{value}</span>
+    </div>
   );
 }
 
 function StatusBadge({ status }: { status: DashboardLeadStatus }) {
-  const config = getLeadStatusConfig(status);
+  const color =
+    status === "closed-won"
+      ? "bg-emerald-300/16 text-emerald-100"
+      : status === "closed-lost"
+        ? "bg-rose-300/14 text-rose-100"
+        : status === "quoted"
+          ? "bg-amber-300/16 text-amber-100"
+          : status === "contacted"
+            ? "bg-sky-300/16 text-sky-100"
+            : "bg-white/[0.08] text-slate-200";
 
   return (
-    <span
-      className={`inline-flex rounded-full border px-2.5 py-1 text-[0.6rem] font-semibold uppercase tracking-[0.2em] ${config.className}`}
-    >
-      {config.label}
+    <span className={`shrink-0 rounded-full px-2.5 py-1 text-[0.58rem] font-bold uppercase tracking-[0.14em] ${color}`}>
+      {getStatusLabel(status)}
     </span>
   );
 }
 
-function FollowUpBadge({
-  status,
+function StatusSelect({
+  disabled,
+  onChange,
+  value,
 }: {
-  status: DashboardCrmFollowUp["status"];
+  disabled?: boolean;
+  onChange: (status: DashboardLeadStatus) => void;
+  value: DashboardLeadStatus;
 }) {
-  const className =
-    status === "sent"
-      ? "border-emerald-300/20 bg-emerald-300/10 text-emerald-200"
-      : status === "failed"
-        ? "border-rose-300/20 bg-rose-300/10 text-rose-200"
-        : status === "skipped"
-          ? "border-amber-300/20 bg-amber-300/10 text-amber-200"
-          : "border-cyan-300/18 bg-cyan-300/10 text-cyan-100";
-
   return (
-    <span
-      className={`shrink-0 rounded-full border px-2 py-0.5 text-[0.55rem] font-semibold uppercase tracking-[0.2em] ${className}`}
+    <select
+      disabled={disabled}
+      value={value}
+      onChange={(event) => onChange(event.target.value as DashboardLeadStatus)}
+      className="min-h-9 rounded-full border border-white/10 bg-slate-950/72 px-3 text-xs font-semibold text-white outline-none transition hover:border-cyan-300/35 disabled:opacity-60"
     >
-      {status}
-    </span>
+      {statusColumns.map((column) => (
+        <option key={column.id} value={column.id}>
+          {column.label}
+        </option>
+      ))}
+    </select>
   );
 }
 
-function FollowUpEmptyState() {
+function Select({
+  label,
+  onChange,
+  options,
+  value,
+}: {
+  label: string;
+  onChange: (value: string) => void;
+  options: ReadonlyArray<{ label: string; value: string }>;
+  value: string;
+}) {
   return (
-    <div className="mt-4 rounded-[1.1rem] border border-dashed border-white/14 bg-white/[0.03] p-4 text-center">
-      <div className="mx-auto grid h-10 w-10 place-items-center rounded-full border border-cyan-300/18 bg-cyan-300/10 text-cyan-100">
-        <Workflow className="h-5 w-5" />
-      </div>
-      <h4 className="mt-3 text-sm font-semibold text-white">
-        No follow-ups scheduled yet
-      </h4>
-      <p className="mt-2 text-xs leading-5 text-slate-400">
-        This lead has no queued email or SMS steps.
-      </p>
-    </div>
+    <label className="inline-flex min-h-12 items-center gap-2 rounded-full border border-white/10 bg-slate-950/55 px-3 text-xs font-semibold text-slate-300">
+      <span className="text-slate-500">{label}</span>
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="bg-transparent text-white outline-none"
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 
-function EmptyLeadsState({ compact = false }: { compact?: boolean }) {
-  return (
-    <div
-      className={`grid place-items-center text-center ${
-        compact ? "min-h-[220px]" : "min-h-[320px] p-8"
-      }`}
-    >
-      <div>
-        <div className="mx-auto grid h-12 w-12 place-items-center rounded-full border border-cyan-300/18 bg-cyan-300/10 text-cyan-100">
-          <UserRound className="h-5 w-5" />
-        </div>
-        <h3 className="mt-4 text-lg font-semibold text-white">
-          No leads match this view
-        </h3>
-        <p className="mt-2 max-w-sm text-sm leading-6 text-slate-400">
-          Adjust search, filters, or submit a new homeowner report to populate the CRM table.
-        </p>
-      </div>
-    </div>
-  );
-}
-
-function getLeadStatusConfig(status: DashboardLeadStatus) {
-  switch (status) {
-    case "contacted":
-      return {
-        label: "Contacted",
-        className: "border-emerald-300/20 bg-emerald-300/10 text-emerald-200",
-      };
-    case "follow-up-due":
-      return {
-        label: "Follow-up Due",
-        className: "border-amber-300/20 bg-amber-300/10 text-amber-100",
-      };
-    case "closed":
-      return {
-        label: "Closed",
-        className: "border-slate-300/20 bg-slate-300/10 text-slate-200",
-      };
-    case "new":
-    default:
-      return {
-        label: "New Lead",
-        className: "border-cyan-300/20 bg-cyan-300/10 text-cyan-100",
-      };
-  }
-}
-
-function getFollowUpSummary(followUps: DashboardCrmFollowUp[]) {
-  if (!followUps.length) return "No workflow scheduled";
-  if (followUps.some((followUp) => followUp.status === "failed")) {
-    return "Needs attention";
-  }
-  if (followUps.some((followUp) => followUp.status === "queued")) {
-    return "Queued follow-up";
-  }
-  if (followUps.some((followUp) => followUp.status === "scheduled")) {
-    return "Scheduled follow-up";
-  }
-  if (followUps.some((followUp) => followUp.status === "sent")) {
-    return "Contacted";
-  }
-  return "Workflow reviewed";
+function getStatusLabel(status: DashboardLeadStatus) {
+  return statusColumns.find((column) => column.id === status)?.label ?? "New";
 }
 
 function formatMoney(value: number) {
   return new Intl.NumberFormat("en-US", {
-    style: "currency",
     currency: "USD",
     maximumFractionDigits: 0,
-  }).format(value);
+    style: "currency",
+  }).format(Number.isFinite(value) ? value : 0);
 }
 
-function formatDate(value: string) {
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }).format(new Date(value));
-}
-
-function formatDateTime(value: string) {
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(new Date(value));
+function formatNumber(value: number) {
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 0,
+  }).format(Number.isFinite(value) ? value : 0);
 }
 
 function formatDecimal(value: number) {
-  if (!Number.isFinite(value) || value <= 0) return "N/A";
-  return value.toFixed(1);
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 1,
+    minimumFractionDigits: 0,
+  }).format(Number.isFinite(value) ? value : 0);
+}
+
+function escapeCsvCell(value: string) {
+  const needsEscaping = /[",\n]/.test(value);
+  const escaped = value.replace(/"/g, '""');
+  return needsEscaping ? `"${escaped}"` : escaped;
 }

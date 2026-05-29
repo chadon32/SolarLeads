@@ -145,11 +145,13 @@ export function SolarReportDashboard({
           <label className="mt-4 block">
             <div className="flex items-center justify-between gap-3 text-xs text-white/58">
               <span className="font-semibold uppercase tracking-[0.2em]">
-                Accepted panels
+                Solar panels: {values.panelCount} of {values.maxPanelCount}
               </span>
-              <span className="font-semibold text-white">
-                {values.panelCount} / {values.maxPanelCount}
-              </span>
+              {values.panelCount === values.recommendedPanelCount ? (
+                <span className="rounded-full bg-emerald-300/16 px-2 py-1 text-[0.56rem] font-bold uppercase tracking-[0.16em] text-emerald-100">
+                  Recommended
+                </span>
+              ) : null}
             </div>
             <input
               type="range"
@@ -185,6 +187,7 @@ export function SolarReportDashboard({
             <MiniReadout label="Panel footprint" source="solar-api" value={`${formatNumber(values.installationSqFt)} sq ft`} />
             <MiniReadout label="Annual savings" source="user-adjusted" value={formatMoney(values.annualSavings)} />
           </div>
+          <BillComparisonCard values={values} />
         </section>
 
         <AiSolarAdvisorCard
@@ -329,6 +332,59 @@ function EnvironmentalTab({ values }: { values: DashboardValues }) {
   );
 }
 
+function BillComparisonCard({ values }: { values: DashboardValues }) {
+  const currentBill = Math.max(values.monthlyBill, 1);
+  const withSolar = Math.max(values.billWithSolar, 0);
+  const solarPct = clamp((withSolar / currentBill) * 100, 0, 100);
+
+  return (
+    <div className="mt-4 rounded-[1rem] border border-white/10 bg-black/22 p-3">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-[0.58rem] font-semibold uppercase tracking-[0.2em] text-white/54">
+          Bill after solar
+        </p>
+        <SourceBadge source="user-adjusted" />
+      </div>
+      <div className="mt-3 grid gap-2">
+        <BillBar label="Current bill" tone="rose" value={currentBill} widthPct={100} />
+        <BillBar label="With solar" tone="emerald" value={withSolar} widthPct={solarPct} />
+      </div>
+      <p className="mt-2 text-xs leading-5 text-cyan-100/74">
+        Estimated savings gap: {formatMoney(values.monthlySavings)} / mo
+      </p>
+    </div>
+  );
+}
+
+function BillBar({
+  label,
+  tone,
+  value,
+  widthPct,
+}: {
+  label: string;
+  tone: "emerald" | "rose";
+  value: number;
+  widthPct: number;
+}) {
+  const color = tone === "emerald" ? "bg-emerald-300" : "bg-rose-300";
+
+  return (
+    <div>
+      <div className="flex items-center justify-between text-xs text-white/58">
+        <span>{label}</span>
+        <span className="font-semibold text-white">{formatMoney(value)}</span>
+      </div>
+      <div className="mt-1 h-2 rounded-full bg-white/10">
+        <div
+          className={`h-full rounded-full ${color}`}
+          style={{ width: `${Math.max(4, widthPct)}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
 function FinancingTab({
   financingMode,
   onFinancingModeChange,
@@ -338,6 +394,20 @@ function FinancingTab({
   onFinancingModeChange: (value: FinancingMode) => void;
   values: DashboardValues;
 }) {
+  const [downPaymentPct, setDownPaymentPct] = useState(0);
+  const [loanRate, setLoanRate] = useState(6.49);
+  const [loanTermYears, setLoanTermYears] = useState(20);
+  const loanPrincipal = Math.max(
+    values.installedCost * (1 - downPaymentPct / 100) - values.taxCredit,
+    0
+  );
+  const monthlyLoanPayment = calculateMonthlyLoanPayment(
+    loanPrincipal,
+    loanRate,
+    loanTermYears
+  );
+  const netMonthly = values.monthlySavings - monthlyLoanPayment;
+
   return (
     <div className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
       <div className="rounded-[1rem] border border-white/10 bg-black/20 p-4">
@@ -364,11 +434,84 @@ function FinancingTab({
           Financing values are illustrative only. Final pricing, incentives, APR,
           and terms require installer and lender confirmation.
         </p>
-        <p className="mt-2 text-xs leading-5 text-white/48">
-          These fields are read-only outputs. Adjust the monthly bill and panel
-          count in the estimate controls to update the model.
-        </p>
+        {financingMode === "loan" ? (
+          <div className="mt-4 grid gap-3 rounded-[1rem] border border-white/10 bg-slate-950/35 p-3">
+            <SliderField
+              label="Down payment"
+              max={30}
+              min={0}
+              suffix="%"
+              value={downPaymentPct}
+              onChange={setDownPaymentPct}
+            />
+            <SliderField
+              label="APR"
+              max={8.99}
+              min={3.99}
+              step={0.1}
+              suffix="%"
+              value={loanRate}
+              onChange={setLoanRate}
+            />
+            <label className="grid gap-1 text-xs text-white/58">
+              <span className="font-semibold uppercase tracking-[0.18em]">
+                Term
+              </span>
+              <select
+                value={loanTermYears}
+                onChange={(event) => setLoanTermYears(Number(event.target.value))}
+                className="rounded-full border border-white/12 bg-black/35 px-3 py-2 font-semibold text-white outline-none"
+              >
+                {[10, 15, 20, 25].map((term) => (
+                  <option key={term} value={term} className="bg-slate-950">
+                    {term} years
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="rounded-[0.9rem] border border-white/8 bg-black/24 p-3 text-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-white/56">Monthly loan payment</span>
+                <span className="font-semibold text-white">
+                  {formatMoney(monthlyLoanPayment)}
+                </span>
+              </div>
+              <div className="mt-2 flex items-center justify-between">
+                <span className="text-white/56">Monthly solar savings</span>
+                <span className="font-semibold text-white">
+                  {formatMoney(values.monthlySavings)}
+                </span>
+              </div>
+              <p
+                className={`mt-3 rounded-full px-3 py-2 text-center text-xs font-semibold ${
+                  netMonthly >= 0
+                    ? "bg-emerald-300/14 text-emerald-100"
+                    : "bg-amber-300/14 text-amber-100"
+                }`}
+              >
+                {netMonthly >= 0
+                  ? `Day 1 savings: ${formatMoney(netMonthly)} / mo`
+                  : `Breakeven gap: ${formatMoney(Math.abs(netMonthly))} / mo`}
+              </p>
+            </div>
+          </div>
+        ) : null}
         <div className="mt-4 grid gap-2">
+          {financingMode === "buy" ? (
+            <>
+              <MiniReadout label="System cost" source="illustrative" value={formatMoney(values.installedCost)} />
+              <MiniReadout label="Federal tax credit" source="illustrative" value={formatMoney(values.taxCredit)} />
+              <MiniReadout label="Net cost after credit" source="illustrative" value={formatMoney(values.netCostAfterCredit)} />
+              <MiniReadout label="Payback" source="modeled" value={`${values.paybackYears.toFixed(1)} years`} />
+            </>
+          ) : null}
+          {financingMode === "lease" ? (
+            <>
+              <MiniReadout label="$0 down" source="illustrative" value="$0" />
+              <MiniReadout label="Monthly lease estimate" source="illustrative" value={formatMoney(values.leaseMonthlyEstimate)} />
+              <MiniReadout label="Monthly bill savings" source="user-adjusted" value={formatMoney(values.monthlySavings)} />
+            </>
+          ) : null}
           <MiniReadout
             label="Upfront after incentives"
             note={
@@ -385,6 +528,45 @@ function FinancingTab({
       </div>
       <EstimateTable rows={values.financingRows} />
     </div>
+  );
+}
+
+function SliderField({
+  label,
+  max,
+  min,
+  onChange,
+  step = 1,
+  suffix,
+  value,
+}: {
+  label: string;
+  max: number;
+  min: number;
+  onChange: (value: number) => void;
+  step?: number;
+  suffix: string;
+  value: number;
+}) {
+  return (
+    <label className="block text-xs text-white/58">
+      <div className="flex items-center justify-between gap-3">
+        <span className="font-semibold uppercase tracking-[0.18em]">{label}</span>
+        <span className="font-semibold text-white">
+          {value.toFixed(step < 1 ? 1 : 0)}
+          {suffix}
+        </span>
+      </div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value))}
+        className="mt-2 w-full accent-cyan-300"
+      />
+    </label>
   );
 }
 
@@ -752,6 +934,9 @@ function buildDashboardValues(
   const annualKwh = metrics.annualKwh;
   const recommendedKw = metrics.systemKw;
   const annualSavings = metrics.annualSavings;
+  const monthlySavings = metrics.monthlySavings;
+  const billWithSolar = Math.max(monthlyBill - monthlySavings, 0);
+  const recommendedPanelCount = findRecommendedPanelCount(analysis, monthlyBill, maxPanelCount);
   const twentyYearSavings = Math.round(annualSavings * 20);
   const panelAreaSqFt =
     analysis.panelWidthMeters > 0 && analysis.panelHeightMeters > 0
@@ -772,6 +957,9 @@ function buildDashboardValues(
   const utilityEscalationRate = 0.03;
   const loanPaymentMultiplier = 1.38;
   const installedCost = Math.round(panelCount * STANDARD_PANEL_WATTS * INSTALLED_COST_PER_WATT);
+  const taxCredit = Math.round(installedCost * buyIncentiveRate);
+  const netCostAfterCredit = Math.max(installedCost - taxCredit, 0);
+  const leaseMonthlyEstimate = Math.round((recommendedKw * 1000 * 8) / 12);
   const totalCostWithoutSolar = Math.round(
     Array.from({ length: 20 }).reduce<number>(
       (sum, _, year) => sum + monthlyBill * 12 * (1 + utilityEscalationRate) ** year,
@@ -810,9 +998,17 @@ function buildDashboardValues(
       { label: "Loan payment multiplier", value: `${loanPaymentMultiplier.toFixed(2)}x installed cost` },
     ],
     installationSqFt,
+    installedCost,
+    leaseMonthlyEstimate,
     maxPanelCount,
+    monthlyBill,
+    monthlySavings,
+    billWithSolar,
+    netCostAfterCredit,
     panelCount,
+    paybackYears: metrics.paybackYears,
     recommendedKw,
+    recommendedPanelCount,
     rejectedPanelCandidateCount,
     savingsRows: [
       { label: "Average annual savings", source: "user-adjusted" as const, value: annualSavings },
@@ -824,9 +1020,31 @@ function buildDashboardValues(
     totalSavings,
     treesEquivalent,
     twentyYearSavings,
+    taxCredit,
     upfrontAfterIncentives,
     usableAreaSqFt,
   };
+}
+
+function findRecommendedPanelCount(
+  analysis: RoofAnalysis,
+  monthlyBill: number,
+  maxPanelCount: number
+) {
+  const annualBill = Math.max(monthlyBill * 12, 1);
+
+  for (let panelCount = 1; panelCount <= maxPanelCount; panelCount += 1) {
+    const metrics = buildSolarMetrics(analysis, {
+      monthlyBill,
+      selectedPanelCount: panelCount,
+    });
+
+    if (metrics.annualSavings >= annualBill) {
+      return panelCount;
+    }
+  }
+
+  return maxPanelCount;
 }
 
 function formatMoney(value: number) {
@@ -846,6 +1064,27 @@ function formatNumber(value: number) {
 function roundTo(value: number, precision: number) {
   const factor = 10 ** precision;
   return Math.round(value * factor) / factor;
+}
+
+function calculateMonthlyLoanPayment(
+  principal: number,
+  annualRatePct: number,
+  termYears: number
+) {
+  if (principal <= 0) {
+    return 0;
+  }
+
+  const monthlyRate = annualRatePct / 100 / 12;
+  const payments = termYears * 12;
+
+  if (monthlyRate <= 0) {
+    return Math.round(principal / payments);
+  }
+
+  return Math.round(
+    (principal * monthlyRate) / (1 - (1 + monthlyRate) ** -payments)
+  );
 }
 
 function clamp(value: number, min: number, max: number) {

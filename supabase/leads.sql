@@ -20,6 +20,7 @@ alter table public.leads add column if not exists usable_area_m2 numeric(10, 2);
 alter table public.leads add column if not exists roof_pitch_deg numeric(10, 2);
 alter table public.leads add column if not exists lat double precision;
 alter table public.leads add column if not exists lng double precision;
+alter table public.leads add column if not exists status text not null default 'New';
 
 alter table public.leads enable row level security;
 
@@ -31,5 +32,6 @@ drop policy if exists "Allow anon insert on leads" on public.leads;
 drop policy if exists "Allow anon select on leads" on public.leads;
 
 create index if not exists leads_created_at_idx on public.leads (created_at desc);
+create index if not exists leads_status_idx on public.leads (status);
 create unique index if not exists leads_dedupe_idx
 on public.leads (lower(email), lower(address), monthly_bill);

@@ -152,7 +152,7 @@ export function ThankYouClient() {
                 <NextStep
                   index="1"
                   icon={Mail}
-                  title="Report emailed to you"
+                  title="Your report has been emailed to you"
                   body="Your PDF proposal is sent to the email you entered."
                 />
                 <NextStep

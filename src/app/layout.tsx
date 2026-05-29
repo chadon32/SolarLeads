@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Manrope, Space_Grotesk } from "next/font/google";
+import { GoogleAnalytics } from "@/components/google-analytics";
 import "./globals.css";
 
 const display = Space_Grotesk({
@@ -22,6 +23,9 @@ export const metadata: Metadata = {
   },
   description:
     "See your home with solar before you commit. Arizona homeowners can enter an address and get a roof analysis, panel placement, and a savings estimate.",
+  alternates: {
+    canonical: "https://solar-leads-psi.vercel.app/",
+  },
   keywords: [
     "Arizona solar",
     "solar estimate",
@@ -58,6 +62,13 @@ export const metadata: Metadata = {
     index: true,
     follow: true,
   },
+  icons: {
+    icon: "/icon.svg",
+  },
+  other: {
+    "geo.region": "US-AZ",
+    "geo.placename": "Arizona",
+  },
 };
 
 export default function RootLayout({
@@ -67,7 +78,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={`${display.variable} ${body.variable} h-full`}>
-      <body className="min-h-full antialiased">{children}</body>
+      <body className="min-h-full antialiased">
+        <GoogleAnalytics />
+        {children}
+      </body>
     </html>
   );
 }

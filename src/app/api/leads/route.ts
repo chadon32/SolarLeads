@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { Resend } from "resend";
+import { formatDisplayAddress } from "@/lib/address-format";
 import { buildReportPdfPath } from "@/lib/report-access";
 import { enforceRateLimit } from "@/lib/rate-limit";
 
@@ -23,6 +25,10 @@ type LeadBody = {
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const resendApiKey = process.env.RESEND_API_KEY?.trim();
+const ownerEmail = process.env.OWNER_EMAIL?.trim();
+const resendFromEmail =
+  process.env.RESEND_FROM_EMAIL?.trim() || "Arizona Solar AI <onboarding@resend.dev>";
 
 export async function POST(request: Request) {
   try {
@@ -82,6 +88,8 @@ export async function POST(request: Request) {
       phone.replace(/\D/g, "").length > 15 ||
       !address ||
       address.length < 8 ||
+      !Number.isFinite(monthlyBill) ||
+      monthlyBill <= 0 ||
       !Number.isFinite(panelCount) ||
       panelCount < 1 ||
       !estimatedSavings
@@ -109,6 +117,7 @@ export async function POST(request: Request) {
     };
     const extendedInsert = {
       ...baseInsert,
+      status: "New",
       panel_count: toNullableInteger(body.panelCount),
       system_size_kw: toNullableNumber(body.systemSizeKw),
       annual_savings: toNullableNumber(body.annualSavings),
@@ -159,6 +168,18 @@ export async function POST(request: Request) {
       );
     }
 
+    await sendOwnerLeadEmail({
+      address,
+      annualSavings: estimatedSavings,
+      email,
+      monthlyBill,
+      name,
+      panelCount,
+      phone,
+      roiYears,
+      systemSizeKw: toNullableNumber(body.systemSizeKw),
+    });
+
     return NextResponse.json({
       lead: {
         id: data.id,
@@ -178,6 +199,56 @@ export async function POST(request: Request) {
       },
       { status: 500 }
     );
+  }
+}
+
+async function sendOwnerLeadEmail({
+  address,
+  annualSavings,
+  email,
+  monthlyBill,
+  name,
+  panelCount,
+  phone,
+  roiYears,
+  systemSizeKw,
+}: {
+  address: string;
+  annualSavings: number;
+  email: string;
+  monthlyBill: number;
+  name: string;
+  panelCount: number;
+  phone: string;
+  roiYears: number | null;
+  systemSizeKw: number | null;
+}) {
+  if (!resendApiKey || !ownerEmail) {
+    return;
+  }
+
+  try {
+    const city = address.split(",").map((part) => part.trim())[1] || "Arizona";
+    const resend = new Resend(resendApiKey);
+
+    await resend.emails.send({
+      from: resendFromEmail,
+      to: ownerEmail,
+      subject: `New solar lead - ${name} in ${city}`,
+      text: [
+        `Name: ${name}`,
+        `Address: ${formatDisplayAddress(address)}`,
+        `Email: ${email}`,
+        `Phone: ${phone}`,
+        `Monthly bill: $${Math.round(monthlyBill)}`,
+        `Annual savings: $${Math.round(annualSavings)}`,
+        `System: ${systemSizeKw ?? "Unavailable"} kW / ${panelCount} panels`,
+        `ROI: ${roiYears ?? "Unavailable"} years`,
+        `Submitted: ${new Date().toISOString()}`,
+      ].join("\n"),
+    });
+  } catch (error) {
+    console.error("[owner-lead-email]", error);
   }
 }
 

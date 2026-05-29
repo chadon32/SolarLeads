@@ -4,6 +4,7 @@ import type { FormEvent, InputHTMLAttributes } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { formatDisplayAddress } from "@/lib/address-format";
+import { trackEvent } from "@/lib/analytics";
 import {
   getRoofAreaM2,
   getUsableAreaM2,
@@ -240,6 +241,11 @@ export function LeadCaptureForm({
       }
 
       lastSubmittedFingerprint.current = fingerprint;
+      trackEvent("lead_submitted", {
+        annual_savings: metrics.annualSavings,
+        lead_id: payload.lead.id,
+        panel_count: metrics.panelCount,
+      });
       const report = buildSolarReportFromSolarValues({
         annualKwh: metrics.annualKwh,
         annualSavings: metrics.annualSavings,
