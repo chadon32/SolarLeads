@@ -965,6 +965,17 @@ function ViewportCanvas({
           roofData,
         })
       );
+      const selectedHomeOverlay = createSelectedHomeOverlay({
+        googleApi,
+        map: mapRef.current,
+        point: getSelectedHomeMarkerPoint({
+          property,
+          roofData,
+        }),
+      });
+      if (selectedHomeOverlay) {
+        nextOverlays.push(selectedHomeOverlay);
+      }
       overlayRefs.current = nextOverlays;
 
       if (viewMode === "irradiance") {
@@ -1499,6 +1510,103 @@ function createDsmPlaneOverlays({
       strokeWeight: 1,
     });
   });
+}
+
+function createSelectedHomeOverlay({
+  googleApi,
+  map,
+  point,
+}: {
+  googleApi: GoogleMapsApi;
+  map: GoogleMapInstance;
+  point: LatLngPoint | null;
+}) {
+  if (!point || !isValidLatLngPoint(point)) {
+    return null;
+  }
+
+  const container = document.createElement("div");
+  container.style.position = "absolute";
+  container.style.pointerEvents = "none";
+  container.style.transform = "translate(-50%, -100%)";
+  container.style.zIndex = "20";
+  container.innerHTML = `
+    <div style="
+      display:flex;
+      flex-direction:column;
+      align-items:center;
+      gap:4px;
+      filter:drop-shadow(0 10px 18px rgba(2,8,20,0.42));
+      font-family:Inter, Arial, sans-serif;
+    ">
+      <div style="
+        border:1px solid rgba(255,255,255,0.72);
+        border-radius:999px;
+        background:rgba(8,13,24,0.76);
+        color:#ffffff;
+        font-size:10px;
+        font-weight:800;
+        letter-spacing:0.16em;
+        padding:5px 8px;
+        text-transform:uppercase;
+        white-space:nowrap;
+        backdrop-filter:blur(6px);
+      ">Selected home</div>
+      <div style="
+        width:18px;
+        height:18px;
+        border-radius:999px;
+        background:#67e8f9;
+        border:3px solid #ffffff;
+        box-shadow:0 0 0 5px rgba(103,232,249,0.28);
+      "></div>
+      <div style="
+        width:2px;
+        height:22px;
+        background:linear-gradient(180deg,#ffffff,rgba(255,255,255,0));
+      "></div>
+    </div>
+  `;
+
+  const overlay = new googleApi.maps.OverlayView();
+  overlay.onAdd = function onAdd() {
+    this.getPanes()?.overlayLayer?.appendChild(container);
+  };
+  overlay.draw = function draw() {
+    const projection = this.getProjection();
+    const pixel = projection.fromLatLngToDivPixel(
+      new googleApi.maps.LatLng(point.lat, point.lng)
+    );
+
+    if (!pixel) {
+      return;
+    }
+
+    container.style.left = `${pixel.x}px`;
+    container.style.top = `${pixel.y}px`;
+  };
+  overlay.onRemove = function onRemove() {
+    container.remove();
+  };
+  overlay.setMap(map);
+
+  return overlay;
+}
+
+function getSelectedHomeMarkerPoint({
+  property,
+  roofData,
+}: {
+  property: ResolvedProperty | null;
+  roofData: RoofAnalysis;
+}) {
+  const roofCenter = getLatLngCentroid(
+    outlineToLatLngPoints(roofData.roofOutline, roofData.roofBounds).filter(
+      isValidLatLngPoint
+    )
+  );
+
+  return roofCenter ?? getRoofBoundsCenter(roofData.roofBounds) ?? property;
 }
 
 type PanelLayoutPlacement = {
