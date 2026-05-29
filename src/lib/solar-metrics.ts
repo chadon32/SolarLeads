@@ -54,6 +54,7 @@ export type SharedSolarMetrics = {
 export function buildSolarMetrics(
   analysis: RoofAnalysis,
   options: {
+    monthlyBill?: number | null;
     selectedPanelCount?: number | null;
   } = {}
 ): SharedSolarMetrics {
@@ -73,7 +74,12 @@ export function buildSolarMetrics(
   const usableRoofAreaM2 = getUsableAreaM2(analysis);
   const avgPitchDeg = getAveragePitchDeg(analysis);
   const annualKwh = getAnnualKwhForPanelCount(analysis, panelCount);
-  const annualSavings = Math.round(annualKwh * ARIZONA_AVG_RATE_PER_KWH);
+  const utilitySavingsValue = annualKwh * ARIZONA_AVG_RATE_PER_KWH;
+  const annualBill =
+    options.monthlyBill && options.monthlyBill > 0 ? options.monthlyBill * 12 : null;
+  const annualSavings = Math.round(
+    annualBill ? annualBill * Math.min(utilitySavingsValue / annualBill, 1) : utilitySavingsValue
+  );
   const systemKw = roundTo((panelCount * STANDARD_PANEL_WATTS) / 1000, 1);
   const installedCost = panelCount * STANDARD_PANEL_WATTS * INSTALLED_COST_PER_WATT;
   const paybackYears =

@@ -33,7 +33,7 @@ type PlaceDetailsPayload = {
 };
 
 const lookupUnavailableMessage =
-  "Address lookup is temporarily unavailable. Please try again or call us at (602) 555-0100.";
+  "Address lookup is temporarily unavailable. Please try again shortly.";
 
 function buildFallbackSuggestions(query: string) {
   const typedAddress = query.trim();

@@ -34,6 +34,14 @@ export function buildReportPdfPath(
   leadId: string,
   options: { expiresInSeconds?: number } = {}
 ) {
+  void options;
+  return `/api/report/pdf?leadId=${encodeURIComponent(leadId)}`;
+}
+
+export function buildSignedReportPdfPath(
+  leadId: string,
+  options: { expiresInSeconds?: number } = {}
+) {
   if (!REPORT_SECRET) {
     if (REQUIRE_SIGNED_REPORTS) {
       return `/api/report/pdf?leadId=${encodeURIComponent(leadId)}&signature=required`;

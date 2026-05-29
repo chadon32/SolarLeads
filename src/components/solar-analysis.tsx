@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ButtonLink } from "@/components/ui/button";
+import { formatDisplayAddress } from "@/lib/address-format";
 import { type RoofGeoBounds, type RoofAnalysis } from "@/lib/roof-analysis";
 import {
   buildSolarMetrics,
@@ -25,6 +26,7 @@ type SolarAnalysisProps = {
     lat?: number;
     lng?: number;
   } | null;
+  monthlyBill?: number;
   activePanelCount?: number | null;
   onAnalysisChange?: (analysis: RoofAnalysis | null) => void;
   onActivePanelCountChange?: (panelCount: number) => void;
@@ -169,6 +171,8 @@ const viewModes: Array<{ id: ViewMode; label: string }> = [
 ];
 
 const dsmPlaneExtractionCache = new Map<string, Promise<DsmPlaneExtraction | null>>();
+const DISPLAY_PANEL_HEIGHT_METERS = 1.65;
+const DISPLAY_PANEL_WIDTH_METERS = 0.99;
 const PANEL_MODULE_GAP_METERS = 0.2032;
 const PANEL_COLLISION_EPSILON_METERS = 0.01;
 
@@ -177,6 +181,7 @@ export function SolarAnalysis({
   activePanelCount,
   compact = false,
   location,
+  monthlyBill,
   onAnalysisChange,
   onActivePanelCountChange,
 }: SolarAnalysisProps) {
@@ -389,6 +394,7 @@ export function SolarAnalysis({
       getMaxSelectablePanelCount(roofData)
     );
     const sharedMetrics = buildSolarMetrics(roofData, {
+      monthlyBill,
       selectedPanelCount: livePanelCount,
     });
     const estimatedNetCost = livePanelCount * STANDARD_PANEL_WATTS * 2.75;
@@ -418,7 +424,7 @@ export function SolarAnalysis({
       financingFrom: Math.round(estimatedNetCost / 300),
       orientationLabel: sharedMetrics.primaryOrientationLabel,
     };
-  }, [roofData, selectedPanelCount]);
+  }, [monthlyBill, roofData, selectedPanelCount]);
 
   const stageStep =
     stage === "resolving"
@@ -538,7 +544,15 @@ export function SolarAnalysis({
                   selectedPanelCount={metrics.selectedPanelCount}
                 />
               </div>
-              <div className="mt-3 grid gap-2 sm:grid-cols-3">
+              <div className="mt-3">
+                <PanelSelectionSlider
+                  value={metrics.selectedPanelCount}
+                  max={getMaxSelectablePanelCount(roofData)}
+                  onChange={setSelectedPanelCount}
+                  canRenderPanels={roofData.solarPanels.length > 0}
+                />
+              </div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
                 <CompactMapStat
                   label="Panel layout"
                   source="Solar API"
@@ -553,6 +567,16 @@ export function SolarAnalysis({
                   label="Orientation"
                   source="Solar API"
                   value={metrics.orientationLabel}
+                />
+                <CompactMapStat
+                  label="Est. savings"
+                  source="Modeled"
+                  value={`$${metrics.selectedAnnualSavingsUSD.toLocaleString()}`}
+                />
+                <CompactMapStat
+                  label="Payback"
+                  source="Modeled"
+                  value={`${metrics.roiYears.toFixed(1)} yrs`}
                 />
               </div>
               <div className="mt-3 rounded-[1rem] border border-white/10 bg-slate-950/62 p-3 text-xs leading-5 text-slate-200">
@@ -628,7 +652,7 @@ export function SolarAnalysis({
 
               <PanelSelectionSlider
                 value={metrics.selectedPanelCount}
-                max={Math.max(1, roofData.panelCount)}
+                max={getMaxSelectablePanelCount(roofData)}
                 onChange={setSelectedPanelCount}
                 canRenderPanels={roofData.solarPanels.length > 0}
               />
@@ -650,8 +674,8 @@ export function SolarAnalysis({
                   <ButtonLink href="#contact" variant="primary" className="w-full">
                     Generate full report
                   </ButtonLink>
-                  <ButtonLink href="tel:+16025550100" variant="secondary" className="w-full">
-                    Talk to a solar advisor
+                  <ButtonLink href="#contact" variant="secondary" className="w-full">
+                    Send full report
                   </ButtonLink>
                 </div>
               </SidebarPanel>
@@ -691,6 +715,8 @@ function ViewportHeader({
   viewMode: ViewMode;
   onSelectView: (next: ViewMode) => void;
 }) {
+  const displayAddress = formatDisplayAddress(address);
+
   return (
     <div className="flex flex-col gap-4 px-4 py-4 sm:px-5">
       <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
@@ -703,7 +729,7 @@ function ViewportHeader({
           </p>
         </div>
         <div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-slate-300">
-          {address}
+          {displayAddress}
         </div>
       </div>
 
@@ -906,6 +932,14 @@ function ViewportCanvas({
           roofData,
         })
       );
+      nextOverlays.push(
+        ...createSolarPanelOverlays({
+          googleApi,
+          map: mapRef.current,
+          roofData,
+          selectedPanelCount,
+        })
+      );
       const selectedHomeOverlay = createSelectedHomeOverlay({
         googleApi,
         map: mapRef.current,
@@ -925,7 +959,7 @@ function ViewportCanvas({
           annualFluxUrl,
           solarMaskUrl,
           fallbackBounds: roofData.roofBounds,
-          opacity: 0.68,
+          opacity: 0.6,
         });
 
         if (heatmapOverlay) {
@@ -1060,7 +1094,7 @@ function MapEvidenceOverlay() {
       <div className="pointer-events-none absolute left-3 top-3 z-10 max-w-[calc(100%-1.5rem)] rounded-full border border-white/10 bg-slate-950/35 px-2.5 py-1.5 text-[0.58rem] font-semibold uppercase tracking-[0.16em] text-cyan-100/90 shadow-none backdrop-blur-[2px]">
         Google Solar API roof model
       </div>
-      <div className="pointer-events-none absolute bottom-3 left-3 z-10 max-w-[min(10.75rem,calc(100%-1.5rem))] rounded-[0.7rem] border border-white/25 bg-white/55 p-2 text-[0.58rem] font-medium text-slate-900 shadow-[0_8px_18px_rgba(15,23,42,0.16)] backdrop-blur-sm">
+      <div className="pointer-events-none absolute bottom-8 left-3 z-10 max-w-[min(15rem,calc(100%-1.5rem))] rounded-[0.85rem] border border-white/30 bg-white/68 p-2.5 text-[0.66rem] font-medium text-slate-900 shadow-[0_8px_18px_rgba(15,23,42,0.16)] backdrop-blur-md sm:bottom-3">
         <div className="flex items-center justify-between gap-2 border-b border-slate-900/10 pb-1.5">
           <p className="text-[0.5rem] font-bold uppercase tracking-[0.22em] text-slate-700">
             Legend
@@ -1070,9 +1104,9 @@ function MapEvidenceOverlay() {
           </span>
         </div>
         <div className="mt-1.5 grid gap-1">
-          <LegendItem swatch="border border-cyan-500 bg-cyan-300/30" label="Roof plane" />
-          <LegendItem swatch="border border-emerald-500 bg-emerald-300/25" label="Setback" />
-          <LegendItem swatch="bg-slate-500/45" label="Unavailable" />
+          <LegendItem swatch="border border-cyan-500 bg-cyan-300/30" label="Roof plane - usable solar area" />
+          <LegendItem swatch="border border-amber-500 bg-amber-300/35" label="Setback - required edge buffer" />
+          <LegendItem swatch="bg-slate-700/70" label="Unavailable - shaded or obstructed" />
         </div>
       </div>
     </>
@@ -1081,8 +1115,8 @@ function MapEvidenceOverlay() {
 
 function LegendItem({ swatch, label }: { swatch: string; label: string }) {
   return (
-    <div className="flex items-center gap-1.5 leading-4">
-      <span className={`h-2 w-2 shrink-0 rounded-[0.18rem] ${swatch}`} />
+    <div className="flex items-center gap-2 leading-4">
+      <span className={`h-2.5 w-2.5 shrink-0 rounded-[0.18rem] ${swatch}`} />
       <span>{label}</span>
     </div>
   );
@@ -1389,8 +1423,8 @@ function createSetbackOverlay({
     fillOpacity: 0,
     map,
     paths: path,
-    strokeColor: "#a7f3d0",
-    strokeOpacity: 0.56,
+    strokeColor: "#fbbf24",
+    strokeOpacity: 0.62,
     strokeWeight: 1,
   });
 }
@@ -1424,6 +1458,39 @@ function createObstructionOverlays({
       });
     })
     .filter((overlay): overlay is GoogleMapOverlayInstance => Boolean(overlay));
+}
+
+function createSolarPanelOverlays({
+  googleApi,
+  map,
+  roofData,
+  selectedPanelCount,
+}: {
+  googleApi: GoogleMapsApi;
+  map: GoogleMapInstance;
+  roofData: RoofAnalysis;
+  selectedPanelCount: number;
+}) {
+  return buildProfessionalPanelLayout({
+    roofData,
+    selectedPanelCount,
+  }).map((placement) => {
+    const path = placement.displayPath.map(
+      (point) => new googleApi.maps.LatLng(point.lat, point.lng)
+    );
+
+    return new googleApi.maps.Polygon({
+      clickable: false,
+      fillColor: "#3b82f6",
+      fillOpacity: 0.75,
+      map,
+      paths: path,
+      strokeColor: "#ffffff",
+      strokeOpacity: 0.92,
+      strokeWeight: 1,
+      zIndex: 30,
+    });
+  });
 }
 
 function createDsmPlaneOverlays({
@@ -1597,8 +1664,8 @@ function buildProfessionalPanelLayout({
       centerLng: panel.center.lng,
       dimensionAdjustmentMeters: -PANEL_MODULE_GAP_METERS,
       orientation: panel.orientation,
-      panelHeightMeters: roofData.panelHeightMeters,
-      panelWidthMeters: roofData.panelWidthMeters,
+      panelHeightMeters: DISPLAY_PANEL_HEIGHT_METERS,
+      panelWidthMeters: DISPLAY_PANEL_WIDTH_METERS,
       rotationDeg,
     });
 
@@ -1611,8 +1678,8 @@ function buildProfessionalPanelLayout({
       centerLng: panel.center.lng,
       dimensionAdjustmentMeters: 0,
       orientation: panel.orientation,
-      panelHeightMeters: roofData.panelHeightMeters,
-      panelWidthMeters: roofData.panelWidthMeters,
+      panelHeightMeters: DISPLAY_PANEL_HEIGHT_METERS,
+      panelWidthMeters: DISPLAY_PANEL_WIDTH_METERS,
       rotationDeg,
     }).map((point) => latLngToLocalMeters(point, origin));
     const hasCollision = placedPanels.some((placedPanel) =>
@@ -2076,7 +2143,7 @@ async function buildAnnualFluxCanvas({
     pixels[offset] = r;
     pixels[offset + 1] = g;
     pixels[offset + 2] = b;
-    pixels[offset + 3] = 140;
+    pixels[offset + 3] = 255;
   }
 
   context.putImageData(imageData, 0, 0);
@@ -2652,7 +2719,7 @@ function PanelSelectionSlider({
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-[0.56rem] font-semibold uppercase tracking-[0.32em] text-cyan-300">
-            Panel selection
+            Panels: {Math.min(value, safeMax)} of {safeMax}
           </p>
           <p className="mt-2 text-sm leading-6 text-slate-300">
             Adjust the accepted module count against the current roof model and economics.
@@ -2694,6 +2761,7 @@ function SunroofSummaryCard({
 }) {
   const usableAreaSqFt = metrics.usableArea * 10.7639;
   const twentyYearSavings = metrics.selectedAnnualSavingsUSD * 20;
+  const displayAddress = formatDisplayAddress(address);
 
   return (
     <div className="overflow-hidden rounded-[1.15rem] border border-black/10 bg-white/95 text-slate-900 shadow-[0_18px_40px_rgba(15,23,42,0.18)] backdrop-blur">
@@ -2701,7 +2769,7 @@ function SunroofSummaryCard({
         <p className="text-[0.64rem] font-semibold uppercase tracking-[0.28em] text-slate-500">
           Preliminary property model
         </p>
-        <p className="mt-2 line-clamp-2 text-sm leading-5 text-slate-700">{address}</p>
+        <p className="mt-2 line-clamp-2 text-sm leading-5 text-slate-700">{displayAddress}</p>
       </div>
 
       <div className="border-b border-slate-200 px-4 py-3 text-sm text-slate-700">

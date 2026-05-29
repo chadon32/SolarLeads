@@ -1,30 +1,22 @@
 "use client";
 
 import type { FormEvent, InputHTMLAttributes } from "react";
-import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { formatDisplayAddress } from "@/lib/address-format";
 import {
   getRoofAreaM2,
   getUsableAreaM2,
   type RoofAnalysis,
 } from "@/lib/roof-analysis";
 import { buildSolarMetrics } from "@/lib/solar-metrics";
-
-const SolarReportGenerator = dynamic(
-  () =>
-    import("@/components/solar-report-generator").then(
-      (module) => module.SolarReportGenerator
-    ),
-  {
-    ssr: false,
-  }
-);
+import { buildSolarReportFromSolarValues } from "@/lib/solar-report";
 
 type LeadCaptureFormProps = {
   initialAddress: string;
   analysis?: RoofAnalysis | null;
   activePanelCount?: number;
+  initialMonthlyBill?: number;
   lat?: number;
   lng?: number;
 };
@@ -100,58 +92,50 @@ export function LeadCaptureForm({
   initialAddress,
   analysis,
   activePanelCount,
+  initialMonthlyBill = 200,
   lat,
   lng,
 }: LeadCaptureFormProps) {
   const [values, setValues] = useState<FormValues>({
     ...emptyValues,
     address: initialAddress,
+    monthlyBill: String(initialMonthlyBill),
   });
   const [errors, setErrors] = useState<Partial<Record<keyof FormValues, string>>>(
     {}
   );
   const [status, setStatus] = useState<
-    "idle" | "submitting" | "success" | "error"
+    "idle" | "submitting" | "error"
   >("idle");
   const [message, setMessage] = useState(
     "Your AI solar report is being generated"
   );
-  const [successSavings, setSuccessSavings] = useState<number | null>(null);
-  const [savedLead, setSavedLead] = useState<SavedLead | null>(null);
   const lastSubmittedFingerprint = useRef<string>("");
 
   useEffect(() => {
     const handle = window.requestAnimationFrame(() => {
       setValues((current) =>
-        current.address === initialAddress
+        current.address === initialAddress && current.monthlyBill === String(initialMonthlyBill)
           ? current
-          : { ...current, address: initialAddress }
+          : { ...current, address: initialAddress, monthlyBill: String(initialMonthlyBill) }
       );
       setErrors((current) => ({ ...current, address: undefined }));
     });
 
     return () => window.cancelAnimationFrame(handle);
-  }, [initialAddress]);
+  }, [initialAddress, initialMonthlyBill]);
 
   const estimatedSavings = useMemo(() => {
     if (analysis?.validSite) {
+      const monthlyBill = Number(values.monthlyBill);
       return buildSolarMetrics(analysis, {
+        monthlyBill: Number.isFinite(monthlyBill) ? monthlyBill : undefined,
         selectedPanelCount: activePanelCount,
       }).annualSavings;
     }
 
     return 0;
-  }, [activePanelCount, analysis]);
-
-  const handleEmailStatusChange = useCallback(
-    (nextStatus: "idle" | "sending" | "sent" | "error", nextMessage: string) => {
-      setMessage(nextMessage);
-      if (nextStatus === "error") {
-        setStatus("error");
-      }
-    },
-    []
-  );
+  }, [activePanelCount, analysis, values.monthlyBill]);
 
   const validate = () => {
     const nextErrors: Partial<Record<keyof FormValues, string>> = {};
@@ -195,8 +179,12 @@ export function LeadCaptureForm({
     if (status === "submitting") return;
     if (!validate()) return;
 
+    const monthlyBill = Number(values.monthlyBill);
     const metrics = analysis?.validSite
-      ? buildSolarMetrics(analysis, { selectedPanelCount: activePanelCount })
+      ? buildSolarMetrics(analysis, {
+          monthlyBill,
+          selectedPanelCount: activePanelCount,
+        })
       : null;
 
     if (!analysis?.validSite || !metrics || !metrics.annualSavings) {
@@ -215,9 +203,6 @@ export function LeadCaptureForm({
 
     setStatus("submitting");
     setMessage("Saving your lead...");
-
-    const monthlyBill = Number(values.monthlyBill);
-    const savings = metrics.annualSavings;
 
     try {
       const response = await fetch("/api/leads", {
@@ -255,10 +240,53 @@ export function LeadCaptureForm({
       }
 
       lastSubmittedFingerprint.current = fingerprint;
-      setSavedLead(payload.lead);
-      setStatus("success");
-      setMessage("Your AI solar report is being generated");
-      setSuccessSavings(payload.lead.estimatedSavings ?? savings);
+      const report = buildSolarReportFromSolarValues({
+        annualKwh: metrics.annualKwh,
+        annualSavings: metrics.annualSavings,
+        monthlyBill,
+        panelCount: metrics.panelCount,
+        systemKw: metrics.systemKw,
+      });
+
+      setMessage("Emailing your PDF report...");
+
+      await Promise.allSettled([
+        fetch("/api/follow-ups", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ leadId: payload.lead.id }),
+        }),
+        fetch("/api/report/email", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            leadId: payload.lead.id,
+            name: payload.lead.name,
+            email: payload.lead.email,
+            address: payload.lead.address,
+            monthlyBill,
+            report,
+          }),
+        }),
+      ]);
+
+      sessionStorage.setItem(
+        "arizonaSolarThankYou",
+        JSON.stringify({
+          address: formatDisplayAddress(payload.lead.address),
+          annualSavings: metrics.annualSavings,
+          firstName: values.name.trim().split(/\s+/)[0] ?? "there",
+          panelCount: metrics.panelCount,
+          paybackYears: metrics.paybackYears,
+          reportUrl: payload.lead.reportUrl,
+          systemKw: metrics.systemKw,
+        })
+      );
+      window.location.assign("/thank-you");
     } catch {
       setStatus("error");
       setMessage("Network error. Please try again.");
@@ -352,22 +380,16 @@ export function LeadCaptureForm({
                 {estimatedSavings > 0 ? formatMoney(estimatedSavings) : "Run roof analysis first"}
               </span>
             </div>
-            {status === "success" ? (
-              <div className="inline-flex items-center justify-center rounded-full border border-emerald-300/20 bg-emerald-300/12 px-6 py-3.5 text-sm font-semibold text-emerald-200">
-                Report saved and emailed. Check your email within 2 minutes.
-              </div>
-            ) : (
-              <Button type="submit" disabled={status === "submitting"} className="px-6 py-3.5">
-                {status === "submitting" ? (
-                  <span className="inline-flex items-center gap-2">
-                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-950/20 border-t-slate-950" />
-                    Generating your report...
-                  </span>
-                ) : (
-                  "Send My Full Report"
-                )}
-              </Button>
-            )}
+            <Button type="submit" disabled={status === "submitting"} className="px-6 py-3.5">
+              {status === "submitting" ? (
+                <span className="inline-flex items-center gap-2">
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-950/20 border-t-slate-950" />
+                  Generating your report...
+                </span>
+              ) : (
+                "Send My Full Report"
+              )}
+            </Button>
           </div>
 
           <div
@@ -376,9 +398,7 @@ export function LeadCaptureForm({
           >
             <p
               className={`text-sm font-medium ${
-                status === "success"
-                  ? "text-emerald-300"
-                  : status === "error"
+                status === "error"
                     ? "text-rose-300"
                     : "text-slate-300"
               }`}
@@ -419,9 +439,7 @@ export function LeadCaptureForm({
 
             <div
               className={`mt-6 rounded-[1.5rem] border px-5 py-5 shadow-[0_18px_50px_rgba(2,8,20,0.25)] transition-all duration-500 ${
-                status === "success"
-                  ? "border-emerald-300/20 bg-emerald-300/10"
-                  : status === "submitting"
+                status === "submitting"
                     ? "border-cyan-300/16 bg-slate-950/42"
                     : "border-cyan-300/10 bg-slate-950/35"
               }`}
@@ -430,18 +448,12 @@ export function LeadCaptureForm({
                 Report status
               </p>
               <p className="mt-3 text-lg font-semibold tracking-tight text-white">
-                {status === "success"
-                  ? "Report ready"
-                  : status === "submitting"
+                {status === "submitting"
                     ? "Generating report"
                     : "Your AI solar report is being generated"}
               </p>
               <p className="mt-2 text-sm leading-6 text-slate-300">
-                {status === "success"
-                  ? `Lead saved and PDF email queued. Estimated savings: ${formatMoney(
-                      successSavings ?? 0
-                    )}`
-                  : status === "submitting"
+                {status === "submitting"
                     ? "Saving the homeowner details and preparing the PDF email."
                     : "Once the lead is submitted, the report status will switch here automatically."}
               </p>
@@ -451,19 +463,6 @@ export function LeadCaptureForm({
         </div>
       </div>
 
-      {savedLead ? (
-        <SolarReportGenerator
-          key={savedLead.id}
-          leadId={savedLead.id}
-          reportUrl={savedLead.reportUrl}
-          name={savedLead.name}
-          email={savedLead.email}
-          address={savedLead.address}
-          monthlyBill={savedLead.monthlyBill}
-          analysis={analysis}
-          onEmailStatusChange={handleEmailStatusChange}
-        />
-      ) : null}
     </div>
   );
 }

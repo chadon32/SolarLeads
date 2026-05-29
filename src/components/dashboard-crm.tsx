@@ -2,6 +2,7 @@
 
 import {
   startTransition,
+  type MouseEvent,
   type ReactNode,
   useDeferredValue,
   useMemo,
@@ -24,6 +25,7 @@ import {
   UserRound,
   Workflow,
 } from "lucide-react";
+import { formatDisplayAddress } from "@/lib/address-format";
 
 export type DashboardLeadStatus =
   | "new"
@@ -86,6 +88,9 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
   const [sortMode, setSortMode] = useState<SortMode>("date-desc");
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(
     leads[0]?.id ?? null
+  );
+  const [pdfUnavailableIds, setPdfUnavailableIds] = useState<Set<string>>(
+    () => new Set()
   );
 
   const filteredLeads = useMemo(() => {
@@ -154,6 +159,29 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
   );
 
   const selectedFollowUpStatus = getFollowUpSummary(selectedFollowUps);
+  const handlePdfClick = async (
+    event: MouseEvent<HTMLAnchorElement>,
+    lead: DashboardCrmLead
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    try {
+      const response = await fetch(lead.reportUrl, { cache: "no-store" });
+
+      if (!response.ok) {
+        setPdfUnavailableIds((current) => new Set(current).add(lead.id));
+        return;
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank", "noopener,noreferrer");
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch {
+      setPdfUnavailableIds((current) => new Set(current).add(lead.id));
+    }
+  };
 
   return (
     <main className="relative min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(25,72,108,0.3),_transparent_36%),radial-gradient(circle_at_80%_20%,_rgba(0,182,255,0.16),_transparent_26%),linear-gradient(180deg,#05070d_0%,#07111d_36%,#0b1625_68%,#06070b_100%)] text-slate-100">
@@ -324,7 +352,7 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
                             </td>
                             <td className="max-w-[280px] px-4 py-3">
                               <p className="truncate text-slate-300">
-                                {lead.address}
+                                {formatDisplayAddress(lead.address)}
                               </p>
                             </td>
                             <td className="px-4 py-3 text-slate-300">
@@ -352,16 +380,22 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
                                   <Eye className="h-3.5 w-3.5" />
                                   View
                                 </button>
-                                <a
-                                  href={lead.reportUrl}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  onClick={(event) => event.stopPropagation()}
-                                  className="inline-flex h-8 items-center gap-1.5 rounded-full border border-cyan-300/20 bg-cyan-300/12 px-3 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-300/20"
-                                >
-                                  <Download className="h-3.5 w-3.5" />
-                                  PDF
-                                </a>
+                                {pdfUnavailableIds.has(lead.id) ? (
+                                  <span className="inline-flex h-8 items-center gap-1.5 rounded-full border border-rose-300/20 bg-rose-300/10 px-3 text-xs font-semibold text-rose-200">
+                                    PDF unavailable
+                                  </span>
+                                ) : (
+                                  <a
+                                    href={lead.reportUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    onClick={(event) => handlePdfClick(event, lead)}
+                                    className="inline-flex h-8 items-center gap-1.5 rounded-full border border-cyan-300/20 bg-cyan-300/12 px-3 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-300/20"
+                                  >
+                                    <Download className="h-3.5 w-3.5" />
+                                    PDF
+                                  </a>
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -377,10 +411,12 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
           </div>
 
           <LeadDetailPanel
-            lead={selectedLead}
-            followUps={selectedFollowUps}
-            followUpSummary={selectedFollowUpStatus}
-          />
+          lead={selectedLead}
+          followUps={selectedFollowUps}
+          followUpSummary={selectedFollowUpStatus}
+          onPdfClick={handlePdfClick}
+          pdfUnavailable={selectedLead ? pdfUnavailableIds.has(selectedLead.id) : false}
+        />
         </section>
       </section>
     </main>
@@ -420,10 +456,14 @@ function LeadDetailPanel({
   lead,
   followUps,
   followUpSummary,
+  onPdfClick,
+  pdfUnavailable,
 }: {
   lead: DashboardCrmLead | null;
   followUps: DashboardCrmFollowUp[];
   followUpSummary: string;
+  onPdfClick: (event: MouseEvent<HTMLAnchorElement>, lead: DashboardCrmLead) => void;
+  pdfUnavailable: boolean;
 }) {
   if (!lead) {
     return (
@@ -452,13 +492,17 @@ function LeadDetailPanel({
 
       <div className="mt-4 flex flex-wrap gap-2">
         <StatusBadge status={lead.status} />
-        <span className="rounded-full border border-emerald-300/20 bg-emerald-300/10 px-3 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.22em] text-emerald-200">
-          PDF ready
+        <span className={`rounded-full border px-3 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.22em] ${
+          pdfUnavailable
+            ? "border-rose-300/20 bg-rose-300/10 text-rose-200"
+            : "border-emerald-300/20 bg-emerald-300/10 text-emerald-200"
+        }`}>
+          {pdfUnavailable ? "PDF unavailable" : "PDF ready"}
         </span>
       </div>
 
       <div className="mt-5 grid gap-2.5 text-sm">
-        <InfoLine icon={<MapPin className="h-4 w-4" />} label="Address" value={lead.address} />
+        <InfoLine icon={<MapPin className="h-4 w-4" />} label="Address" value={formatDisplayAddress(lead.address)} />
         <InfoLine icon={<Phone className="h-4 w-4" />} label="Phone" value={lead.phone} />
         <InfoLine icon={<Mail className="h-4 w-4" />} label="Email" value={lead.email} />
       </div>
@@ -483,24 +527,34 @@ function LeadDetailPanel({
       </div>
 
       <div className="mt-5 grid gap-2">
-        <a
-          href={lead.reportUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex items-center justify-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/14 px-4 py-3 text-sm font-semibold text-cyan-50 transition hover:bg-cyan-300/22"
-        >
-          <Download className="h-4 w-4" />
-          Download PDF
-        </a>
-        <a
-          href={lead.reportUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex items-center justify-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-slate-100 transition hover:border-cyan-200/25 hover:bg-cyan-200/10"
-        >
-          <Eye className="h-4 w-4" />
-          Open Report
-        </a>
+        {pdfUnavailable ? (
+          <div className="rounded-[1rem] border border-rose-300/20 bg-rose-300/10 px-4 py-3 text-center text-sm font-semibold text-rose-200">
+            PDF unavailable
+          </div>
+        ) : (
+          <>
+            <a
+              href={lead.reportUrl}
+              target="_blank"
+              rel="noreferrer"
+              onClick={(event) => onPdfClick(event, lead)}
+              className="inline-flex items-center justify-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/14 px-4 py-3 text-sm font-semibold text-cyan-50 transition hover:bg-cyan-300/22"
+            >
+              <Download className="h-4 w-4" />
+              Download PDF
+            </a>
+            <a
+              href={lead.reportUrl}
+              target="_blank"
+              rel="noreferrer"
+              onClick={(event) => onPdfClick(event, lead)}
+              className="inline-flex items-center justify-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-slate-100 transition hover:border-cyan-200/25 hover:bg-cyan-200/10"
+            >
+              <Eye className="h-4 w-4" />
+              Open Report
+            </a>
+          </>
+        )}
         <div className="grid grid-cols-2 gap-2">
           <button
             type="button"
@@ -663,16 +717,8 @@ function FollowUpEmptyState() {
         No follow-ups scheduled yet
       </h4>
       <p className="mt-2 text-xs leading-5 text-slate-400">
-        Create your first follow-up workflow to keep this homeowner warm.
+        This lead has no queued email or SMS steps.
       </p>
-      <button
-        type="button"
-        disabled
-        title="Workflow creation is not connected yet."
-        className="mt-3 rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-semibold text-slate-500"
-      >
-        Create Workflow
-      </button>
     </div>
   );
 }

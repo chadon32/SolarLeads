@@ -23,7 +23,9 @@ type SolarReportDashboardProps = {
   address: string;
   analysis: RoofAnalysis;
   activePanelCount?: number;
+  monthlyBill?: number;
   onActivePanelCountChange?: (panelCount: number) => void;
+  onMonthlyBillChange?: (monthlyBill: number) => void;
 };
 
 type DetailTab = "overview" | "savings" | "environment" | "financing" | "next";
@@ -53,15 +55,21 @@ export function SolarReportDashboard({
   activePanelCount,
   address,
   analysis,
+  monthlyBill: externalMonthlyBill = 200,
   onActivePanelCountChange,
+  onMonthlyBillChange,
 }: SolarReportDashboardProps) {
-  const [monthlyBill, setMonthlyBill] = useState(300);
+  const monthlyBill = externalMonthlyBill;
   const [activeTab, setActiveTab] = useState<DetailTab>("overview");
   const [financingMode, setFinancingMode] = useState<FinancingMode>("loan");
   const values = useMemo(
     () => buildDashboardValues(analysis, monthlyBill, financingMode, activePanelCount),
     [activePanelCount, analysis, financingMode, monthlyBill]
   );
+
+  const updateMonthlyBill = (value: number) => {
+    onMonthlyBillChange?.(value);
+  };
 
   return (
     <>
@@ -98,7 +106,7 @@ export function SolarReportDashboard({
             icon={Grid3X3}
             label="Solar area"
             source="solar-api"
-            value={`${formatNumber(values.usableAreaSqFt)} ft²`}
+            value={`${formatNumber(values.usableAreaSqFt)} sq ft`}
           />
           <KeyMetric
             icon={TrendingUp}
@@ -157,7 +165,7 @@ export function SolarReportDashboard({
           </p>
           <select
             value={monthlyBill}
-            onChange={(event) => setMonthlyBill(Number(event.target.value))}
+            onChange={(event) => updateMonthlyBill(Number(event.target.value))}
             className="mt-4 w-full rounded-full border border-white/12 bg-black/35 px-4 py-3 text-base font-semibold text-white outline-none transition focus:border-cyan-200/50"
           >
             {monthlyBillOptions.map((value) => (
@@ -167,7 +175,7 @@ export function SolarReportDashboard({
             ))}
           </select>
           <div className="mt-4 grid grid-cols-2 gap-3">
-            <MiniReadout label="Panel footprint" source="solar-api" value={`${formatNumber(values.installationSqFt)} ft²`} />
+            <MiniReadout label="Panel footprint" source="solar-api" value={`${formatNumber(values.installationSqFt)} sq ft`} />
             <MiniReadout label="Annual savings" source="user-adjusted" value={formatMoney(values.annualSavings)} />
           </div>
         </section>
@@ -613,7 +621,10 @@ function buildDashboardValues(
   const panelCount = Math.round(
     clamp(activePanelCount || maxPanelCount, 1, maxPanelCount)
   );
-  const metrics = buildSolarMetrics(analysis, { selectedPanelCount: panelCount });
+  const metrics = buildSolarMetrics(analysis, {
+    monthlyBill,
+    selectedPanelCount: panelCount,
+  });
   const usableAreaSqFt = Math.round(metrics.usableRoofAreaM2 * 10.7639);
   const rejectedPanelCandidateCount = metrics.rejectedCandidateCount;
   const annualKwh = metrics.annualKwh;

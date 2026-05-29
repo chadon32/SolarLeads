@@ -11,9 +11,16 @@ import { getSupabaseAdminClient } from "@/lib/supabase-admin";
 import { buildReportPdfPath } from "@/lib/report-access";
 
 export const metadata: Metadata = {
-  title: "Homeowner Dashboard",
+  title: {
+    absolute: "Lead Dashboard | Arizona Solar AI",
+  },
   description:
-    "Saved leads, solar report history, downloadable PDFs, and follow-up status for Arizona homeowners.",
+    "Manage solar leads, download reports, and track follow-up pipeline.",
+  openGraph: {
+    title: "Lead Dashboard | Arizona Solar AI",
+    description:
+      "Manage solar leads, download reports, and track follow-up pipeline.",
+  },
 };
 
 export const dynamic = "force-dynamic";
@@ -30,6 +37,7 @@ type DashboardLead = {
   system_size_kw?: number | null;
   annual_savings?: number | null;
   annual_energy_kwh?: number | null;
+  roi_years?: number | null;
   created_at: string;
 };
 
@@ -56,7 +64,7 @@ export default async function DashboardPage({
 
   const supabase = getSupabaseAdminClient();
   const extendedLeadSelect =
-    "id, name, email, phone, address, monthly_bill, estimated_savings, panel_count, system_size_kw, annual_savings, annual_energy_kwh, created_at";
+    "id, name, email, phone, address, monthly_bill, estimated_savings, panel_count, system_size_kw, annual_savings, annual_energy_kwh, roi_years, created_at";
   const baseLeadSelect =
     "id, name, email, phone, address, monthly_bill, estimated_savings, created_at";
 
@@ -155,7 +163,7 @@ export default async function DashboardPage({
       createdAt: lead.created_at,
       annualSavings: report.annualSavings,
       co2OffsetLbs: report.annualImpactLbs,
-      estimatedRoiYears: report.estimatedRoiYears,
+      estimatedRoiYears: Number(lead.roi_years ?? report.estimatedRoiYears),
       panelCount: report.panelCount,
       systemSizeKw,
       reportUrl: buildReportPdfPath(lead.id),

@@ -3,7 +3,6 @@
 import {
   ArrowRight,
   FileText,
-  Phone,
   ShieldCheck,
   Sparkles,
   Star,
@@ -14,6 +13,7 @@ import { AnalysisSequence } from "@/components/analysis-sequence";
 import { LeadCaptureForm } from "@/components/lead-capture-form";
 import { SolarAnalysis } from "@/components/solar-analysis";
 import { SolarReportDashboard } from "@/components/solar-report-dashboard";
+import { formatDisplayAddress } from "@/lib/address-format";
 import type { RoofAnalysis } from "@/lib/roof-analysis";
 
 const VIDEO_SRC =
@@ -52,13 +52,11 @@ const testimonials = [
   },
 ] as const;
 
-const BUSINESS_PHONE = "(602) 555-0100";
-const BUSINESS_PHONE_HREF = "tel:+16025550100";
-
 export function HomeClient() {
   const [selectedAddress, setSelectedAddress] = useState("");
   const [solarData, setSolarData] = useState<RoofAnalysis | null>(null);
   const [activePanelCount, setActivePanelCount] = useState(0);
+  const [monthlyBill, setMonthlyBill] = useState(200);
   const [selectedLocation, setSelectedLocation] = useState<{
     address: string;
     lat: number;
@@ -153,13 +151,6 @@ export function HomeClient() {
 
           <div className="flex shrink-0 items-center gap-2">
             <a
-              href={BUSINESS_PHONE_HREF}
-              className="liquid-glass hidden items-center gap-2 rounded-full px-4 py-3 text-sm font-semibold text-white/90 transition hover:-translate-y-0.5 hover:text-white sm:inline-flex"
-            >
-              <Phone className="h-4 w-4" aria-hidden="true" />
-              Call {BUSINESS_PHONE}
-            </a>
-            <a
               href={hasValidAnalysis ? "#contact" : "#address-estimate"}
               className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-3 text-sm font-semibold text-slate-950 shadow-[0_18px_55px_rgba(255,255,255,0.18)] transition hover:-translate-y-0.5 hover:bg-cyan-100 sm:px-5"
             >
@@ -180,7 +171,7 @@ export function HomeClient() {
                     {hasValidAnalysis ? "Report model ready" : "Generating roof model"}
                   </p>
                   <h1 className="mt-2 truncate text-xl font-semibold text-white md:text-2xl">
-                    {selectedAddress}
+                    {formatDisplayAddress(selectedAddress)}
                   </h1>
                   <p className="mt-1 text-sm text-white/58">
                     {hasValidAnalysis
@@ -247,12 +238,33 @@ export function HomeClient() {
                   );
                 }}
               />
+              <label className="mt-4 block rounded-[1.35rem] border border-white/10 bg-black/18 px-4 py-3 text-left">
+                <span className="block text-[0.62rem] font-semibold uppercase tracking-[0.26em] text-cyan-100/78">
+                  Monthly electric bill
+                </span>
+                <span className="mt-2 flex items-center gap-3">
+                  <span className="text-sm font-semibold text-white/70">$</span>
+                  <input
+                    type="number"
+                    min={1}
+                    value={monthlyBill}
+                    onChange={(event) =>
+                      setMonthlyBill(Math.max(1, Number(event.target.value) || 1))
+                    }
+                    className="min-w-0 flex-1 bg-transparent text-lg font-semibold text-white outline-none placeholder:text-white/35"
+                    inputMode="decimal"
+                  />
+                </span>
+                <span className="mt-1 block text-xs leading-5 text-white/45">
+                  Used to tune savings estimates to your actual bill.
+                </span>
+              </label>
               {selectedAddress ? (
                 <>
                   <div className="liquid-glass mt-4 rounded-[1.35rem] px-4 py-3 text-sm text-white/72">
                     Selected property:{" "}
                     <span className="font-semibold text-white">
-                      {selectedAddress}
+                      {formatDisplayAddress(selectedAddress)}
                     </span>
                   </div>
                   {hasValidAnalysis ? null : (
@@ -271,13 +283,6 @@ export function HomeClient() {
               >
                 <FileText className="h-4 w-4" aria-hidden="true" />
                 Generate Free Report
-              </a>
-              <a
-                href={BUSINESS_PHONE_HREF}
-                className="liquid-glass inline-flex w-full items-center justify-center gap-2 rounded-full px-6 py-4 text-sm font-semibold text-white/88 transition hover:-translate-y-0.5 hover:text-white sm:w-auto"
-              >
-                <Phone className="h-4 w-4" aria-hidden="true" />
-                Call {BUSINESS_PHONE}
               </a>
             </div>
 
@@ -311,7 +316,7 @@ export function HomeClient() {
                 Roof analysis workspace
               </h2>
               <p className="mt-2 max-w-3xl text-sm leading-6 text-white/60">
-                {selectedAddress}
+                {formatDisplayAddress(selectedAddress)}
               </p>
             </div>
             {hasValidAnalysis ? (
@@ -332,6 +337,7 @@ export function HomeClient() {
                   address={selectedAddress}
                   compact
                   location={selectedLocation}
+                  monthlyBill={monthlyBill}
                   onAnalysisChange={setSolarData}
                   activePanelCount={activePanelCount || null}
                   onActivePanelCountChange={setActivePanelCount}
@@ -343,7 +349,9 @@ export function HomeClient() {
                 address={selectedAddress}
                 analysis={roofAnalysis}
                 activePanelCount={activePanelCount}
+                monthlyBill={monthlyBill}
                 onActivePanelCountChange={setActivePanelCount}
+                onMonthlyBillChange={setMonthlyBill}
               />
             ) : null}
           </div>
@@ -365,6 +373,7 @@ export function HomeClient() {
               initialAddress={selectedAddress}
               analysis={solarData}
               activePanelCount={activePanelCount}
+              initialMonthlyBill={monthlyBill}
               lat={selectedLocation?.lat}
               lng={selectedLocation?.lng}
             />

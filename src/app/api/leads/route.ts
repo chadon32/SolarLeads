@@ -67,6 +67,10 @@ export async function POST(request: Request) {
       Number.isFinite(annualSavingsOverride) && annualSavingsOverride > 0
         ? Math.round(annualSavingsOverride)
         : null;
+    const roiYears =
+      Number.isFinite(panelCount) && panelCount > 0 && estimatedSavings
+        ? Number(((panelCount * 400 * 2.75) / estimatedSavings).toFixed(1))
+        : null;
 
     if (
       !name ||
@@ -110,12 +114,20 @@ export async function POST(request: Request) {
       annual_savings: toNullableNumber(body.annualSavings),
       monthly_savings: toNullableNumber(body.monthlySavings),
       annual_energy_kwh: toNullableNumber(body.annualEnergyKwh),
+      roi_years: roiYears,
       roof_area_m2: toNullableNumber(body.roofAreaSqm),
       usable_area_m2: toNullableNumber(body.usableAreaSqm),
       roof_pitch_deg: toNullableNumber(body.roofPitchDegrees),
       lat: toNullableNumber(body.lat),
       lng: toNullableNumber(body.lng),
     };
+
+    console.info("[lead-insert]", {
+      address,
+      annualSavings: estimatedSavings,
+      panelCount,
+      roiYears,
+    });
 
     let insertResult = await supabase
       .from("leads")

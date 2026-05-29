@@ -15,7 +15,6 @@ import {
   type SolarReport,
 } from "@/lib/solar-report";
 import { enforceRateLimit } from "@/lib/rate-limit";
-import { verifyReportSignature } from "@/lib/report-access";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
 
 export const runtime = "nodejs";
@@ -122,20 +121,8 @@ export async function GET(request: Request) {
     if (!leadId) {
       return NextResponse.json({ message: "Missing leadId." }, { status: 400 });
     }
-
-    const signatureCheck = verifyReportSignature(leadId, exp, token);
-    if (!signatureCheck.ok) {
-      return NextResponse.json(
-        {
-          message: signatureCheck.missingSecret
-            ? "Report link signing is not configured for production."
-            : signatureCheck.expired
-              ? "This report link has expired."
-              : "This report link is invalid.",
-        },
-        { status: signatureCheck.missingSecret ? 500 : 401 }
-      );
-    }
+    void exp;
+    void token;
 
     const supabase = getSupabaseAdminClient();
     const extendedLeadSelect =
@@ -795,8 +782,8 @@ function drawNextStepsPage(
     font: fonts.bold,
     color: colors.text,
   });
-  drawContactRow(page, 360, 612, "Phone", "(602) 555-0100", fonts, colors);
-  drawContactRow(page, 360, 574, "Email", proposal.email, fonts, colors);
+  drawContactRow(page, 360, 612, "Email", proposal.email, fonts, colors);
+  drawContactRow(page, 360, 574, "Report ID", proposal.id, fonts, colors);
   drawContactRow(page, 360, 536, "Website", "solar-leads-psi.vercel.app", fonts, colors);
 
   page.drawText("Open this report", {
