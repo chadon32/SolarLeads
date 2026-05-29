@@ -1,15 +1,10 @@
 import type { Metadata } from "next";
-import { FollowUpTimeline } from "@/components/follow-up-timeline";
 import { Button, ButtonLink } from "@/components/ui/button";
-import { buildSolarReportFromSolarValues } from "@/lib/solar-report";
-import { getSupabaseAdminClient } from "@/lib/supabase-admin";
-import type { FollowUpStep } from "@/lib/follow-ups";
-import { buildReportPdfPath } from "@/lib/report-access";
 
 export const metadata: Metadata = {
   title: "Homeowner Dashboard",
   description:
-    "Saved leads, solar report history, downloadable PDFs, and follow-up status for Arizona homeowners.",
+    "Operational status for Arizona Solar AI report delivery, privacy mode, and deployment configuration.",
 };
 
 export const dynamic = "force-dynamic";
@@ -30,67 +25,64 @@ export default async function DashboardPage({
     return <DashboardAccessGate />;
   }
 
-  const supabase = getSupabaseAdminClient();
+  const reportEmailReady = Boolean(
+    process.env.RESEND_API_KEY?.trim() && process.env.RESEND_FROM_EMAIL?.trim()
+  );
+  const mapsReady = Boolean(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY?.trim());
+  const solarReady = Boolean(
+    process.env.GOOGLE_SOLAR_API_KEY?.trim() ||
+      process.env.NEXT_PUBLIC_GOOGLE_SOLAR_API_KEY?.trim()
+  );
+  const supabaseConfigured = Boolean(
+    process.env.SUPABASE_URL?.trim() && process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()
+  );
 
-  const { data: leads, error: leadsError } = await supabase
-    .from("leads")
-    .select(
-      "id, name, email, phone, address, monthly_bill, estimated_savings, panel_count, system_size_kw, annual_savings, annual_energy_kwh, created_at"
-    )
-    .order("created_at", { ascending: false })
-    .limit(10);
-
-  if (leadsError) {
-    return (
-      <main className="relative min-h-screen bg-[radial-gradient(circle_at_top,_rgba(25,72,108,0.3),_transparent_36%),linear-gradient(180deg,#05070d_0%,#07111d_68%,#06070b_100%)] px-6 py-10 text-slate-100 md:px-10 lg:px-12">
-        <div className="mx-auto max-w-4xl rounded-[2rem] border border-white/10 bg-white/5 p-6 backdrop-blur-xl">
-          <p className="text-xs font-semibold uppercase tracking-[0.34em] text-cyan-300">
-            Homeowner dashboard
-          </p>
-          <h1 className="mt-3 text-3xl font-semibold tracking-tight text-white">
-            Dashboard data is not ready yet.
-          </h1>
-          <p className="mt-3 text-sm leading-7 text-slate-300">
-            Make sure `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and the Supabase
-            SQL files for `leads`, `lead_followups`, and `request_events` are all
-            configured in the same project, then refresh this page.
-          </p>
-          <p className="mt-3 rounded-[1.1rem] border border-white/10 bg-slate-950/40 px-4 py-3 text-xs leading-6 text-slate-300">
-            If Vercel is pointed at the wrong Supabase project, or the `leads`
-            table was not created there, this page will show the setup warning
-            instead of the data view.
-          </p>
-        </div>
-      </main>
-    );
-  }
-
-  const { data: followUps, error: followUpsError } = await supabase
-    .from("lead_followups")
-    .select(
-      "id, lead_id, step_order, channel, title, body, scheduled_for, status, attempts, processed_at, delivery_message"
-    )
-    .order("scheduled_for", { ascending: false })
-    .limit(30);
-
-  const leadList = leads ?? [];
-  const followUpList = followUpsError ? [] : followUps ?? [];
-  const totalLeads = leadList.length;
-  const totalSavings = leadList.reduce((sum, lead) => sum + (lead.estimated_savings || 0), 0);
-  const averageSavings = totalLeads ? Math.round(totalSavings / totalLeads) : 0;
-  const queuedFollowUps = followUpList.filter((item) => item.status === "queued").length;
-
-  const followUpSteps: FollowUpStep[] = followUpList.map((item) => ({
-    stepOrder: item.step_order,
-    channel: item.channel,
-    title: item.title,
-    message: item.body,
-    scheduledFor: item.scheduled_for,
-    status: item.status as FollowUpStep["status"],
-    attempts: item.attempts ?? 0,
-    processedAt: item.processed_at ?? null,
-    deliveryMessage: item.delivery_message ?? null,
-  }));
+  const checks = [
+    {
+      label: "PDF email delivery",
+      status: reportEmailReady ? "Ready" : "Needs Resend env",
+      tone: reportEmailReady ? "good" : "warn",
+      detail: reportEmailReady
+        ? "Reports are generated as PDF attachments and sent through Resend."
+        : "Set RESEND_API_KEY and RESEND_FROM_EMAIL in Vercel to send report PDFs.",
+    },
+    {
+      label: "Lead storage",
+      status: "Off",
+      tone: "good",
+      detail:
+        "The public report flow does not save homeowner leads to Supabase by design.",
+    },
+    {
+      label: "Google Maps",
+      status: mapsReady ? "Ready" : "Missing key",
+      tone: mapsReady ? "good" : "warn",
+      detail: mapsReady
+        ? "Address search and rooftop map rendering can use the browser Maps key."
+        : "Set NEXT_PUBLIC_GOOGLE_MAPS_API_KEY for address and map functionality.",
+    },
+    {
+      label: "Google Solar API",
+      status: solarReady ? "Ready" : "Missing key",
+      tone: solarReady ? "good" : "warn",
+      detail: solarReady
+        ? "Roof model, sunlight, and panel candidate data can be requested."
+        : "Set GOOGLE_SOLAR_API_KEY for production Solar API calls.",
+    },
+    {
+      label: "Supabase utilities",
+      status: supabaseConfigured ? "Available" : "Optional",
+      tone: "neutral",
+      detail: supabaseConfigured
+        ? "Supabase can still support caching, rate limits, or legacy admin tools."
+        : "Supabase lead tables are no longer required for the public report flow.",
+    },
+  ] satisfies Array<{
+    detail: string;
+    label: string;
+    status: string;
+    tone: "good" | "neutral" | "warn";
+  }>;
 
   return (
     <main className="relative min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(25,72,108,0.3),_transparent_36%),radial-gradient(circle_at_80%_20%,_rgba(0,182,255,0.16),_transparent_26%),linear-gradient(180deg,#05070d_0%,#07111d_36%,#0b1625_68%,#06070b_100%)] text-slate-100">
@@ -101,11 +93,11 @@ export default async function DashboardPage({
               Homeowner dashboard
             </p>
             <h1 className="mt-3 max-w-2xl text-balance text-3xl font-semibold tracking-tight text-white sm:text-4xl">
-              Lead history, report PDFs, and follow-up status.
+              Report delivery and privacy status.
             </h1>
             <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-300">
-              This is the saved homeowner view for recent solar inquiries. Each row can
-              download the report PDF and shows the modeled savings behind the lead.
+              The site now sends PDF reports by email without storing homeowner
+              leads. This dashboard shows whether the production services are ready.
             </p>
           </div>
           <ButtonLink href="/" variant="secondary" className="px-5 py-3 text-sm">
@@ -114,102 +106,73 @@ export default async function DashboardPage({
         </header>
 
         <dl className="grid gap-4 sm:grid-cols-3">
-          <StatCard label="Recent leads" value={totalLeads.toString()} helper="Last 10 saved homeowner leads." />
-          <StatCard label="Avg. savings" value={formatMoney(averageSavings)} helper="Average modeled annual savings." />
-          <StatCard label="Queued follow-ups" value={queuedFollowUps.toString()} helper="Email and SMS sequence records." />
+          <StatCard
+            label="Lead records"
+            value="0"
+            helper="No public submissions are saved as leads."
+          />
+          <StatCard
+            label="Report mode"
+            value="PDF email"
+            helper="Reports are sent as attachments."
+          />
+          <StatCard
+            label="Privacy mode"
+            value="On"
+            helper="Email is used for delivery only."
+          />
         </dl>
 
-        <section className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+        <section className="grid gap-6 lg:grid-cols-[1fr_0.9fr]">
           <div className="glass-panel rounded-[2rem] p-6">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.34em] text-cyan-300">
-                  Lead archive
+                  Deployment checks
                 </p>
                 <h2 className="mt-2 max-w-xl text-balance text-2xl font-semibold tracking-tight text-white">
-                  Recent homeowner reports.
+                  Production readiness for report delivery.
                 </h2>
               </div>
-              <span className="inline-flex self-start rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.3em] text-slate-300">
-                PDF ready
+              <span className="inline-flex self-start rounded-full border border-emerald-300/20 bg-emerald-300/10 px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.3em] text-emerald-200">
+                No lead storage
               </span>
             </div>
 
             <div className="mt-6 grid gap-4">
-              {leadList.map((lead) => {
-                const report = buildSolarReportFromSolarValues({
-                  annualSavings: Number(lead.annual_savings ?? lead.estimated_savings ?? 0),
-                  annualKwh: Number(lead.annual_energy_kwh ?? 0),
-                  panelCount: Number(lead.panel_count ?? 0),
-                  systemKw: Number(lead.system_size_kw ?? 0),
-                  monthlyBill: Number(lead.monthly_bill),
-                });
-
-                return (
-                  <article
-                    key={lead.id}
-                    className="rounded-[1.5rem] border border-white/10 bg-slate-950/35 p-4 shadow-[0_18px_50px_rgba(2,8,20,0.25)] sm:p-5"
-                  >
-                    <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-                      <div>
-                        <p className="text-[0.62rem] font-semibold uppercase tracking-[0.34em] text-cyan-300">
-                          {new Date(lead.created_at).toLocaleDateString("en-US")}
-                        </p>
-                        <h3 className="mt-2 text-xl font-semibold tracking-tight text-white">
-                          {lead.name}
-                        </h3>
-                        <p className="mt-2 text-sm leading-6 text-slate-300">
-                          {lead.address}
-                        </p>
-                        <p className="mt-1 text-xs uppercase tracking-[0.28em] text-slate-400">
-                          {lead.email} | {lead.phone}
-                        </p>
-                      </div>
-                      <ButtonLink
-                        href={buildReportPdfPath(lead.id)}
-                        variant="primary"
-                        className="w-full px-5 py-3 text-sm md:w-auto"
-                      >
-                        Download PDF
-                      </ButtonLink>
-                    </div>
-
-                    <div className="mt-5 grid gap-3 sm:grid-cols-3">
-                      <SmallMetric label="Annual savings" value={formatMoney(report.annualSavings)} />
-                      <SmallMetric label="ROI" value={`${report.estimatedRoiYears} years`} />
-                      <SmallMetric label="CO2 offset" value={`${report.annualImpactLbs.toLocaleString()} lbs`} />
-                    </div>
-                  </article>
-                );
-              })}
+              {checks.map((check) => (
+                <StatusRow key={check.label} {...check} />
+              ))}
             </div>
           </div>
 
-          {followUpSteps.length ? (
-            <FollowUpTimeline
-              steps={followUpSteps}
-              title="Follow-up and nurture sequence"
-              subtitle="Each lead now has a lightweight nurture path. The first report is instant, and the rest of the sequence keeps the homeowner warm."
-            />
-          ) : (
-            <div className="glass-panel rounded-[2rem] p-6">
-              <p className="text-xs font-semibold uppercase tracking-[0.34em] text-cyan-300">
-                Lead nurture
-              </p>
-              <h4 className="mt-3 text-2xl font-semibold tracking-tight text-white">
-                Follow-up records are empty for now.
-              </h4>
-              <p className="mt-3 text-sm leading-7 text-slate-300">
-                Run the `supabase/lead_followups.sql` script, submit a lead, and this
-                panel will show the email and SMS sequence.
-              </p>
-              {followUpsError ? (
-                <p className="mt-3 text-xs uppercase tracking-[0.28em] text-slate-400">
-                  Follow-up table not available yet.
-                </p>
-              ) : null}
+          <div className="glass-panel rounded-[2rem] p-6">
+            <p className="text-xs font-semibold uppercase tracking-[0.34em] text-cyan-300">
+              Current workflow
+            </p>
+            <h3 className="mt-3 text-2xl font-semibold tracking-tight text-white">
+              Address in, PDF out.
+            </h3>
+            <div className="mt-6 grid gap-3">
+              {[
+                "Homeowner selects an Arizona address.",
+                "Google Solar API returns the roof model.",
+                "The report dashboard renders on the page.",
+                "The homeowner enters email and monthly bill.",
+                "A PDF is generated and emailed without saving a lead record.",
+              ].map((item, index) => (
+                <div
+                  key={item}
+                  className="flex items-center gap-3 rounded-[1.1rem] border border-white/8 bg-slate-950/32 px-4 py-3 text-sm text-slate-300"
+                >
+                  <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full border border-cyan-200/20 bg-cyan-200/10 text-[0.7rem] font-semibold text-cyan-100">
+                    {index + 1}
+                  </span>
+                  {item}
+                </div>
+              ))}
             </div>
-          )}
+          </div>
         </section>
       </section>
     </main>
@@ -232,8 +195,8 @@ function DashboardAccessGate({
         </h1>
         <p className="mt-3 text-sm leading-7 text-slate-300">
           {configurationMissing
-            ? "Set DASHBOARD_ACCESS_TOKEN in Vercel to protect lead history before using this dashboard in production."
-            : "Enter the dashboard access token to view lead history, PDF links, and follow-up status."}
+            ? "Set DASHBOARD_ACCESS_TOKEN in Vercel before using this dashboard in production."
+            : "Enter the dashboard access token to view report delivery status."}
         </p>
 
         {configurationMissing ? null : (
@@ -276,21 +239,39 @@ function StatCard({
   );
 }
 
-function SmallMetric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-[1.25rem] border border-white/10 bg-white/5 p-4">
-      <p className="text-[0.62rem] font-semibold uppercase tracking-[0.34em] text-cyan-300">
-        {label}
-      </p>
-      <p className="mt-2 text-lg font-semibold tracking-tight text-white">{value}</p>
-    </div>
-  );
-}
+function StatusRow({
+  detail,
+  label,
+  status,
+  tone,
+}: {
+  detail: string;
+  label: string;
+  status: string;
+  tone: "good" | "neutral" | "warn";
+}) {
+  const toneClass =
+    tone === "good"
+      ? "border-emerald-300/20 bg-emerald-300/10 text-emerald-200"
+      : tone === "warn"
+        ? "border-amber-300/20 bg-amber-300/10 text-amber-100"
+        : "border-white/10 bg-white/5 text-slate-200";
 
-function formatMoney(value: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  }).format(value);
+  return (
+    <article className="rounded-[1.5rem] border border-white/10 bg-slate-950/35 p-4 shadow-[0_18px_50px_rgba(2,8,20,0.25)] sm:p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p className="text-[0.62rem] font-semibold uppercase tracking-[0.34em] text-cyan-300">
+            {label}
+          </p>
+          <p className="mt-2 text-sm leading-6 text-slate-300">{detail}</p>
+        </div>
+        <span
+          className={`inline-flex self-start rounded-full border px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.24em] ${toneClass}`}
+        >
+          {status}
+        </span>
+      </div>
+    </article>
+  );
 }
