@@ -330,7 +330,7 @@ function drawDetailPage({
     font: bold,
     color: colors.ink,
   });
-  page.drawText("Financial model and homeowner-ready summary", {
+  page.drawText("Financial model and preliminary homeowner summary", {
     x: 36,
     y: 720,
     size: 10,

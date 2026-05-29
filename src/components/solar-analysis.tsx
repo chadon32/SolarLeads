@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import Image from "next/image";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ButtonLink } from "@/components/ui/button";
 import {
   getRoofAreaM2,
@@ -23,7 +23,9 @@ type SolarAnalysisProps = {
     lat?: number;
     lng?: number;
   } | null;
+  activePanelCount?: number | null;
   onAnalysisChange?: (analysis: RoofAnalysis | null) => void;
+  onActivePanelCountChange?: (panelCount: number) => void;
 };
 
 type SatellitePreviewPayload = {
@@ -190,9 +192,11 @@ const azimuthLabels = [
 
 export function SolarAnalysis({
   address,
+  activePanelCount,
   compact = false,
   location,
   onAnalysisChange,
+  onActivePanelCountChange,
 }: SolarAnalysisProps) {
   const [stage, setStage] = useState<
     "idle" | "resolving" | "fetching" | "analyzing" | "done" | "invalid" | "error"
@@ -207,7 +211,15 @@ export function SolarAnalysis({
   const [notice, setNotice] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string>("");
   const [viewMode, setViewMode] = useState<ViewMode>("overview");
-  const [selectedPanelCount, setSelectedPanelCount] = useState<number>(0);
+  const [internalPanelCount, setInternalPanelCount] = useState<number>(0);
+  const selectedPanelCount = activePanelCount ?? internalPanelCount;
+  const setSelectedPanelCount = useCallback(
+    (nextPanelCount: number) => {
+      setInternalPanelCount(nextPanelCount);
+      onActivePanelCountChange?.(nextPanelCount);
+    },
+    [onActivePanelCountChange]
+  );
 
   useEffect(() => {
     const trimmedAddress = address.trim();
@@ -346,20 +358,21 @@ export function SolarAnalysis({
           return;
         }
 
-        setRoofData(nextRoofData);
+        const panelSyncedRoofData = buildAcceptedPanelAnalysis(nextRoofData);
+        setRoofData(panelSyncedRoofData);
         setSelectedPanelCount(
           Math.max(
             1,
             Math.min(
-              nextRoofData.panelCount,
-              nextRoofData.solarPanels.length || nextRoofData.panelCount
+              getMaxSelectablePanelCount(panelSyncedRoofData),
+              panelSyncedRoofData.solarPanels.length || panelSyncedRoofData.panelCount
             )
           )
         );
-        onAnalysisChange?.(nextRoofData);
+        onAnalysisChange?.(panelSyncedRoofData);
         setStage("done");
         setNotice(
-          nextRoofData.confidence !== "high" ? nextRoofData.confidenceNote : null
+          panelSyncedRoofData.confidence !== "high" ? panelSyncedRoofData.confidenceNote : null
         );
       } catch (error) {
         if (controller.signal.aborted || cancelled) {
@@ -381,17 +394,14 @@ export function SolarAnalysis({
       cancelled = true;
       controller.abort();
     };
-  }, [address, location, onAnalysisChange]);
+  }, [address, location, onAnalysisChange, setSelectedPanelCount]);
 
   const selectedPanels = useMemo(() => {
     if (!roofData) {
       return [];
     }
 
-    const maxSelectablePanels = Math.max(
-      1,
-      Math.min(roofData.panelCount, roofData.solarPanels.length || roofData.panelCount)
-    );
+    const maxSelectablePanels = getMaxSelectablePanelCount(roofData);
     const count = clampNumber(selectedPanelCount || maxSelectablePanels, 1, maxSelectablePanels);
 
     return roofData.solarPanels.slice(0, count);
@@ -415,9 +425,9 @@ export function SolarAnalysis({
         : roofData.pitchDeg;
     const panelCapacityWatts = roofData.panelCapacityWatts || 400;
     const livePanelCount = clampNumber(
-      selectedPanelCount || roofData.panelCount,
+      selectedPanelCount || getMaxSelectablePanelCount(roofData),
       1,
-      Math.max(1, roofData.panelCount)
+      getMaxSelectablePanelCount(roofData)
     );
     const selectedConfig = findNearestPanelConfig(
       roofData.solarPanelConfigs,
@@ -594,16 +604,35 @@ export function SolarAnalysis({
               <div className="mt-3 grid gap-2 sm:grid-cols-3">
                 <CompactMapStat
                   label="Panel layout"
+                  source="Solar API"
                   value={`${metrics.selectedPanelCount} modules`}
                 />
                 <CompactMapStat
                   label="System size"
+                  source="User-adjusted"
                   value={`${metrics.selectedSystemKw.toFixed(1)} kW`}
                 />
                 <CompactMapStat
                   label="Orientation"
+                  source="Solar API"
                   value={metrics.orientationLabel}
                 />
+              </div>
+              <div className="mt-3 rounded-[1rem] border border-white/8 bg-white/[0.035] p-3 text-xs leading-5 text-slate-300">
+                <p>
+                  Panels are placed from available Solar API candidate points and adjusted
+                  for visual spacing, estimated setbacks, and overlap prevention.
+                </p>
+                <p className="mt-2 text-slate-400">
+                  Panels are prioritized on roof planes with stronger sunlight, cleaner
+                  geometry, and fewer placement conflicts.
+                </p>
+                {roofData.rejectedPanelCandidateCount ? (
+                  <p className="mt-2 text-amber-100">
+                    {roofData.rejectedPanelCandidateCount} candidate panels were not placed
+                    due to spacing or setback limits.
+                  </p>
+                ) : null}
               </div>
             </div>
           </article>
@@ -645,10 +674,10 @@ export function SolarAnalysis({
                   Analysis status
                 </p>
                 <h3 className="mt-3 text-2xl font-semibold tracking-tight text-white">
-                  Solar roof model available
+                  Preliminary roof model ready
                 </h3>
                 <p className="mt-3 text-sm leading-7 text-slate-300">
-                  Roof geometry, usable solar area, and financial outputs are tied to the live Google Solar building record returned for this property.
+                  Roof geometry and usable solar area are tied to the Google Solar building record returned for this property. Final design requires installer confirmation.
                 </p>
                 <div className="mt-4 flex flex-wrap gap-2">
                   <Pill label={`${roofData.confidence} confidence`} tone="cyan" />
@@ -675,10 +704,10 @@ export function SolarAnalysis({
                   Next step
                 </p>
                 <h3 className="mt-3 text-xl font-semibold tracking-tight text-white">
-                  Turn this roof model into a proposal.
+                  Turn this preliminary model into a confirmed proposal.
                 </h3>
                 <p className="mt-3 text-sm leading-7 text-slate-300">
-                  Save the verified roof geometry, selected panel count, and modeled economics into a homeowner-ready solar report.
+                  Save the roof geometry, accepted panel count, and modeled economics into a preliminary estimate for installer review.
                 </p>
                 <div className="mt-5 grid gap-3">
                   <ButtonLink href="#contact" variant="primary" className="w-full">
@@ -696,7 +725,7 @@ export function SolarAnalysis({
             <IntelligenceCard
               eyebrow="Site findings"
               title="Rooftop analysis summary"
-              body={`The primary roof plane faces ${metrics.orientationLabel} with ${metrics.selectedPanelCount} selected modules across usable roof surfaces. The current analysis marks ${roofData.usablePctRoof}% of the roof as solar-ready with ${roofData.shadingRisk} shading exposure.`}
+              body={`The primary roof plane faces ${metrics.orientationLabel} with ${metrics.selectedPanelCount} accepted modules across usable roof surfaces. The current model marks ${roofData.usablePctRoof}% of the roof as solar-ready with ${roofData.shadingRisk} shading exposure.`}
             />
             <IntelligenceCard
               eyebrow="Environmental impact"
@@ -733,7 +762,7 @@ function ViewportHeader({
             Rooftop analysis
           </p>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
-            Roof measurements, annual flux, and panel geometry are projected from the current Solar API building model onto the rooftop image.
+            Roof measurements, annual flux, and accepted panel candidates are projected from the current Solar API building model onto the rooftop image.
           </p>
         </div>
         <div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-slate-300">
@@ -922,6 +951,21 @@ function ViewportCanvas({
               roofData,
             }))
       );
+      const setbackOverlay = createSetbackOverlay({
+        googleApi,
+        map: mapRef.current,
+        roofData,
+      });
+      if (setbackOverlay) {
+        nextOverlays.push(setbackOverlay);
+      }
+      nextOverlays.push(
+        ...createObstructionOverlays({
+          googleApi,
+          map: mapRef.current,
+          roofData,
+        })
+      );
       overlayRefs.current = nextOverlays;
 
       if (viewMode === "irradiance") {
@@ -1020,6 +1064,9 @@ function ViewportCanvas({
           </p>
         </div>
       ) : null}
+      {!showMapFallback ? (
+        <MapEvidenceOverlay roofData={roofData} selectedPanelCount={selectedPanelCount} />
+      ) : null}
     </div>
   );
 }
@@ -1065,6 +1112,84 @@ function loadGoogleMapsApi(apiKey: string) {
   }
 
   return browserWindow.__solarMapsPromise;
+}
+
+function MapEvidenceOverlay({
+  roofData,
+  selectedPanelCount,
+}: {
+  roofData: RoofAnalysis;
+  selectedPanelCount: number;
+}) {
+  const placedByPlane = useMemo(
+    () => getPlacedPanelCountsByPlane(roofData, selectedPanelCount),
+    [roofData, selectedPanelCount]
+  );
+  const rejectedCount = Math.max(0, roofData.rejectedPanelCandidateCount ?? 0);
+
+  return (
+    <>
+      <div className="pointer-events-none absolute left-3 top-3 z-10 max-w-[calc(100%-1.5rem)] rounded-[0.95rem] border border-white/12 bg-slate-950/78 px-3 py-2 text-[0.65rem] font-semibold uppercase tracking-[0.18em] text-cyan-100 shadow-[0_10px_28px_rgba(2,8,20,0.24)] backdrop-blur-md">
+        Google Solar API roof model
+      </div>
+      <div className="pointer-events-none absolute bottom-3 left-3 z-10 max-w-[min(22rem,calc(100%-1.5rem))] rounded-[1rem] border border-white/12 bg-slate-950/82 p-3 text-xs text-slate-200 shadow-[0_14px_34px_rgba(2,8,20,0.28)] backdrop-blur-md">
+        <p className="text-[0.58rem] font-semibold uppercase tracking-[0.28em] text-cyan-200">
+          Map legend
+        </p>
+        <div className="mt-2 grid gap-1.5">
+          <LegendItem swatch="bg-blue-500" label="Blue: placed panels" />
+          <LegendItem swatch="border border-cyan-200 bg-cyan-200/10" label="Cyan: roof plane / usable area" />
+          <LegendItem swatch="border border-emerald-200 bg-emerald-200/10" label="Green: estimated setback boundary" />
+          <LegendItem swatch="bg-slate-400/45" label="Gray: unavailable or obstructed area" />
+        </div>
+        <div className="mt-3 grid gap-1 border-t border-white/10 pt-2 text-[0.7rem] leading-5 text-slate-300">
+          {placedByPlane.map((item) => (
+            <div key={item.label} className="flex justify-between gap-3">
+              <span className="capitalize">{item.label} plane</span>
+              <span className="font-semibold text-white">{item.count} panels</span>
+            </div>
+          ))}
+          {rejectedCount > 0 ? (
+            <div className="flex justify-between gap-3 text-amber-100">
+              <span>Not placed</span>
+              <span className="font-semibold">{rejectedCount} candidates</span>
+            </div>
+          ) : null}
+        </div>
+        <p className="mt-3 border-t border-white/10 pt-2 text-[0.68rem] leading-5 text-slate-400">
+          Roof geometry and panel candidates come from Google Solar API. Savings are modeled using Arizona assumptions.
+        </p>
+      </div>
+    </>
+  );
+}
+
+function LegendItem({ swatch, label }: { swatch: string; label: string }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className={`h-2.5 w-2.5 shrink-0 rounded-sm ${swatch}`} />
+      <span>{label}</span>
+    </div>
+  );
+}
+
+function getPlacedPanelCountsByPlane(roofData: RoofAnalysis, selectedPanelCount: number) {
+  const panels = roofData.solarPanels.slice(
+    0,
+    clampNumber(selectedPanelCount, 0, getMaxSelectablePanelCount(roofData))
+  );
+  const counts = panels.reduce<Map<number, number>>((nextCounts, panel) => {
+    nextCounts.set(panel.segmentIndex, (nextCounts.get(panel.segmentIndex) ?? 0) + 1);
+    return nextCounts;
+  }, new Map());
+
+  return roofData.roofSegments
+    .map((segment, index) => ({
+      count: counts.get(index) ?? 0,
+      label: segment.label,
+    }))
+    .filter((item) => item.count > 0)
+    .slice(0, 3);
 }
 
 function clearGoogleOverlays(overlays: GoogleMapOverlayInstance[]) {
@@ -1348,6 +1473,63 @@ function createRoofSegmentOverlays({
     .filter((overlay): overlay is GoogleMapOverlayInstance => Boolean(overlay));
 }
 
+function createSetbackOverlay({
+  googleApi,
+  map,
+  roofData,
+}: {
+  googleApi: GoogleMapsApi;
+  map: GoogleMapInstance;
+  roofData: RoofAnalysis;
+}) {
+  const path = outlineToLatLngPath(googleApi, roofData.usableOutline, roofData.roofBounds);
+
+  if (path.length < 3) {
+    return null;
+  }
+
+  return new googleApi.maps.Polygon({
+    clickable: false,
+    fillOpacity: 0,
+    map,
+    paths: path,
+    strokeColor: "#a7f3d0",
+    strokeOpacity: 0.56,
+    strokeWeight: 1,
+  });
+}
+
+function createObstructionOverlays({
+  googleApi,
+  map,
+  roofData,
+}: {
+  googleApi: GoogleMapsApi;
+  map: GoogleMapInstance;
+  roofData: RoofAnalysis;
+}) {
+  return roofData.obstructionOutlines
+    .map((outline) => {
+      const path = outlineToLatLngPath(googleApi, outline, roofData.roofBounds);
+
+      if (path.length < 3) {
+        return null;
+      }
+
+      return new googleApi.maps.Polygon({
+        clickable: false,
+        fillColor: "#94a3b8",
+        fillOpacity: 0.18,
+        map,
+        paths: path,
+        strokeColor: "#cbd5e1",
+        strokeOpacity: 0.5,
+        strokeWeight: 1,
+      });
+    })
+    .filter((overlay): overlay is GoogleMapOverlayInstance => Boolean(overlay));
+}
+
 function createDsmPlaneOverlays({
   extraction,
   googleApi,
@@ -1391,14 +1573,17 @@ function createPanelMapOverlays({
     selectedPanelCount,
   });
 
-  return panelLayout.map((panel) => {
-      const path = panel.displayPath.map(
+  return panelLayout.map((placement) => {
+      const path = placement.displayPath.map(
         (point) => new googleApi.maps.LatLng(point.lat, point.lng)
       );
+      const segmentTone = placement.panel.segmentIndex % 3;
+      const fillColor =
+        segmentTone === 0 ? "#3b82f6" : segmentTone === 1 ? "#2563eb" : "#60a5fa";
 
       return new googleApi.maps.Polygon({
         clickable: false,
-        fillColor: "#3b82f6",
+        fillColor,
         fillOpacity: 0.7,
         map,
         paths: path,
@@ -1412,6 +1597,7 @@ function createPanelMapOverlays({
 type PanelLayoutPlacement = {
   collisionPathMeters: MeterPoint[];
   displayPath: LatLngPoint[];
+  panel: RoofAnalysis["solarPanels"][number];
 };
 
 type MeterPoint = {
@@ -1488,6 +1674,7 @@ function buildProfessionalPanelLayout({
     placedPanels.push({
       collisionPathMeters,
       displayPath,
+      panel,
     });
 
     if (placedPanels.length >= targetCount) {
@@ -1496,6 +1683,107 @@ function buildProfessionalPanelLayout({
   }
 
   return placedPanels;
+}
+
+function buildAcceptedPanelAnalysis(analysis: RoofAnalysis): RoofAnalysis {
+  const originalPanelCandidateCount = Math.max(
+    analysis.originalPanelCandidateCount ?? 0,
+    analysis.solarPanels.length,
+    analysis.panelCount
+  );
+
+  if (!analysis.validSite || !analysis.solarPanels.length) {
+    return {
+      ...analysis,
+      acceptedPanelCount: analysis.panelCount,
+      originalPanelCandidateCount,
+      rejectedPanelCandidateCount: Math.max(
+        0,
+        originalPanelCandidateCount - analysis.panelCount
+      ),
+    };
+  }
+
+  const acceptedLayout = buildProfessionalPanelLayout({
+    roofData: analysis,
+    selectedPanelCount: analysis.solarPanels.length,
+  });
+  const acceptedPanels = acceptedLayout.map((placement) => placement.panel);
+  const acceptedPanelCount = acceptedPanels.length;
+  const rejectedPanelCandidateCount = Math.max(
+    0,
+    originalPanelCandidateCount - acceptedPanelCount
+  );
+
+  if (!acceptedPanelCount) {
+    return {
+      ...analysis,
+      acceptedPanelCount: 0,
+      annualKwh: 0,
+      annualSavingsUSD: 0,
+      originalPanelCandidateCount,
+      panelCount: 0,
+      rejectedPanelCandidateCount,
+      solarPanels: [],
+      systemKw: 0,
+    };
+  }
+
+  const cappedConfigs = analysis.solarPanelConfigs.filter(
+    (config) => config.panelsCount <= acceptedPanelCount
+  );
+  const selectedConfig = findNearestPanelConfig(
+    cappedConfigs.length ? cappedConfigs : analysis.solarPanelConfigs,
+    acceptedPanelCount
+  );
+  const panelEnergyTotal = acceptedPanels.reduce(
+    (sum, panel) => sum + Math.max(panel.yearlyEnergyDcKwh, 0),
+    0
+  );
+  const annualKwh = Math.max(
+    0,
+    Math.round(
+      selectedConfig?.yearlyEnergyDcKwh ??
+        (panelEnergyTotal > 0
+          ? panelEnergyTotal
+          : (analysis.annualKwh / Math.max(analysis.panelCount, 1)) *
+            acceptedPanelCount)
+    )
+  );
+  const segmentPanelCounts = acceptedPanels.reduce<Map<number, number>>(
+    (counts, panel) => {
+      counts.set(panel.segmentIndex, (counts.get(panel.segmentIndex) ?? 0) + 1);
+      return counts;
+    },
+    new Map()
+  );
+
+  return {
+    ...analysis,
+    acceptedPanelCount,
+    annualKwh,
+    annualSavingsUSD: Math.round(annualKwh * 0.13),
+    originalPanelCandidateCount,
+    panelCount: acceptedPanelCount,
+    rejectedPanelCandidateCount,
+    roofSegments: analysis.roofSegments.map((segment, index) => ({
+      ...segment,
+      panelsFit: segmentPanelCounts.get(index) ?? 0,
+    })),
+    solarPanelConfigs: cappedConfigs.length ? cappedConfigs : analysis.solarPanelConfigs,
+    solarPanels: acceptedPanels,
+    systemKw:
+      Math.round(
+        ((acceptedPanelCount * (analysis.panelCapacityWatts || 400)) / 1000) * 10
+      ) / 10,
+  };
+}
+
+function getMaxSelectablePanelCount(roofData: RoofAnalysis) {
+  return Math.max(
+    1,
+    roofData.solarPanels.length || roofData.acceptedPanelCount || roofData.panelCount
+  );
 }
 
 function getOrderedPanelCandidates(roofData: RoofAnalysis) {
@@ -2411,7 +2699,7 @@ function PanelSelectionSlider({
             Panel selection
           </p>
           <p className="mt-2 text-sm leading-6 text-slate-300">
-            Adjust the active module count against the current roof model and economics.
+            Adjust the accepted module count against the current roof model and economics.
           </p>
         </div>
         <div className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs font-semibold text-white">
@@ -2455,14 +2743,14 @@ function SunroofSummaryCard({
     <div className="overflow-hidden rounded-[1.15rem] border border-black/10 bg-white/95 text-slate-900 shadow-[0_18px_40px_rgba(15,23,42,0.18)] backdrop-blur">
       <div className="border-b border-slate-200 px-4 py-3">
         <p className="text-[0.64rem] font-semibold uppercase tracking-[0.28em] text-slate-500">
-          Property analysis
+          Preliminary property model
         </p>
         <p className="mt-2 line-clamp-2 text-sm leading-5 text-slate-700">{address}</p>
       </div>
 
       <div className="border-b border-slate-200 px-4 py-3 text-sm text-slate-700">
         <div className="flex items-center justify-between gap-3">
-          <span>Solar suitability summary</span>
+        <span>Solar suitability estimate</span>
           <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.18em] text-emerald-700">
             {confidence}/100
           </span>
@@ -2487,7 +2775,7 @@ function SunroofSummaryCard({
           ${twentyYearSavings.toLocaleString()}
         </p>
         <p className="text-sm text-slate-600">
-          Projected 20-year savings using the current panel selection
+          Modeled 20-year savings using the current panel selection
         </p>
       </div>
     </div>
@@ -2541,25 +2829,25 @@ function RoofStatsPanel({
             Roof stats
           </p>
           <p className="mt-2 text-sm leading-6 text-slate-300">
-            Live Solar API measurements and the current panel count.
+            Solar API roof measurements with the current accepted panel count.
           </p>
         </div>
         <div className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.22em] text-slate-300">
-          Live data
+          Solar API
         </div>
       </div>
 
       <div className="mt-4 grid gap-3">
-        <MetricRow label="Roof width" value={`${roofData.widthM.toFixed(1)} m`} />
-        <MetricRow label="Roof depth" value={`${roofData.depthM.toFixed(1)} m`} />
-        <MetricRow label="Gross roof area" value={`${metrics.roofArea.toFixed(1)} m²`} />
-        <MetricRow label="Usable roof area" value={`${metrics.usableArea.toFixed(1)} m²`} />
-        <MetricRow label="Annual sunlight" value={`${metrics.annualSunlightHours.toLocaleString()} hrs`} />
-        <MetricRow label="Average roof pitch" value={`${metrics.averageRoofPitch.toFixed(1)}°`} />
-        <MetricRow label="Primary orientation" value={metrics.orientationLabel} />
-        <MetricRow label="Panel count" value={`${metrics.selectedPanelCount}`} />
-        <MetricRow label="Rooftop score" value={`${roofData.rooftopConfidenceScore}/100`} />
-        <MetricRow label="Estimated payback" value={`${metrics.roiYears.toFixed(1)} yrs`} />
+        <MetricRow label="Roof width" source="Solar API" value={`${roofData.widthM.toFixed(1)} m`} />
+        <MetricRow label="Roof depth" source="Solar API" value={`${roofData.depthM.toFixed(1)} m`} />
+        <MetricRow label="Gross roof area" source="Solar API" value={`${metrics.roofArea.toFixed(1)} m²`} />
+        <MetricRow label="Usable roof area" source="Solar API" value={`${metrics.usableArea.toFixed(1)} m²`} />
+        <MetricRow label="Annual sunlight" source="Solar API" value={`${metrics.annualSunlightHours.toLocaleString()} hrs`} />
+        <MetricRow label="Average roof pitch" source="Solar API" value={`${metrics.averageRoofPitch.toFixed(1)}°`} />
+        <MetricRow label="Primary orientation" source="Solar API" value={metrics.orientationLabel} />
+        <MetricRow label="Panel count" source="Solar API" value={`${metrics.selectedPanelCount}`} />
+        <MetricRow label="Rooftop score" source="Solar API" value={`${roofData.rooftopConfidenceScore}/100`} />
+        <MetricRow label="Estimated payback" source="Modeled" value={`${metrics.roiYears.toFixed(1)} yrs`} />
       </div>
 
       <div className="mt-4 rounded-[1rem] border border-white/8 bg-white/[0.03] p-3">
@@ -2646,6 +2934,9 @@ function findNearestPanelConfig(
 
   return (
     configs.find((config) => config.panelsCount === panelCount) ??
+    configs
+      .filter((config) => config.panelsCount <= panelCount)
+      .at(-1) ??
     configs.reduce((closest, config) =>
       Math.abs(config.panelsCount - panelCount) <
       Math.abs(closest.panelsCount - panelCount)
@@ -2724,21 +3015,49 @@ function AnalysisProgress({ step, pct }: { step: string; pct: number }) {
   );
 }
 
-function MetricRow({ label, value }: { label: string; value: string }) {
+function MetricRow({
+  label,
+  source,
+  value,
+}: {
+  label: string;
+  source?: string;
+  value: string;
+}) {
   return (
     <div className="flex items-center justify-between gap-3 rounded-[1.1rem] border border-white/8 bg-white/[0.03] px-3 py-3 text-sm">
-      <span className="text-slate-400">{label}</span>
+      <span className="flex flex-wrap items-center gap-2 text-slate-400">
+        {label}
+        {source ? (
+          <span className="rounded-full border border-white/10 bg-black/20 px-2 py-0.5 text-[0.52rem] font-semibold uppercase tracking-[0.14em] text-slate-300">
+            {source}
+          </span>
+        ) : null}
+      </span>
       <span className="font-semibold text-white">{value}</span>
     </div>
   );
 }
 
-function CompactMapStat({ label, value }: { label: string; value: string }) {
+function CompactMapStat({
+  label,
+  source,
+  value,
+}: {
+  label: string;
+  source: string;
+  value: string;
+}) {
   return (
     <div className="rounded-[0.9rem] border border-white/8 bg-white/[0.035] px-3 py-2.5">
-      <p className="text-[0.55rem] font-semibold uppercase tracking-[0.22em] text-slate-500">
-        {label}
-      </p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[0.55rem] font-semibold uppercase tracking-[0.22em] text-slate-500">
+          {label}
+        </p>
+        <span className="rounded-full border border-white/10 bg-black/20 px-2 py-0.5 text-[0.5rem] font-semibold uppercase tracking-[0.14em] text-slate-300">
+          {source}
+        </span>
+      </div>
       <p className="mt-1 text-sm font-semibold text-white">{value}</p>
     </div>
   );
@@ -2751,11 +3070,11 @@ function FinancialSnapshot({ metrics }: { metrics: AnalysisMetrics }) {
         Savings model
       </p>
       <div className="mt-4 grid gap-3">
-        <MetricRow label="Estimated system size" value={`${metrics.selectedSystemKw.toFixed(1)} kW`} />
-        <MetricRow label="Monthly savings" value={`$${metrics.monthlySavings.toLocaleString()}`} />
-        <MetricRow label="Yearly savings" value={`$${metrics.selectedAnnualSavingsUSD.toLocaleString()}`} />
-        <MetricRow label="Estimated payback" value={`${metrics.roiYears.toFixed(1)} yrs`} />
-        <MetricRow label="Financing from" value={`$${metrics.financingFrom}/mo`} />
+        <MetricRow label="Estimated system size" source="User-adjusted" value={`${metrics.selectedSystemKw.toFixed(1)} kW`} />
+        <MetricRow label="Monthly savings" source="Modeled" value={`$${metrics.monthlySavings.toLocaleString()}`} />
+        <MetricRow label="Yearly savings" source="Modeled" value={`$${metrics.selectedAnnualSavingsUSD.toLocaleString()}`} />
+        <MetricRow label="Estimated payback" source="Modeled" value={`${metrics.roiYears.toFixed(1)} yrs`} />
+        <MetricRow label="Financing from" source="Illustrative" value={`$${metrics.financingFrom}/mo`} />
       </div>
     </div>
   );

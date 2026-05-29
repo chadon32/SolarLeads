@@ -17,10 +17,13 @@ import { getUsableAreaM2, type RoofAnalysis } from "@/lib/roof-analysis";
 type SolarReportDashboardProps = {
   address: string;
   analysis: RoofAnalysis;
+  activePanelCount?: number;
+  onActivePanelCountChange?: (panelCount: number) => void;
 };
 
 type DetailTab = "overview" | "savings" | "environment" | "financing" | "next";
 type FinancingMode = "buy" | "lease" | "loan";
+type MetricSource = "solar-api" | "modeled" | "user-adjusted" | "illustrative";
 
 const monthlyBillOptions = [100, 150, 200, 250, 300, 350, 400, 450, 500];
 
@@ -28,7 +31,7 @@ const detailTabs: Array<{ id: DetailTab; label: string }> = [
   { id: "overview", label: "Overview" },
   { id: "savings", label: "Savings" },
   { id: "environment", label: "Environmental Impact" },
-  { id: "financing", label: "Financing" },
+  { id: "financing", label: "Financing Assumptions" },
   { id: "next", label: "Next Steps" },
 ];
 
@@ -42,15 +45,17 @@ const financingCopy: Record<FinancingMode, string> = {
 };
 
 export function SolarReportDashboard({
+  activePanelCount,
   address,
   analysis,
+  onActivePanelCountChange,
 }: SolarReportDashboardProps) {
   const [monthlyBill, setMonthlyBill] = useState(300);
   const [activeTab, setActiveTab] = useState<DetailTab>("overview");
   const [financingMode, setFinancingMode] = useState<FinancingMode>("loan");
   const values = useMemo(
-    () => buildDashboardValues(analysis, monthlyBill, financingMode),
-    [analysis, financingMode, monthlyBill]
+    () => buildDashboardValues(analysis, monthlyBill, financingMode, activePanelCount),
+    [activePanelCount, analysis, financingMode, monthlyBill]
   );
 
   return (
@@ -60,61 +65,91 @@ export function SolarReportDashboard({
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="text-[0.62rem] font-semibold uppercase tracking-[0.28em] text-cyan-100/82">
-                Report ready
+                Preliminary roof model ready
               </p>
               <h2 className="mt-2 line-clamp-2 text-lg font-semibold text-white">
                 {address}
               </h2>
             </div>
-            <span className="shrink-0 rounded-full border border-emerald-200/15 bg-emerald-200/10 px-2.5 py-1 text-[0.58rem] font-semibold uppercase tracking-[0.18em] text-emerald-100">
-              {values.sourceLabel}
-            </span>
+            <SourceBadge source="solar-api" />
           </div>
           <p className="mt-3 text-sm leading-6 text-white/58">
-            Analysis complete. Your roof has a usable solar layout, modeled
-            production, and a homeowner-ready savings estimate.
+            Estimated solar layout generated from available roof and sunlight data.
+            Final panel placement, incentives, pricing, and savings require installer confirmation.
           </p>
         </section>
+
+        <GuidedProgressStrip />
 
         <section className="grid grid-cols-2 gap-3">
           <KeyMetric
             icon={Sun}
             label="Sunlight"
+            source="solar-api"
             value={`${formatNumber(values.sunlightHours)} hrs`}
             tone="gold"
           />
           <KeyMetric
             icon={Grid3X3}
             label="Solar area"
+            source="solar-api"
             value={`${formatNumber(values.usableAreaSqFt)} ft²`}
           />
           <KeyMetric
             icon={TrendingUp}
             label="20-year savings"
+            source="modeled"
             value={formatMoney(values.twentyYearSavings)}
             tone="gold"
           />
           <KeyMetric
             icon={Zap}
             label="System size"
+            source="user-adjusted"
             value={`${values.recommendedKw.toFixed(1)} kW`}
           />
         </section>
 
-        <section className="liquid-glass rounded-[1.35rem] p-4 shadow-[0_18px_65px_rgba(0,0,0,0.3)]">
+        <section className="rounded-[1.15rem] border border-white/10 bg-black/24 p-4 shadow-[0_12px_36px_rgba(0,0,0,0.22)]">
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="text-[0.62rem] font-semibold uppercase tracking-[0.28em] text-cyan-100/82">
-                Fine-tune estimate
+                Fine-tune layout
               </p>
               <h3 className="mt-2 text-base font-semibold text-white">
-                Monthly electric bill
+                Panel count and bill input
               </h3>
             </div>
-            <span className="rounded-full border border-white/10 bg-black/24 px-2.5 py-1 text-xs font-semibold text-white/70">
-              Est.
-            </span>
+            <SourceBadge source="user-adjusted" />
           </div>
+          <label className="mt-4 block">
+            <div className="flex items-center justify-between gap-3 text-xs text-white/58">
+              <span className="font-semibold uppercase tracking-[0.2em]">
+                Accepted panels
+              </span>
+              <span className="font-semibold text-white">
+                {values.panelCount} / {values.maxPanelCount}
+              </span>
+            </div>
+            <input
+              type="range"
+              min={1}
+              max={values.maxPanelCount}
+              value={values.panelCount}
+              onChange={(event) => onActivePanelCountChange?.(Number(event.target.value))}
+              className="mt-2 w-full accent-cyan-300"
+            />
+          </label>
+          {values.rejectedPanelCandidateCount > 0 ? (
+            <p className="mt-2 text-xs leading-5 text-amber-100/85">
+              {values.rejectedPanelCandidateCount} Solar API candidates were not placed due to
+              spacing, overlap, or estimated setback limits.
+            </p>
+          ) : null}
+          <p className="mt-2 text-xs leading-5 text-white/46">
+            Panels are placed from available roof candidate points and adjusted for spacing,
+            setbacks, and overlap prevention.
+          </p>
           <select
             value={monthlyBill}
             onChange={(event) => setMonthlyBill(Number(event.target.value))}
@@ -127,10 +162,12 @@ export function SolarReportDashboard({
             ))}
           </select>
           <div className="mt-4 grid grid-cols-2 gap-3">
-            <MiniReadout label="Panel footprint" value={`${formatNumber(values.installationSqFt)} ft²`} />
-            <MiniReadout label="Annual savings" value={formatMoney(values.annualSavings)} />
+            <MiniReadout label="Panel footprint" source="solar-api" value={`${formatNumber(values.installationSqFt)} ft²`} />
+            <MiniReadout label="Annual savings" source="user-adjusted" value={formatMoney(values.annualSavings)} />
           </div>
         </section>
+
+        <DataProvenanceBlock />
 
         <a
           href="#contact"
@@ -144,11 +181,17 @@ export function SolarReportDashboard({
         id="report-dashboard"
         className="liquid-glass rounded-[1.5rem] p-3 shadow-[0_18px_70px_rgba(0,0,0,0.32)] sm:p-4 lg:col-span-12"
       >
-        <div className="flex gap-2 overflow-x-auto rounded-full border border-white/10 bg-black/24 p-1">
+        <div
+          role="tablist"
+          aria-label="Solar report detail sections"
+          className="flex gap-2 overflow-x-auto rounded-full border border-white/10 bg-black/24 p-1"
+        >
           {detailTabs.map((tab) => (
             <button
               key={tab.id}
+              role="tab"
               type="button"
+              aria-selected={activeTab === tab.id}
               onClick={() => setActiveTab(tab.id)}
               className={`shrink-0 rounded-full px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] transition ${
                 activeTab === tab.id
@@ -162,7 +205,7 @@ export function SolarReportDashboard({
         </div>
 
         <div className="mt-4">
-          {activeTab === "overview" ? <OverviewTab analysis={analysis} values={values} /> : null}
+          {activeTab === "overview" ? <OverviewTab values={values} /> : null}
           {activeTab === "savings" ? <SavingsTab values={values} /> : null}
           {activeTab === "environment" ? <EnvironmentalTab values={values} /> : null}
           {activeTab === "financing" ? (
@@ -180,27 +223,28 @@ export function SolarReportDashboard({
 }
 
 function OverviewTab({
-  analysis,
   values,
 }: {
-  analysis: RoofAnalysis;
   values: DashboardValues;
 }) {
   return (
     <div className="grid gap-3 md:grid-cols-3">
       <CompactInfo
         icon={Sun}
+        source="solar-api"
         title={`${formatNumber(values.sunlightHours)} hours`}
         body="Usable sunlight per year based on the current roof profile."
         tone="gold"
       />
       <CompactInfo
         icon={Grid3X3}
-        title={`${analysis.panelCount} panels`}
+        source="solar-api"
+        title={`${values.panelCount} accepted panels`}
         body={`${formatNumber(values.usableAreaSqFt)} square feet available for solar panels.`}
       />
       <CompactInfo
         icon={DollarSign}
+        source="modeled"
         title={formatMoney(values.twentyYearSavings)}
         body="Estimated net savings over 20 years."
         tone="gold"
@@ -215,11 +259,13 @@ function SavingsTab({ values }: { values: DashboardValues }) {
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
         <CompactInfo
           icon={Zap}
+          source="user-adjusted"
           title={`${values.recommendedKw.toFixed(1)} kW`}
           body="Recommended installation size from the current roof and bill profile."
         />
         <CompactInfo
           icon={TrendingUp}
+          source="user-adjusted"
           title={formatMoney(values.annualSavings)}
           body="Estimated average annual savings."
           tone="gold"
@@ -235,17 +281,20 @@ function EnvironmentalTab({ values }: { values: DashboardValues }) {
     <div className="grid gap-3 md:grid-cols-3">
       <CompactInfo
         icon={Leaf}
+        source="modeled"
         title={`${values.carbonMetricTons.toFixed(1)} metric tons`}
         body="Carbon dioxide avoided annually."
         tone="gold"
       />
       <CompactInfo
         icon={Car}
+        source="modeled"
         title={`${values.carsRemoved.toFixed(1)} cars`}
         body="Passenger cars removed from the road for one year."
       />
       <CompactInfo
         icon={TreePine}
+        source="modeled"
         title={`${values.treesEquivalent.toFixed(1)} trees`}
         body="Trees grown for 10 years equivalent."
         tone="gold"
@@ -285,9 +334,13 @@ function FinancingTab({
         <p className="mt-4 text-sm leading-7 text-white/62">
           {financingCopy[financingMode]}
         </p>
+        <p className="mt-3 text-xs leading-5 text-amber-100/78">
+          Financing values are illustrative only. Final pricing, incentives, APR,
+          and terms require installer and lender confirmation.
+        </p>
         <div className="mt-4 grid gap-2">
-          <MiniReadout label="Upfront after incentives" value={formatMoney(values.upfrontAfterIncentives)} />
-          <MiniReadout label="20-year savings" value={formatMoney(values.totalSavings)} />
+          <MiniReadout label="Upfront after incentives" source="illustrative" value={formatMoney(values.upfrontAfterIncentives)} />
+          <MiniReadout label="20-year savings" source="illustrative" value={formatMoney(values.totalSavings)} />
         </div>
       </div>
       <EstimateTable rows={values.financingRows} />
@@ -323,14 +376,78 @@ function NextStepsTab() {
   );
 }
 
+function GuidedProgressStrip() {
+  const steps = [
+    "Roof found",
+    "Solar-ready area estimated",
+    "Panel layout generated",
+    "Savings modeled",
+  ];
+
+  return (
+    <section className="rounded-[1.05rem] border border-white/10 bg-black/24 p-3">
+      <div className="grid gap-2 sm:grid-cols-4">
+        {steps.map((step, index) => (
+          <div key={step} className="flex items-center gap-2 text-xs text-white/62">
+            <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full border border-cyan-200/20 bg-cyan-200/10 text-[0.65rem] font-semibold text-cyan-100">
+              {index + 1}
+            </span>
+            <span>{step}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function DataProvenanceBlock() {
+  return (
+    <section className="rounded-[1.05rem] border border-white/10 bg-black/24 p-3 text-xs leading-5 text-white/54">
+      <p className="font-semibold uppercase tracking-[0.24em] text-cyan-100/78">
+        Data sources
+      </p>
+      <p className="mt-2">
+        Roof geometry, imagery, sunlight, and panel candidates: Google Solar API.
+        Savings, cost, bill offset, and financing: modeled estimates using Arizona
+        assumptions and user inputs.
+      </p>
+    </section>
+  );
+}
+
+function SourceBadge({ source }: { source: MetricSource }) {
+  const styles: Record<MetricSource, string> = {
+    "solar-api": "border-cyan-200/18 bg-cyan-200/10 text-cyan-100",
+    modeled: "border-amber-200/18 bg-amber-200/10 text-amber-100",
+    "user-adjusted": "border-emerald-200/18 bg-emerald-200/10 text-emerald-100",
+    illustrative: "border-slate-200/18 bg-white/8 text-slate-200",
+  };
+  const labels: Record<MetricSource, string> = {
+    "solar-api": "Solar API",
+    modeled: "Modeled",
+    "user-adjusted": "User-adjusted",
+    illustrative: "Illustrative",
+  };
+
+  return (
+    <span
+      className={`shrink-0 rounded-full border px-2.5 py-1 text-[0.56rem] font-semibold uppercase tracking-[0.16em] ${styles[source]}`}
+    >
+      {labels[source]}
+    </span>
+  );
+}
+
 function KeyMetric({
   icon: Icon,
   label,
+  source,
   value,
   tone = "cyan",
 }: {
   icon: LucideIcon;
   label: string;
+  source: MetricSource;
   value: string;
   tone?: "cyan" | "gold";
 }) {
@@ -349,6 +466,9 @@ function KeyMetric({
           {label}
         </span>
       </div>
+      <div className="mt-2">
+        <SourceBadge source={source} />
+      </div>
       <p className="mt-3 text-xl font-semibold text-white">{value}</p>
     </div>
   );
@@ -356,11 +476,13 @@ function KeyMetric({
 
 function CompactInfo({
   icon: Icon,
+  source,
   title,
   body,
   tone = "cyan",
 }: {
   icon: LucideIcon;
+  source: MetricSource;
   title: string;
   body: string;
   tone?: "cyan" | "gold";
@@ -375,18 +497,32 @@ function CompactInfo({
       <span className={`grid h-9 w-9 place-items-center rounded-full ${accent}`}>
         <Icon className="h-4 w-4" aria-hidden="true" />
       </span>
+      <div className="mt-3">
+        <SourceBadge source={source} />
+      </div>
       <h3 className="mt-4 text-xl font-semibold text-white">{title}</h3>
       <p className="mt-2 text-sm leading-6 text-white/56">{body}</p>
     </article>
   );
 }
 
-function MiniReadout({ label, value }: { label: string; value: string }) {
+function MiniReadout({
+  label,
+  source,
+  value,
+}: {
+  label: string;
+  source: MetricSource;
+  value: string;
+}) {
   return (
     <div className="rounded-[0.9rem] border border-white/10 bg-black/22 px-3 py-3">
-      <p className="text-[0.62rem] font-semibold uppercase tracking-[0.18em] text-white/42">
-        {label}
-      </p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[0.62rem] font-semibold uppercase tracking-[0.18em] text-white/42">
+          {label}
+        </p>
+        <SourceBadge source={source} />
+      </div>
       <p className="mt-1 text-base font-semibold text-white">{value}</p>
     </div>
   );
@@ -395,7 +531,7 @@ function MiniReadout({ label, value }: { label: string; value: string }) {
 function EstimateTable({
   rows,
 }: {
-  rows: Array<{ label: string; value: number }>;
+  rows: Array<{ label: string; source: MetricSource; value: number }>;
 }) {
   return (
     <div className="overflow-hidden rounded-[1rem] border border-white/10 bg-black/20">
@@ -404,7 +540,10 @@ function EstimateTable({
           key={row.label}
           className="grid gap-1 border-b border-white/8 px-4 py-3 last:border-b-0 sm:grid-cols-[1fr_auto] sm:items-center"
         >
-          <span className="text-sm text-white/58">{row.label}</span>
+          <span className="flex flex-wrap items-center gap-2 text-sm text-white/58">
+            {row.label}
+            <SourceBadge source={row.source} />
+          </span>
           <span className="text-base font-semibold text-white">
             {formatMoney(row.value)}
           </span>
@@ -419,25 +558,41 @@ type DashboardValues = ReturnType<typeof buildDashboardValues>;
 function buildDashboardValues(
   analysis: RoofAnalysis,
   monthlyBill: number,
-  financingMode: FinancingMode
+  financingMode: FinancingMode,
+  activePanelCount?: number
 ) {
   const usableAreaM2 = getUsableAreaM2(analysis);
   const usableAreaSqFt = Math.round(usableAreaM2 * 10.7639);
-  const sourceLabel =
-    analysis.source === "solar-api" ? "Live roof data" : "Modeled estimate";
-  const billScale = monthlyBill / 300;
-  const recommendedKw =
-    analysis.systemKw > 0
-      ? roundTo(
-          clamp(analysis.systemKw * billScale, analysis.systemKw * 0.45, analysis.systemKw),
-          1
-        )
-      : roundTo(monthlyBill / 24.2, 1);
-  const systemScale =
-    analysis.systemKw > 0 ? recommendedKw / Math.max(analysis.systemKw, 0.1) : 1;
+  const maxPanelCount = Math.max(
+    1,
+    analysis.solarPanels.length || analysis.acceptedPanelCount || analysis.panelCount
+  );
+  const panelCount = Math.round(
+    clamp(activePanelCount || maxPanelCount, 1, maxPanelCount)
+  );
+  const rejectedPanelCandidateCount = Math.max(
+    0,
+    analysis.rejectedPanelCandidateCount ??
+      Math.max(0, (analysis.originalPanelCandidateCount ?? maxPanelCount) - maxPanelCount)
+  );
+  const selectedConfig = findNearestPanelConfig(analysis.solarPanelConfigs, panelCount);
+  const panelEnergyTotal = analysis.solarPanels
+    .slice(0, panelCount)
+    .reduce((sum, panel) => sum + Math.max(panel.yearlyEnergyDcKwh, 0), 0);
+  const annualKwh = Math.round(
+    selectedConfig?.yearlyEnergyDcKwh ??
+      (panelEnergyTotal > 0
+        ? panelEnergyTotal
+        : (analysis.annualKwh / Math.max(analysis.panelCount, 1)) * panelCount)
+  );
+  const recommendedKw = roundTo(
+    (panelCount * Math.max(analysis.panelCapacityWatts || 400, 1)) / 1000,
+    1
+  );
+  const baseAnnualSavings = Math.round(annualKwh * 0.13);
   const annualSavings = Math.round(
     clamp(
-      (analysis.annualSavingsUSD || recommendedKw * 1706 * 0.13) * billScale,
+      baseAnnualSavings,
       monthlyBill * 12 * 0.18,
       monthlyBill * 12 * 0.92
     )
@@ -447,21 +602,12 @@ function buildDashboardValues(
     analysis.panelWidthMeters > 0 && analysis.panelHeightMeters > 0
       ? analysis.panelWidthMeters * analysis.panelHeightMeters * 10.7639
       : 20;
-  const estimatedPanels =
-    analysis.panelCapacityWatts > 0
-      ? Math.max(1, Math.round((recommendedKw * 1000) / analysis.panelCapacityWatts))
-      : Math.max(1, Math.round(recommendedKw / 0.4));
   const installationSqFt = Math.round(
     clamp(
-      estimatedPanels * panelAreaSqFt,
+      panelCount * panelAreaSqFt,
       Math.min(usableAreaSqFt, 120),
-      Math.max(usableAreaSqFt, estimatedPanels * panelAreaSqFt)
+      Math.max(usableAreaSqFt, panelCount * panelAreaSqFt)
     )
-  );
-  const annualKwh = Math.round(
-    analysis.annualKwh > 0
-      ? analysis.annualKwh * systemScale
-      : recommendedKw * 1706
   );
   const carbonMetricTons = roundTo(annualKwh * 0.00039, 1);
   const carsRemoved = roundTo(carbonMetricTons / 4.6, 1);
@@ -490,21 +636,23 @@ function buildDashboardValues(
     carbonMetricTons,
     carsRemoved,
     financingRows: [
-      { label: "Up-front cost of installation", value: upfrontAfterIncentives },
-      { label: "Total payments over 20 years", value: totalPayments },
-      { label: "Total 20-year cost with solar", value: totalCostWithSolar },
-      { label: "Total 20-year cost without solar", value: totalCostWithoutSolar },
-      { label: "Total 20-year savings", value: totalSavings },
+      { label: "Up-front cost of installation", source: "illustrative" as const, value: upfrontAfterIncentives },
+      { label: "Total payments over 20 years", source: "illustrative" as const, value: totalPayments },
+      { label: "Total 20-year cost with solar", source: "illustrative" as const, value: totalCostWithSolar },
+      { label: "Total 20-year cost without solar", source: "modeled" as const, value: totalCostWithoutSolar },
+      { label: "Total 20-year savings", source: "illustrative" as const, value: totalSavings },
     ],
     installationSqFt,
+    maxPanelCount,
+    panelCount,
     recommendedKw,
+    rejectedPanelCandidateCount,
     savingsRows: [
-      { label: "Average annual savings", value: annualSavings },
-      { label: "Total 20-year cost with solar", value: totalCostWithSolar },
-      { label: "Total 20-year cost without solar", value: totalCostWithoutSolar },
-      { label: "Total 20-year savings", value: totalSavings },
+      { label: "Average annual savings", source: "user-adjusted" as const, value: annualSavings },
+      { label: "Total 20-year cost with solar", source: "illustrative" as const, value: totalCostWithSolar },
+      { label: "Total 20-year cost without solar", source: "modeled" as const, value: totalCostWithoutSolar },
+      { label: "Total 20-year savings", source: "modeled" as const, value: totalSavings },
     ],
-    sourceLabel,
     sunlightHours: analysis.annualSunlightHours,
     totalSavings,
     treesEquivalent,
@@ -535,4 +683,26 @@ function roundTo(value: number, precision: number) {
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
+}
+
+function findNearestPanelConfig(
+  configs: RoofAnalysis["solarPanelConfigs"],
+  panelCount: number
+) {
+  if (!configs.length) {
+    return null;
+  }
+
+  return (
+    configs.find((config) => config.panelsCount === panelCount) ??
+    configs
+      .filter((config) => config.panelsCount <= panelCount)
+      .at(-1) ??
+    configs.reduce((closest, config) =>
+      Math.abs(config.panelsCount - panelCount) <
+      Math.abs(closest.panelsCount - panelCount)
+        ? config
+        : closest
+    )
+  );
 }

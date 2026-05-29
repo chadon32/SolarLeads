@@ -75,6 +75,9 @@ export type RoofAnalysis = {
   usablePctRoof: number;
   primaryRoofAzimuth: number;
   panelCount: number;
+  originalPanelCandidateCount?: number;
+  acceptedPanelCount?: number;
+  rejectedPanelCandidateCount?: number;
   systemKw: number;
   annualKwh: number;
   annualSavingsUSD: number;
@@ -185,6 +188,9 @@ export function buildFallbackRoofAnalysis(params: {
     usablePctRoof,
     primaryRoofAzimuth: 182,
     panelCount,
+    originalPanelCandidateCount: panelCount,
+    acceptedPanelCount: panelCount,
+    rejectedPanelCandidateCount: 0,
     systemKw,
     annualKwh,
     annualSavingsUSD,
@@ -227,6 +233,9 @@ export function buildInvalidRoofAnalysis(params: {
     validSite: false,
     invalidReason: params.invalidReason,
     panelCount: 0,
+    originalPanelCandidateCount: 0,
+    acceptedPanelCount: 0,
+    rejectedPanelCandidateCount: 0,
     systemKw: 0,
     annualKwh: 0,
     annualSavingsUSD: 0,
@@ -294,6 +303,31 @@ export function normalizeRoofAnalysis(
   const panelCount = Math.max(
     0,
     Math.round(numberOrFallback(input.panelCount, fallback.panelCount))
+  );
+  const originalPanelCandidateCount = Math.max(
+    0,
+    Math.round(
+      numberOrFallback(
+        input.originalPanelCandidateCount,
+        fallback.originalPanelCandidateCount ?? panelCount
+      )
+    )
+  );
+  const acceptedPanelCount = Math.max(
+    0,
+    Math.round(
+      numberOrFallback(input.acceptedPanelCount, fallback.acceptedPanelCount ?? panelCount)
+    )
+  );
+  const rejectedPanelCandidateCount = Math.max(
+    0,
+    Math.round(
+      numberOrFallback(
+        input.rejectedPanelCandidateCount,
+        fallback.rejectedPanelCandidateCount ??
+          Math.max(0, originalPanelCandidateCount - acceptedPanelCount)
+      )
+    )
   );
   const systemKw = roundTo(
     Math.max(0, numberOrFallback(input.systemKw, fallback.systemKw)),
@@ -395,6 +429,9 @@ export function normalizeRoofAnalysis(
     usablePctRoof,
     primaryRoofAzimuth,
     panelCount,
+    originalPanelCandidateCount,
+    acceptedPanelCount,
+    rejectedPanelCandidateCount,
     systemKw,
     annualKwh,
     annualSavingsUSD,

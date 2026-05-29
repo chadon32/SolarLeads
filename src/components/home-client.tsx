@@ -58,6 +58,7 @@ const BUSINESS_PHONE_HREF = "tel:+16025550100";
 export function HomeClient() {
   const [selectedAddress, setSelectedAddress] = useState("");
   const [roofAnalysis, setRoofAnalysis] = useState<RoofAnalysis | null>(null);
+  const [activePanelCount, setActivePanelCount] = useState(0);
   const [selectedLocation, setSelectedLocation] = useState<{
     address: string;
     lat: number;
@@ -194,6 +195,7 @@ export function HomeClient() {
                 onSelect={(property) => {
                   setSelectedAddress(property.address);
                   setRoofAnalysis(null);
+                  setActivePanelCount(0);
                   setSelectedLocation(
                     property.address &&
                       Number.isFinite(property.lat) &&
@@ -284,11 +286,18 @@ export function HomeClient() {
                   compact
                   location={selectedLocation}
                   onAnalysisChange={setRoofAnalysis}
+                  activePanelCount={activePanelCount || null}
+                  onActivePanelCountChange={setActivePanelCount}
                 />
               </div>
             </div>
             {hasValidAnalysis && roofAnalysis ? (
-              <SolarReportDashboard address={selectedAddress} analysis={roofAnalysis} />
+              <SolarReportDashboard
+                address={selectedAddress}
+                analysis={roofAnalysis}
+                activePanelCount={activePanelCount}
+                onActivePanelCountChange={setActivePanelCount}
+              />
             ) : null}
           </div>
         </section>
