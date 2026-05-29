@@ -76,6 +76,8 @@ export default async function DashboardPage({
   const { data: leads, error: leadsError } = leadsResult;
 
   if (leadsError) {
+    const issue = describeDashboardIssue(leadsError.message);
+
     return (
       <main className="relative min-h-screen bg-[radial-gradient(circle_at_top,_rgba(25,72,108,0.3),_transparent_36%),linear-gradient(180deg,#05070d_0%,#07111d_68%,#06070b_100%)] px-6 py-10 text-slate-100 md:px-10 lg:px-12">
         <div className="mx-auto max-w-4xl rounded-[2rem] border border-white/10 bg-white/5 p-6 backdrop-blur-xl">
@@ -86,14 +88,13 @@ export default async function DashboardPage({
             Dashboard data is not ready yet.
           </h1>
           <p className="mt-3 text-sm leading-7 text-slate-300">
-            Make sure `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and the Supabase
-            SQL files for `leads`, `lead_followups`, and `request_events` are all
-            configured in the same project, then refresh this page.
+            {issue.summary}
           </p>
           <p className="mt-3 rounded-[1.1rem] border border-white/10 bg-slate-950/40 px-4 py-3 text-xs leading-6 text-slate-300">
-            If Vercel is pointed at the wrong Supabase project, or the `leads`
-            table was not created there, this page will show the setup warning
-            instead of the data view.
+            {issue.detail}
+          </p>
+          <p className="mt-3 rounded-[1.1rem] border border-amber-300/15 bg-amber-300/10 px-4 py-3 text-xs leading-6 text-amber-100">
+            Supabase response: {leadsError.message}
           </p>
         </div>
       </main>
@@ -365,4 +366,33 @@ function shouldRetryLegacySelect(message: string) {
     normalized.includes("schema cache") ||
     normalized.includes("could not find")
   );
+}
+
+function describeDashboardIssue(message: string) {
+  const normalized = message.toLowerCase();
+
+  if (normalized.includes("invalid api key")) {
+    return {
+      summary:
+        "Supabase rejected `SUPABASE_SERVICE_ROLE_KEY`. The dashboard cannot read saved leads until the service-role key matches the project in `SUPABASE_URL`.",
+      detail:
+        "In Supabase, open the same project shown in `SUPABASE_URL`, copy a fresh service_role key from Project Settings -> Data API / API Keys, update `SUPABASE_SERVICE_ROLE_KEY` in Vercel and `.env.local`, then redeploy or refresh.",
+    };
+  }
+
+  if (normalized.includes("relation") || normalized.includes("does not exist")) {
+    return {
+      summary:
+        "The dashboard connected to Supabase, but the lead dashboard tables are missing.",
+      detail:
+        "Run `supabase/leads.sql`, `supabase/lead_followups.sql`, and `supabase/security.sql` in the Supabase SQL editor for the same project used by Vercel.",
+    };
+  }
+
+  return {
+    summary:
+      "Make sure `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and the Supabase SQL files for `leads`, `lead_followups`, and `request_events` are all configured in the same project, then refresh this page.",
+    detail:
+      "If Vercel is pointed at the wrong Supabase project, or the `leads` table was not created there, this page will show the setup warning instead of the data view.",
+  };
 }
