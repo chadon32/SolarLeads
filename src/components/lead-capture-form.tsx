@@ -26,6 +26,7 @@ type LeadCaptureFormProps = {
   initialMonthlyBill?: number;
   lat?: number;
   lng?: number;
+  onMonthlyBillChange?: (monthlyBill: number) => void;
   selectedInverterType?: InverterType;
   selectedPanel?: SolarPanel | null;
 };
@@ -104,12 +105,13 @@ export function LeadCaptureForm({
   initialMonthlyBill = 200,
   lat,
   lng,
+  onMonthlyBillChange,
   selectedInverterType = "string",
   selectedPanel,
 }: LeadCaptureFormProps) {
   const [values, setValues] = useState<FormValues>({
     ...emptyValues,
-    address: initialAddress,
+    address: formatDisplayAddress(initialAddress),
     monthlyBill: String(initialMonthlyBill),
   });
   const [errors, setErrors] = useState<Partial<Record<keyof FormValues, string>>>(
@@ -126,9 +128,14 @@ export function LeadCaptureForm({
   useEffect(() => {
     const handle = window.requestAnimationFrame(() => {
       setValues((current) =>
-        current.address === initialAddress && current.monthlyBill === String(initialMonthlyBill)
+        current.address === formatDisplayAddress(initialAddress) &&
+        current.monthlyBill === String(initialMonthlyBill)
           ? current
-          : { ...current, address: initialAddress, monthlyBill: String(initialMonthlyBill) }
+          : {
+              ...current,
+              address: formatDisplayAddress(initialAddress),
+              monthlyBill: String(initialMonthlyBill),
+            }
       );
       setErrors((current) => ({ ...current, address: undefined }));
     });
@@ -405,7 +412,13 @@ export function LeadCaptureForm({
             <Field
               label="Monthly bill"
               value={values.monthlyBill}
-              onChange={(value) => updateField("monthlyBill", value)}
+              onChange={(value) => {
+                updateField("monthlyBill", value);
+                const nextMonthlyBill = Number(value);
+                if (Number.isFinite(nextMonthlyBill) && nextMonthlyBill > 0) {
+                  onMonthlyBillChange?.(nextMonthlyBill);
+                }
+              }}
               error={errors.monthlyBill}
               placeholder="e.g. 180"
               type="number"

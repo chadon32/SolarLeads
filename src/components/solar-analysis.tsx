@@ -6,6 +6,7 @@ import { ButtonLink } from "@/components/ui/button";
 import { formatDisplayAddress } from "@/lib/address-format";
 import {
   calculateSunlightQuality,
+  getRoofQualityLabel,
   type RoofQualityTone,
 } from "@/lib/solar-advisor";
 import { trackEvent } from "@/lib/analytics";
@@ -855,6 +856,7 @@ function ViewportCanvas({
 }) {
   const mapElementRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<GoogleMapInstance | null>(null);
+  const mapInitializedRef = useRef(false);
   const overlayRefs = useRef<GoogleMapOverlayInstance[]>([]);
   const overlayRunRef = useRef(0);
   const cameraFitTimeoutRef = useRef<number | null>(null);
@@ -883,7 +885,9 @@ function ViewportCanvas({
         return;
       }
 
-      if (!mapRef.current) {
+      if (!mapRef.current || !mapInitializedRef.current) {
+        mapElementRef.current.replaceChildren();
+        mapInitializedRef.current = true;
         mapRef.current = new googleApi.maps.Map(mapElementRef.current, {
           center,
           zoom: 20,
@@ -924,6 +928,20 @@ function ViewportCanvas({
       }
     };
   }, [cameraTarget, cameraTargetKey, center, mapsApiKey]);
+
+  useEffect(() => {
+    return () => {
+      if (cameraFitTimeoutRef.current !== null) {
+        window.clearTimeout(cameraFitTimeoutRef.current);
+        cameraFitTimeoutRef.current = null;
+      }
+      clearGoogleOverlays(overlayRefs.current);
+      overlayRefs.current = [];
+      mapRef.current = null;
+      mapInitializedRef.current = false;
+      mapElementRef.current?.replaceChildren();
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -1692,7 +1710,7 @@ function createEstimatedSunlightQualityOverlays({
       }
 
       const tone =
-        segmentQualities.get(segment.label) ?? quality.label;
+        segmentQualities.get(segment.label) ?? getRoofQualityLabel(quality.score);
       const colors = getSunlightQualityMapColors(tone);
 
       return new googleApi.maps.Polygon({

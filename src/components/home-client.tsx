@@ -77,6 +77,8 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
     lng: number;
   } | null>(null);
   const [showStickyCta, setShowStickyCta] = useState(false);
+  const [showReportNav, setShowReportNav] = useState(false);
+  const [activeReportSection, setActiveReportSection] = useState("solar-workspace");
   const roofAnalysis = solarData;
   const hasValidAnalysis = Boolean(solarData?.validSite);
   const heroCompact = Boolean(selectedAddress);
@@ -87,6 +89,10 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
       const scrollY = window.scrollY;
       const contactTop =
         document.getElementById("contact")?.offsetTop ?? Number.POSITIVE_INFINITY;
+      const addressInput = document.getElementById("address-estimate");
+      const navStart =
+        (addressInput?.offsetTop ?? Number.POSITIVE_INFINITY) +
+        (addressInput?.offsetHeight ?? 0);
       const workspace = document.getElementById("solar-workspace");
       const workspaceTop = workspace?.offsetTop ?? Number.POSITIVE_INFINITY;
       const workspaceBottom = workspaceTop + (workspace?.offsetHeight ?? 0);
@@ -100,6 +106,18 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
           scrollY < contactTop - 200 &&
           !workspaceVisible
       );
+
+      setShowReportNav(
+        hasValidAnalysis && scrollY > navStart - 24 && scrollY < contactTop + 400
+      );
+
+      const sections = ["solar-workspace", "panel-selection", "report-dashboard", "contact"];
+      const currentSection =
+        sections
+          .map((id) => ({ id, top: document.getElementById(id)?.offsetTop ?? 0 }))
+          .filter((section) => section.top > 0 && scrollY + 120 >= section.top)
+          .at(-1)?.id ?? "solar-workspace";
+      setActiveReportSection(currentSection);
     };
 
     onScroll();
@@ -107,6 +125,21 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
 
     return () => window.removeEventListener("scroll", onScroll);
   }, [hasValidAnalysis]);
+
+  useEffect(() => {
+    if (!solarData?.validSite) {
+      return;
+    }
+
+    const hours = solarData.annualSunlightHours;
+    if (hours > 1800) {
+      setSelectedInverterType("string");
+    } else if (hours >= 1400) {
+      setSelectedInverterType("optimizers");
+    } else {
+      setSelectedInverterType("microinverters");
+    }
+  }, [solarData?.annualSunlightHours, solarData?.validSite]);
 
   const showAnalysis = Boolean(selectedAddress);
   const reportCtaHref = hasValidAnalysis
@@ -130,6 +163,31 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
             <ArrowRight className="h-4 w-4" aria-hidden="true" />
           </a>
         </div>
+      ) : null}
+
+      {showReportNav ? (
+        <nav className="fixed inset-x-0 top-0 z-50 border-b border-white/10 bg-slate-950/88 px-3 py-2 shadow-[0_12px_34px_rgba(2,8,20,0.32)] backdrop-blur-xl">
+          <div className="mx-auto flex max-w-7xl items-center gap-2 overflow-x-auto text-[0.66rem] font-semibold uppercase tracking-[0.18em] text-white/58">
+            {[
+              ["solar-workspace", "Roof Analysis"],
+              ["panel-selection", "Panel Selection"],
+              ["report-dashboard", "Financing"],
+              ["contact", "Get Report"],
+            ].map(([id, label]) => (
+              <a
+                key={id}
+                href={`#${id}`}
+                className={`shrink-0 rounded-full px-3 py-2 transition ${
+                  activeReportSection === id
+                    ? "bg-cyan-200 text-slate-950"
+                    : "hover:bg-white/[0.08] hover:text-white"
+                }`}
+              >
+                {label}
+              </a>
+            ))}
+          </div>
+        </nav>
       ) : null}
 
       <section
@@ -355,6 +413,11 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
               <p className="mt-2 max-w-3xl text-sm leading-6 text-white/60">
                 {formatDisplayAddress(selectedAddress)}
               </p>
+              {hasValidAnalysis ? (
+                <p className="mt-1 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-100/70">
+                  Panel: {selectedPanel.brand} {selectedPanel.model} {selectedPanel.watts}W
+                </p>
+              ) : null}
             </div>
             {hasValidAnalysis ? (
               <div className="flex flex-col gap-2 sm:flex-row">
@@ -442,6 +505,7 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
               lng={selectedLocation?.lng}
               selectedInverterType={selectedInverterType}
               selectedPanel={selectedPanel}
+              onMonthlyBillChange={setMonthlyBill}
             />
           </div>
         </section>

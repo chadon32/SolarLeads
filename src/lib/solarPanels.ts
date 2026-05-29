@@ -233,7 +233,7 @@ export function getPanelFit(
   const maxPanelsFit = Math.max(0, Math.min(physicalFit, apiCandidateFit));
   const selectedCount =
     input.selectedPanelCount && input.selectedPanelCount > 0
-      ? Math.min(Math.round(input.selectedPanelCount), maxPanelsFit)
+      ? Math.max(0, Math.round(input.selectedPanelCount))
       : maxPanelsFit;
   const sunshineHours =
     input.maxSunshineHoursPerYear ??
@@ -290,14 +290,14 @@ export function getRoofShadeRiskLabel(annualSunlightHours?: number | null) {
 
 export function getTierLabel(tier: SolarPanelTier) {
   if (tier === "premium") {
-    return "Premium";
+    return "PREMIUM";
   }
 
   if (tier === "value") {
-    return "Best value";
+    return "BEST VALUE";
   }
 
-  return "Mid-range";
+  return "MID-RANGE";
 }
 
 export function detectArizonaUtility(address: string) {

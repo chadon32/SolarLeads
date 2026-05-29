@@ -183,7 +183,8 @@ export function generateSuitabilityExplanation(
 }
 
 export function calculateSunlightQuality(input: SolarAdvisorInput) {
-  const baseScore = getSuitabilityScore(input);
+  const hourlyQuality = getSunlightQualityFromHours(input.annualSunlightHours);
+  const baseScore = hourlyQuality.score;
   const source: "Solar API" | "Estimated" = input.roofSegments?.length
     ? "Solar API"
     : "Estimated";
@@ -206,12 +207,8 @@ export function calculateSunlightQuality(input: SolarAdvisorInput) {
         source,
       };
     }) ?? [];
-  const score = segments.length
-    ? Math.round(
-        segments.reduce((sum, segment) => sum + segment.score, 0) / segments.length
-      )
-    : baseScore;
-  const label = getRoofQualityLabel(score);
+  const score = baseScore;
+  const label = hourlyQuality.label;
 
   return {
     label,
@@ -229,6 +226,40 @@ export function getRoofQualityLabel(score: number): RoofQualityTone {
   if (score >= 78) return "strong";
   if (score >= 58) return "moderate";
   return "limited";
+}
+
+function getSunlightQualityFromHours(hoursValue: number) {
+  const hours = Number(hoursValue);
+
+  if (!Number.isFinite(hours)) {
+    return {
+      label: "MODERATE 🌤️",
+      quality: "moderate" as const,
+      score: 65,
+    };
+  }
+
+  if (hours > 1800) {
+    return {
+      label: "HIGH ☀️",
+      quality: "strong" as const,
+      score: 90,
+    };
+  }
+
+  if (hours >= 1400) {
+    return {
+      label: "MODERATE 🌤️",
+      quality: "moderate" as const,
+      score: 65,
+    };
+  }
+
+  return {
+    label: "LOW ☁️",
+    quality: "limited" as const,
+    score: 42,
+  };
 }
 
 function getSuitabilityScore(input: SolarAdvisorInput) {

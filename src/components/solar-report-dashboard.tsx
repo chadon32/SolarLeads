@@ -11,7 +11,7 @@ import {
   Zap,
   type LucideIcon,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { RoofAnalysis } from "@/lib/roof-analysis";
 import {
   buildSolarAdvisorInputFromAnalysis,
@@ -309,10 +309,13 @@ export function SolarReportDashboard({
 
 type PanelSortKey =
   | "brand"
+  | "model"
   | "watts"
   | "efficiency"
   | "pricePerWatt"
   | "warranty_years"
+  | "azHeatLoss"
+  | "netCost"
   | "paybackYears";
 
 function PanelSelectorSection({
@@ -334,20 +337,31 @@ function PanelSelectorSection({
   selectedPanelId: string;
   values: DashboardValues;
 }) {
-  const [showComparison, setShowComparison] = useState(false);
+  const [showComparison, setShowComparison] = useState(true);
   const [sortKey, setSortKey] = useState<PanelSortKey>("paybackYears");
+  const [panelFitsById, setPanelFitsById] = useState<Record<string, PanelFit>>({});
   const selectedInverter = getInverterOption(selectedInverterType);
+
+  useEffect(() => {
+    const nextFits = SOLAR_PANELS.reduce<Record<string, PanelFit>>((fits, panel) => {
+      fits[panel.id] = getPanelFit(panel, {
+        roofData: analysis,
+        monthlyBill,
+        inverterCostAdderPerWatt: selectedInverter.costAdderPerWatt,
+      });
+      return fits;
+    }, {});
+
+    setPanelFitsById(nextFits);
+  }, [analysis, monthlyBill, selectedInverter.costAdderPerWatt]);
+
   const panelFits = useMemo(
     () =>
       SOLAR_PANELS.map((panel) => ({
-        fit: getPanelFit(panel, {
-          roofData: analysis,
-          monthlyBill,
-          inverterCostAdderPerWatt: selectedInverter.costAdderPerWatt,
-        }),
+        fit: panelFitsById[panel.id],
         panel,
-      })),
-    [analysis, monthlyBill, selectedInverter.costAdderPerWatt]
+      })).filter((item): item is { panel: SolarPanel; fit: PanelFit } => Boolean(item.fit)),
+    [panelFitsById]
   );
   const selectedPanel = getPanelById(selectedPanelId);
   const selectedFit =
@@ -361,8 +375,20 @@ function PanelSelectorSection({
       return left.panel.brand.localeCompare(right.panel.brand);
     }
 
+    if (sortKey === "model") {
+      return left.panel.model.localeCompare(right.panel.model);
+    }
+
     if (sortKey === "paybackYears") {
       return left.fit.paybackYears - right.fit.paybackYears;
+    }
+
+    if (sortKey === "netCost") {
+      return left.fit.netCost - right.fit.netCost;
+    }
+
+    if (sortKey === "azHeatLoss") {
+      return Number.parseFloat(left.fit.azHeatLoss) - Number.parseFloat(right.fit.azHeatLoss);
     }
 
     const leftValue =
@@ -373,7 +399,7 @@ function PanelSelectorSection({
   });
 
   return (
-    <section className="mt-5 grid gap-4">
+    <section id="panel-selection" className="mt-5 grid gap-4 scroll-mt-24">
       <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
         <div>
           <p className="text-[0.62rem] font-semibold uppercase tracking-[0.28em] text-cyan-100/82">
@@ -390,19 +416,31 @@ function PanelSelectorSection({
         <SourceBadge source="modeled" />
       </div>
 
-      <div className="grid gap-3 lg:grid-cols-3">
-        {panelFits.map(({ fit, panel }) => (
-          <PanelOptionCard
-            key={panel.id}
-            fit={fit}
-            isSelected={panel.id === selectedPanel.id}
-            onSelect={() => onSelectedPanelIdChange?.(panel.id)}
-            panel={panel}
-          />
-        ))}
+      <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+        {panelFits.length
+          ? panelFits.map(({ fit, panel }) => (
+              <PanelOptionCard
+                key={panel.id}
+                fit={fit}
+                isSelected={panel.id === selectedPanel.id}
+                onSelect={() => {
+                  onSelectedPanelIdChange?.(panel.id);
+                  window.requestAnimationFrame(() => {
+                    document
+                      .getElementById("solar-workspace")
+                      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  });
+                }}
+                panel={panel}
+              />
+            ))
+          : Array.from({ length: 6 }).map((_, index) => (
+              <PanelOptionSkeleton key={index} />
+            ))}
       </div>
 
       <InverterSelector
+        annualSunlightHours={analysis.annualSunlightHours}
         selectedInverterType={selectedInverterType}
         shadeRisk={getRoofShadeRiskLabel(analysis.annualSunlightHours)}
         onSelectedInverterTypeChange={onSelectedInverterTypeChange}
@@ -414,7 +452,7 @@ function PanelSelectorSection({
         utility={utility}
       />
 
-      <div className="rounded-[1rem] border border-white/10 bg-black/18 p-4">
+      <div className="overflow-hidden rounded-[1rem] border border-white/10 bg-black/18 p-4">
         <button
           type="button"
           onClick={() => setShowComparison((current) => !current)}
@@ -422,7 +460,7 @@ function PanelSelectorSection({
         >
           <span>
             <span className="block text-sm font-semibold text-white">
-              Compare all panels
+              {showComparison ? "▼" : "▶"} Compare all panels
             </span>
             <span className="mt-1 block text-xs text-white/48">
               Sorted by payback by default.
@@ -432,13 +470,19 @@ function PanelSelectorSection({
             {showComparison ? "Hide" : "Show"}
           </span>
         </button>
-        {showComparison ? (
-          <PanelComparisonTable
-            fits={sortedFits}
-            onSortKeyChange={setSortKey}
-            sortKey={sortKey}
-          />
-        ) : null}
+        <div
+          className={`grid transition-[grid-template-rows,opacity] duration-300 ${
+            showComparison ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+          }`}
+        >
+          <div className="overflow-hidden">
+            <PanelComparisonTable
+              fits={sortedFits}
+              onSortKeyChange={setSortKey}
+              sortKey={sortKey}
+            />
+          </div>
+        </div>
       </div>
     </section>
   );
@@ -457,36 +501,41 @@ function PanelOptionCard({
 }) {
   return (
     <article
-      className={`rounded-[1.1rem] border p-4 transition ${
+      className={`relative flex min-h-[37rem] flex-col overflow-hidden rounded-[1.1rem] border p-4 transition ${
         isSelected
-          ? "border-cyan-200/42 bg-cyan-200/[0.075]"
+          ? "border-cyan-200/70 bg-cyan-200/[0.09] shadow-[0_0_0_1px_rgba(103,232,249,0.18),0_18px_50px_rgba(34,211,238,0.12)]"
           : "border-white/10 bg-black/18"
       }`}
     >
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-bold text-white">{panel.brand}</p>
-          <h4 className="mt-1 text-base font-semibold text-white/88">
-            {panel.model}
-          </h4>
-          <p className="mt-1 text-xs leading-5 text-white/45">{panel.bestFor}</p>
-        </div>
-        <span className="rounded-full border border-white/10 bg-white/[0.06] px-2 py-1 text-[0.54rem] font-bold uppercase tracking-[0.14em] text-white/68">
-          {getTierLabel(panel.tier)}
-        </span>
-      </div>
-
-      <div className="mt-3 flex flex-wrap gap-1.5">
+      <div className="absolute right-3 top-3 z-10 flex flex-col items-end gap-1.5">
+        {isSelected ? (
+          <span className="rounded-full bg-cyan-200 px-2 py-1 text-[0.55rem] font-black uppercase tracking-[0.12em] text-slate-950">
+            ✓ Selected
+          </span>
+        ) : null}
         {fit.recommended ? (
-          <span className="rounded-full bg-emerald-300/16 px-2 py-1 text-[0.56rem] font-bold uppercase tracking-[0.12em] text-emerald-100">
-            Recommended for your roof
+          <span className="rounded-full bg-emerald-300 px-2 py-1 text-[0.55rem] font-black uppercase tracking-[0.12em] text-slate-950">
+            ✓ RECOMMENDED
           </span>
         ) : null}
         {!fit.fits ? (
-          <span className="rounded-full bg-white/[0.08] px-2 py-1 text-[0.56rem] font-bold uppercase tracking-[0.12em] text-white/48">
-            Not enough roof space
+          <span className="rounded-full bg-slate-500/70 px-2 py-1 text-[0.55rem] font-black uppercase tracking-[0.12em] text-white">
+            ✗ ROOF TOO SMALL
           </span>
         ) : null}
+      </div>
+
+      <div className="flex items-start justify-between gap-3 pr-24">
+        <div className="min-w-0">
+          <p className="text-sm font-bold text-white">{panel.brand}</p>
+          <h4 className="mt-1 line-clamp-2 text-base font-semibold text-white/88">
+            {panel.model}
+          </h4>
+          <p className="mt-1 line-clamp-2 text-xs leading-5 text-white/45">{panel.bestFor}</p>
+        </div>
+        <span className={`shrink-0 rounded-full border px-2 py-1 text-[0.54rem] font-bold uppercase tracking-[0.14em] ${getTierBadgeClass(panel.tier)}`}>
+          {getTierLabel(panel.tier)}
+        </span>
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
@@ -505,7 +554,7 @@ function PanelOptionCard({
         </p>
       </div>
 
-      <div className="mt-4 grid gap-1.5 text-xs text-white/58">
+      <div className="mt-auto grid gap-1.5 pt-4 text-xs text-white/58">
         <PanelFinancialRow label="System size" value={`${fit.systemKw.toFixed(1)} kW`} />
         <PanelFinancialRow label="Panels needed" value={`${fit.maxPanelsFit}`} />
         <PanelFinancialRow label="Total cost" value={formatMoney(fit.systemCost)} />
@@ -530,13 +579,47 @@ function PanelOptionCard({
   );
 }
 
+function PanelOptionSkeleton() {
+  return (
+    <div className="min-h-[37rem] animate-pulse rounded-[1.1rem] border border-white/10 bg-black/18 p-4">
+      <div className="h-4 w-20 rounded-full bg-white/10" />
+      <div className="mt-4 h-6 w-4/5 rounded-full bg-white/10" />
+      <div className="mt-2 h-4 w-3/5 rounded-full bg-white/10" />
+      <div className="mt-6 grid grid-cols-2 gap-2">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <div key={index} className="h-16 rounded-[0.75rem] bg-white/8" />
+        ))}
+      </div>
+      <div className="mt-6 h-20 rounded-[0.9rem] bg-amber-200/10" />
+      <div className="mt-6 grid gap-2">
+        {Array.from({ length: 6 }).map((_, index) => (
+          <div key={index} className="h-5 rounded-full bg-white/8" />
+        ))}
+      </div>
+      <div className="mt-6 h-11 rounded-full bg-white/10" />
+    </div>
+  );
+}
+
+function getTierBadgeClass(tier: SolarPanel["tier"]) {
+  if (tier === "premium") {
+    return "border-indigo-200/18 bg-indigo-300/14 text-indigo-100";
+  }
+
+  if (tier === "value") {
+    return "border-emerald-200/18 bg-emerald-300/14 text-emerald-100";
+  }
+
+  return "border-sky-200/18 bg-sky-300/14 text-sky-100";
+}
+
 function PanelSpec({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-[0.75rem] border border-white/8 bg-black/20 p-2">
+    <div className="min-w-0 overflow-hidden rounded-[0.75rem] border border-white/8 bg-black/20 p-2">
       <p className="text-[0.54rem] font-semibold uppercase tracking-[0.14em] text-white/40">
         {label}
       </p>
-      <p className="mt-1 font-semibold text-white">{value}</p>
+      <p className="mt-1 truncate font-semibold text-white">{value}</p>
     </div>
   );
 }
@@ -545,20 +628,24 @@ function PanelFinancialRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between gap-3 border-b border-white/8 py-1.5 last:border-b-0">
       <span>{label}</span>
-      <span className="font-semibold text-white">{value}</span>
+      <span className="shrink-0 font-semibold text-white">{value}</span>
     </div>
   );
 }
 
 function InverterSelector({
+  annualSunlightHours,
   onSelectedInverterTypeChange,
   selectedInverterType,
   shadeRisk,
 }: {
+  annualSunlightHours: number;
   onSelectedInverterTypeChange?: (inverterType: InverterType) => void;
   selectedInverterType: InverterType;
   shadeRisk: string;
 }) {
+  const recommendation = getInverterRecommendation(annualSunlightHours);
+
   return (
     <div className="rounded-[1rem] border border-white/10 bg-black/18 p-4">
       <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-end">
@@ -586,7 +673,14 @@ function InverterSelector({
                 : "border-white/10 bg-black/20 hover:bg-white/[0.04]"
             }`}
           >
-            <p className="text-sm font-semibold text-white">{option.label}</p>
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-white">{option.label}</p>
+              {option.id === recommendation.inverterType ? (
+                <span className="rounded-full bg-emerald-300/16 px-2 py-1 text-[0.5rem] font-bold uppercase tracking-[0.12em] text-emerald-100">
+                  Recommended
+                </span>
+              ) : null}
+            </div>
             <p className="mt-1 text-xs leading-5 text-white/50">{option.brands}</p>
             <p className="mt-2 text-xs font-semibold text-cyan-100">
               {option.costAdderPerWatt > 0
@@ -598,11 +692,34 @@ function InverterSelector({
         ))}
       </div>
       <p className="mt-3 text-xs leading-5 text-white/50">
-        Microinverters are recommended for roofs with any shading. Final
-        equipment selection should be confirmed by the installer.
+        {recommendation.note} Final equipment selection should be confirmed by the installer.
       </p>
     </div>
   );
+}
+
+function getInverterRecommendation(annualSunlightHours: number): {
+  inverterType: InverterType;
+  note: string;
+} {
+  if (annualSunlightHours > 1800) {
+    return {
+      inverterType: "string",
+      note: "Your roof has low shade — string inverter is fine.",
+    };
+  }
+
+  if (annualSunlightHours >= 1400) {
+    return {
+      inverterType: "optimizers",
+      note: "Moderate shade detected — optimizers recommended.",
+    };
+  }
+
+  return {
+    inverterType: "microinverters",
+    note: "Significant shade detected — microinverters strongly recommended.",
+  };
 }
 
 function IncentivesSection({
@@ -655,6 +772,9 @@ function IncentivesSection({
           />
         ) : null}
       </div>
+      <div className="mt-4 rounded-[0.95rem] border border-emerald-200/24 bg-emerald-300/16 px-4 py-3 text-sm font-semibold text-emerald-50 shadow-[0_14px_34px_rgba(16,185,129,0.12)]">
+        Total estimated incentives: {formatMoney(totalIncentives)}
+      </div>
     </section>
   );
 }
@@ -690,16 +810,19 @@ function PanelComparisonTable({
 }) {
   const headers: Array<{ key: PanelSortKey; label: string }> = [
     { key: "brand", label: "Brand" },
+    { key: "model", label: "Model" },
     { key: "watts", label: "Watts" },
-    { key: "efficiency", label: "Efficiency" },
     { key: "pricePerWatt", label: "$/W" },
+    { key: "efficiency", label: "Efficiency" },
     { key: "warranty_years", label: "Warranty" },
+    { key: "azHeatLoss", label: "AZ Heat Loss" },
+    { key: "netCost", label: "Net Cost" },
     { key: "paybackYears", label: "Payback" },
   ];
 
   return (
     <div className="mt-4 overflow-x-auto rounded-[0.9rem] border border-white/10">
-      <table className="min-w-[54rem] w-full text-left text-xs">
+      <table className="min-w-[62rem] w-full text-left text-xs">
         <thead className="bg-white/[0.05] text-white/50">
           <tr>
             {headers.map((header) => (
@@ -716,16 +839,7 @@ function PanelComparisonTable({
               </th>
             ))}
             <th className="px-3 py-2 font-semibold uppercase tracking-[0.14em]">
-              Model
-            </th>
-            <th className="px-3 py-2 font-semibold uppercase tracking-[0.14em]">
-              AZ Heat Loss
-            </th>
-            <th className="px-3 py-2 font-semibold uppercase tracking-[0.14em]">
               Panels
-            </th>
-            <th className="px-3 py-2 font-semibold uppercase tracking-[0.14em]">
-              Net Cost
             </th>
           </tr>
         </thead>
@@ -733,15 +847,15 @@ function PanelComparisonTable({
           {fits.map(({ fit, panel }) => (
             <tr key={panel.id} className="border-t border-white/8 text-white/68">
               <td className="px-3 py-2 font-semibold text-white">{panel.brand}</td>
-              <td className="px-3 py-2">{panel.watts}W</td>
-              <td className="px-3 py-2">{panel.efficiency}%</td>
-              <td className="px-3 py-2">${panel.pricePerWatt.toFixed(2)}</td>
-              <td className="px-3 py-2">{panel.warranty_years} yrs</td>
-              <td className="px-3 py-2">{fit.paybackYears.toFixed(1)} yrs</td>
               <td className="px-3 py-2">{panel.model}</td>
+              <td className="px-3 py-2">{panel.watts}W</td>
+              <td className="px-3 py-2">${panel.pricePerWatt.toFixed(2)}</td>
+              <td className="px-3 py-2">{panel.efficiency}%</td>
+              <td className="px-3 py-2">{panel.warranty_years} yrs</td>
               <td className="px-3 py-2">{fit.azHeatLoss}</td>
-              <td className="px-3 py-2">{fit.maxPanelsFit}</td>
               <td className="px-3 py-2">{formatMoney(fit.netCost)}</td>
+              <td className="px-3 py-2">{fit.paybackYears.toFixed(1)} yrs</td>
+              <td className="px-3 py-2">{fit.maxPanelsFit}</td>
             </tr>
           ))}
         </tbody>
