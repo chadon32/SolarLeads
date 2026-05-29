@@ -5,10 +5,6 @@ const SITE_URL =
   process.env.NEXT_PUBLIC_SITE_URL?.trim() ?? "http://localhost:3000";
 const REQUIRE_SIGNED_REPORTS = process.env.NODE_ENV === "production";
 
-function toExpiry(expiresInSeconds = 24 * 60 * 60) {
-  return Date.now() + expiresInSeconds * 1000;
-}
-
 function signValue(leadId: string, expiresAt: number) {
   if (!REPORT_SECRET) {
     return "";
@@ -42,18 +38,8 @@ export function buildSignedReportPdfPath(
   leadId: string,
   options: { expiresInSeconds?: number } = {}
 ) {
-  if (!REPORT_SECRET) {
-    if (REQUIRE_SIGNED_REPORTS) {
-      return `/api/report/pdf?leadId=${encodeURIComponent(leadId)}&signature=required`;
-    }
-
-    return `/api/report/pdf?leadId=${encodeURIComponent(leadId)}`;
-  }
-
-  const expiresAt = toExpiry(options.expiresInSeconds);
-  const token = signValue(leadId, expiresAt);
-
-  return `/api/report/pdf?leadId=${encodeURIComponent(leadId)}&exp=${expiresAt}&token=${token}`;
+  void options;
+  return buildReportPdfPath(leadId);
 }
 
 export function buildReportAccessPath(leadId: string) {

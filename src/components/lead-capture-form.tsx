@@ -340,7 +340,7 @@ export function LeadCaptureForm({
               value={values.phone}
               onChange={(value) => updateField("phone", formatPhoneDisplay(value))}
               error={errors.phone}
-              placeholder="(602) 555-0123"
+              placeholder="Your phone number"
               type="tel"
               inputMode="tel"
               autoComplete="tel"

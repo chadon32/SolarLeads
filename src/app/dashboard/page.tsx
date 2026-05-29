@@ -21,6 +21,11 @@ export const metadata: Metadata = {
     description:
       "Manage solar leads, download reports, and track follow-up pipeline.",
   },
+  twitter: {
+    title: "Lead Dashboard | Arizona Solar AI",
+    description:
+      "Manage solar leads, download reports, and track follow-up pipeline.",
+  },
 };
 
 export const dynamic = "force-dynamic";
@@ -284,13 +289,13 @@ function describeDashboardIssue(message: string) {
       summary:
         "The dashboard connected to Supabase, but the lead dashboard tables are missing.",
       detail:
-        "Run `supabase/leads.sql`, `supabase/lead_followups.sql`, and `supabase/security.sql` in the Supabase SQL editor for the same project used by Vercel.",
+        "Dashboard data is not available yet. Confirm the lead, follow-up, and request event tables are configured for the same Supabase project used by Vercel.",
     };
   }
 
   return {
     summary:
-      "Make sure `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and the Supabase SQL files for `leads`, `lead_followups`, and `request_events` are all configured in the same project, then refresh this page.",
+      "Make sure the dashboard environment variables and Supabase tables are configured in the same project, then refresh this page.",
     detail:
       "If Vercel is pointed at the wrong Supabase project, or the `leads` table was not created there, this page will show the setup warning instead of the data view.",
   };
