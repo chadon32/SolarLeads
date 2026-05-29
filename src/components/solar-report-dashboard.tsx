@@ -60,8 +60,8 @@ export function SolarReportDashboard({
 
   return (
     <>
-      <aside className="space-y-4 lg:col-span-5">
-        <section className="liquid-glass rounded-[1.35rem] p-4 shadow-[0_18px_65px_rgba(0,0,0,0.34)]">
+      <aside className="space-y-3 lg:col-span-5">
+        <section className="rounded-[1.35rem] border border-cyan-200/12 bg-slate-950/72 p-4 shadow-[0_18px_65px_rgba(0,0,0,0.34)] backdrop-blur-xl">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="text-[0.62rem] font-semibold uppercase tracking-[0.28em] text-cyan-100/82">
@@ -81,7 +81,7 @@ export function SolarReportDashboard({
 
         <GuidedProgressStrip />
 
-        <section className="grid grid-cols-2 gap-3">
+        <section className="grid grid-cols-2 gap-2.5">
           <KeyMetric
             icon={Sun}
             label="Sunlight"
@@ -110,7 +110,7 @@ export function SolarReportDashboard({
           />
         </section>
 
-        <section className="rounded-[1.15rem] border border-white/10 bg-black/24 p-4 shadow-[0_12px_36px_rgba(0,0,0,0.22)]">
+        <section className="rounded-[1.15rem] border border-white/12 bg-slate-950/68 p-4 shadow-[0_12px_36px_rgba(0,0,0,0.22)]">
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="text-[0.62rem] font-semibold uppercase tracking-[0.28em] text-cyan-100/82">
@@ -173,13 +173,13 @@ export function SolarReportDashboard({
           href="#contact"
           className="inline-flex w-full items-center justify-center rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 shadow-[0_18px_55px_rgba(255,255,255,0.18)] transition hover:-translate-y-0.5 hover:bg-cyan-100"
         >
-          Get My Free Estimate
+          Send My Full Report
         </a>
       </aside>
 
       <section
         id="report-dashboard"
-        className="liquid-glass rounded-[1.5rem] p-3 shadow-[0_18px_70px_rgba(0,0,0,0.32)] sm:p-4 lg:col-span-12"
+        className="rounded-[1.5rem] border border-white/12 bg-slate-950/70 p-3 shadow-[0_18px_70px_rgba(0,0,0,0.32)] backdrop-blur-xl sm:p-4 lg:col-span-12"
       >
         <div
           role="tablist"
@@ -377,7 +377,7 @@ function NextStepsTab() {
           href="#contact"
           className="inline-flex items-center justify-center rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100"
         >
-          Get My Free Estimate
+          Send My Full Report
         </a>
         <a
           href="#how-it-works"

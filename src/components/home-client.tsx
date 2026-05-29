@@ -66,6 +66,7 @@ export function HomeClient() {
   } | null>(null);
   const [showStickyCta, setShowStickyCta] = useState(false);
   const hasValidAnalysis = Boolean(roofAnalysis?.validSite);
+  const heroCompact = Boolean(selectedAddress);
 
   useEffect(() => {
     const onScroll = () => {
@@ -111,13 +112,17 @@ export function HomeClient() {
             href="#contact"
             className="liquid-glass inline-flex w-full items-center justify-center gap-2 rounded-full px-6 py-4 text-sm font-semibold text-white shadow-[0_22px_70px_rgba(103,232,249,0.2)] transition hover:-translate-y-0.5 md:w-auto"
           >
-            Get My Free Estimate
+            Send My Full Report
             <ArrowRight className="h-4 w-4" aria-hidden="true" />
           </a>
         </div>
       ) : null}
 
-      <section className="relative z-10 mx-auto flex w-full max-w-7xl flex-col px-5 pb-10 pt-5 sm:px-7 md:px-10 lg:px-12">
+      <section
+        className={`relative z-10 mx-auto flex w-full max-w-7xl flex-col px-5 pt-5 sm:px-7 md:px-10 lg:px-12 ${
+          heroCompact ? "pb-4" : "pb-10"
+        }`}
+      >
         <nav className="liquid-glass relative z-20 mx-auto flex w-full max-w-6xl items-center justify-between gap-4 rounded-full px-4 py-3 sm:px-6 sm:py-4">
           <a href="#" className="flex min-w-0 items-center gap-3">
             <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-cyan-200/14 text-cyan-100 shadow-[0_0_34px_rgba(103,232,249,0.22)]">
@@ -154,17 +159,45 @@ export function HomeClient() {
               Call {BUSINESS_PHONE}
             </a>
             <a
-              href="#address-estimate"
+              href={hasValidAnalysis ? "#contact" : "#address-estimate"}
               className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-3 text-sm font-semibold text-slate-950 shadow-[0_18px_55px_rgba(255,255,255,0.18)] transition hover:-translate-y-0.5 hover:bg-cyan-100 sm:px-5"
             >
-              <span className="hidden sm:inline">Get My Free Estimate</span>
-              <span className="sm:hidden">Estimate</span>
+              <span className="hidden sm:inline">
+                {hasValidAnalysis ? "Send My Full Report" : "Get My Free Estimate"}
+              </span>
+              <span className="sm:hidden">{hasValidAnalysis ? "Send" : "Estimate"}</span>
             </a>
           </div>
         </nav>
 
-        <div className="flex flex-1 items-center py-10 lg:py-14">
-          <div className="mx-auto max-w-4xl text-center">
+        <div className={`flex flex-1 items-center ${heroCompact ? "py-5" : "py-10 lg:py-14"}`}>
+          <div className={`mx-auto text-center ${heroCompact ? "max-w-5xl" : "max-w-4xl"}`}>
+            {heroCompact ? (
+              <div className="mx-auto mb-4 grid gap-3 rounded-[1.5rem] border border-cyan-200/12 bg-slate-950/58 px-4 py-4 text-left shadow-[0_18px_60px_rgba(2,8,20,0.36)] backdrop-blur-xl md:grid-cols-[1fr_auto] md:items-center md:px-5">
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-100/82">
+                    {hasValidAnalysis ? "Report model ready" : "Generating roof model"}
+                  </p>
+                  <h1 className="mt-2 truncate text-xl font-semibold text-white md:text-2xl">
+                    {selectedAddress}
+                  </h1>
+                  <p className="mt-1 text-sm text-white/58">
+                    {hasValidAnalysis
+                      ? "Review the roof workspace below, then send the full PDF report."
+                      : "Satellite imagery and Solar API roof data are loading."}
+                  </p>
+                </div>
+                {hasValidAnalysis ? (
+                  <a
+                    href="#contact"
+                    className="inline-flex items-center justify-center rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:-translate-y-0.5 hover:bg-cyan-100"
+                  >
+                    Send My Full Report
+                  </a>
+                ) : null}
+              </div>
+            ) : (
+              <>
             <div className="liquid-glass mx-auto inline-flex items-center gap-3 rounded-full px-4 py-2 text-sm font-medium text-white/78">
               <span className="h-2 w-2 rounded-full bg-cyan-300 shadow-[0_0_20px_rgba(103,232,249,0.85)]" />
               Arizona residential analysis
@@ -174,7 +207,7 @@ export function HomeClient() {
               className="mt-6 max-w-5xl text-5xl leading-[0.88] tracking-[-0.05em] text-white drop-shadow-[0_14px_50px_rgba(0,0,0,0.48)] md:text-6xl lg:text-7xl"
               style={{ fontFamily: "'Instrument Serif', serif" }}
             >
-              See your home with solar —{" "}
+              See your home with solar -{" "}
               <span className="block italic text-white/90">
                 before you commit to anything.
               </span>
@@ -185,10 +218,14 @@ export function HomeClient() {
               placement, and a modeled savings profile for your property. No
               obligation.
             </p>
+              </>
+            )}
 
             <div
               id="address-estimate"
-              className="liquid-glass liquid-glass-unclipped mt-7 rounded-[1.75rem] p-4 shadow-[0_24px_80px_rgba(0,0,0,0.34)] sm:p-5"
+              className={`liquid-glass liquid-glass-unclipped rounded-[1.75rem] p-4 shadow-[0_24px_80px_rgba(0,0,0,0.34)] sm:p-5 ${
+                heroCompact ? "mt-0" : "mt-7"
+              }`}
             >
               <AddressSearch
                 selectedAddress={selectedAddress}
@@ -217,11 +254,15 @@ export function HomeClient() {
                       {selectedAddress}
                     </span>
                   </div>
-                  <AnalysisSequence key={selectedAddress} address={selectedAddress} />
+                  {hasValidAnalysis ? null : (
+                    <AnalysisSequence key={selectedAddress} address={selectedAddress} />
+                  )}
                 </>
               ) : null}
             </div>
 
+            {!heroCompact ? (
+              <>
             <div className="mt-5 flex flex-col items-center justify-center gap-3 sm:flex-row">
               <a
                 href={reportCtaHref}
@@ -246,6 +287,8 @@ export function HomeClient() {
                 </span>
               ))}
             </div>
+              </>
+            ) : null}
           </div>
         </div>
       </section>
@@ -253,33 +296,36 @@ export function HomeClient() {
       {showAnalysis ? (
         <section
           id="solar-workspace"
-          className="analysis-section relative z-10 mx-auto w-full max-w-7xl px-5 pb-10 sm:px-7 md:px-10 lg:px-12"
+          className="analysis-section relative z-10 mx-auto w-full max-w-7xl px-5 pb-6 sm:px-7 md:px-10 lg:px-12"
         >
-          <div className="mb-5 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+          <div className="mb-4 flex flex-col justify-between gap-3 rounded-[1.4rem] border border-white/10 bg-slate-950/58 px-4 py-4 shadow-[0_16px_50px_rgba(2,8,20,0.3)] backdrop-blur-xl sm:flex-row sm:items-end">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-100/82">
-                Solar report
+                {hasValidAnalysis ? "Preliminary roof model ready" : "Solar report loading"}
               </p>
               <h2
-                className="mt-2 text-3xl leading-none tracking-[-0.035em] text-white md:text-5xl"
+                className="mt-2 text-2xl leading-none tracking-[-0.035em] text-white md:text-4xl"
                 style={{ fontFamily: "'Instrument Serif', serif" }}
               >
                 Roof analysis workspace
               </h2>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-white/60">
+                {selectedAddress}
+              </p>
             </div>
             {hasValidAnalysis ? (
               <a
-                href="#report-dashboard"
-                className="text-sm font-semibold text-cyan-100/82 transition hover:text-cyan-50"
+                href="#contact"
+                className="inline-flex items-center justify-center rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:-translate-y-0.5 hover:bg-cyan-100"
               >
-                View report tabs
+                Send My Full Report
               </a>
             ) : null}
           </div>
 
           <div className="grid gap-4 lg:grid-cols-12">
             <div className={hasValidAnalysis ? "lg:col-span-7" : "lg:col-span-12"}>
-              <div className="liquid-glass overflow-hidden rounded-[1.5rem] p-2 shadow-[0_22px_75px_rgba(0,0,0,0.38)]">
+              <div className="overflow-hidden rounded-[1.5rem] border border-cyan-200/12 bg-slate-950/72 p-2 shadow-[0_22px_75px_rgba(0,0,0,0.38)] backdrop-blur-xl">
                 <SolarAnalysis
                   key={selectedAddress}
                   address={selectedAddress}
@@ -303,44 +349,6 @@ export function HomeClient() {
         </section>
       ) : null}
 
-      <section
-        id="how-it-works"
-        className="relative z-10 mx-auto w-full max-w-7xl px-5 pb-10 sm:px-7 md:px-10 lg:px-12"
-      >
-        <SectionIntro
-          eyebrow="Why it works"
-          title="See your roof, your layout, and your estimate without the pressure."
-          copy="We keep the experience simple so you can evaluate the roof, the savings, and the next step on your own terms."
-        />
-        <div className="mt-5 grid gap-3 lg:grid-cols-3">
-          {featureCards.map((card) => (
-            <FeatureCard key={card.title} title={card.title} copy={card.copy} />
-          ))}
-        </div>
-      </section>
-
-      <section
-        id="reviews"
-        className="relative z-10 mx-auto w-full max-w-7xl px-5 pb-10 sm:px-7 md:px-10 lg:px-12"
-      >
-        <div className="liquid-glass rounded-[1.7rem] p-5 shadow-[0_22px_75px_rgba(0,0,0,0.38)] sm:p-6">
-          <p className="text-xs font-semibold uppercase tracking-[0.34em] text-cyan-100/82">
-            Homeowner reviews
-          </p>
-          <h2
-            className="mt-3 text-3xl leading-none tracking-[-0.035em] text-white md:text-5xl"
-            style={{ fontFamily: "'Instrument Serif', serif" }}
-          >
-            What Arizona homeowners are saying
-          </h2>
-          <div className="mt-5 grid snap-x snap-mandatory gap-3 overflow-x-auto pb-2 lg:grid-cols-3 lg:overflow-visible">
-            {testimonials.map((item) => (
-              <ReviewCard key={item.name} name={item.name} quote={item.quote} />
-            ))}
-          </div>
-        </div>
-      </section>
-
       {hasValidAnalysis ? (
         <section
           id="contact"
@@ -348,7 +356,7 @@ export function HomeClient() {
         >
           <SectionIntro
             eyebrow="Generate report"
-            title="Ready to see your full report? Enter your details and we’ll send it instantly."
+            title="Send your full solar report."
             copy="We only need a few details to generate the report and send the estimate to you."
           />
           <div className="mt-5">
@@ -361,6 +369,8 @@ export function HomeClient() {
           </div>
         </section>
       ) : null}
+
+      <OptionalTrustSections />
 
       <footer className="relative z-10 mx-auto flex w-full max-w-7xl items-center justify-center px-5 pb-10 text-center text-sm text-white/56 sm:px-7 md:px-10 lg:px-12">
         <div className="liquid-glass inline-flex items-center gap-3 rounded-full px-5 py-3">
@@ -501,11 +511,11 @@ function SectionIntro({
 }) {
   const displayTitle =
     eyebrow === "Generate report"
-      ? "Ready to see your full report? Enter your details and we'll send it instantly."
+      ? "Send your full solar report."
       : title;
   const displayCopy =
     eyebrow === "Generate report"
-      ? "We'll save the report details for your dashboard and send a PDF copy to your email."
+      ? "Enter your details once and we will email the full PDF report for this roof model."
       : copy;
 
   return (
@@ -523,6 +533,56 @@ function SectionIntro({
         {displayCopy}
       </p>
     </div>
+  );
+}
+
+function OptionalTrustSections() {
+  return (
+    <section className="relative z-10 mx-auto w-full max-w-7xl px-5 pb-8 sm:px-7 md:px-10 lg:px-12">
+      <div className="liquid-glass rounded-[1.5rem] p-3 shadow-[0_18px_60px_rgba(0,0,0,0.3)] sm:p-4">
+        <details id="how-it-works" className="group border-b border-white/10 pb-3" open={false}>
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-4 rounded-[1rem] px-3 py-3 text-left transition hover:bg-white/[0.04]">
+            <span>
+              <span className="block text-xs font-semibold uppercase tracking-[0.28em] text-cyan-100/82">
+                Why it works
+              </span>
+              <span className="mt-1 block text-lg font-semibold text-white">
+                Roof, layout, and estimate without the pressure
+              </span>
+            </span>
+            <span className="text-sm font-semibold text-white/50 group-open:rotate-45">
+              +
+            </span>
+          </summary>
+          <div className="grid gap-3 px-3 pb-3 pt-2 lg:grid-cols-3">
+            {featureCards.map((card) => (
+              <FeatureCard key={card.title} title={card.title} copy={card.copy} />
+            ))}
+          </div>
+        </details>
+
+        <details id="reviews" className="group pt-3">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-4 rounded-[1rem] px-3 py-3 text-left transition hover:bg-white/[0.04]">
+            <span>
+              <span className="block text-xs font-semibold uppercase tracking-[0.28em] text-cyan-100/82">
+                Homeowner reviews
+              </span>
+              <span className="mt-1 block text-lg font-semibold text-white">
+                What Arizona homeowners are saying
+              </span>
+            </span>
+            <span className="text-sm font-semibold text-white/50 group-open:rotate-45">
+              +
+            </span>
+          </summary>
+          <div className="grid snap-x snap-mandatory gap-3 overflow-x-auto px-3 pb-3 pt-2 lg:grid-cols-3 lg:overflow-visible">
+            {testimonials.map((item) => (
+              <ReviewCard key={item.name} name={item.name} quote={item.quote} />
+            ))}
+          </div>
+        </details>
+      </div>
+    </section>
   );
 }
 

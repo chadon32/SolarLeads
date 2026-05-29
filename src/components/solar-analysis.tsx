@@ -579,14 +579,14 @@ export function SolarAnalysis({
 
       {stage === "done" && roofData && metrics ? (
         compact ? (
-          <article className="overflow-hidden rounded-[1.5rem] border border-white/10 bg-slate-950/82 shadow-[0_14px_44px_rgba(2,8,20,0.36)]">
+          <article className="overflow-hidden rounded-[1.5rem] border border-cyan-200/12 bg-slate-900/78 shadow-[0_14px_44px_rgba(2,8,20,0.36)]">
             <ViewportHeader
               address={resolvedProperty?.address ?? address}
               viewMode={viewMode}
               onSelectView={setViewMode}
             />
             <div className="border-t border-white/8 p-3">
-              <div className="relative overflow-hidden rounded-[1.1rem] border border-white/8">
+              <div className="relative overflow-hidden rounded-[1.1rem] border border-white/12 bg-slate-800/35">
                 <ViewportCanvas
                   satelliteImage={satelliteImage}
                   annualFluxUrl={annualFluxUrl}
@@ -617,7 +617,7 @@ export function SolarAnalysis({
                   value={metrics.orientationLabel}
                 />
               </div>
-              <div className="mt-3 rounded-[1rem] border border-white/8 bg-white/[0.035] p-3 text-xs leading-5 text-slate-300">
+              <div className="mt-3 rounded-[1rem] border border-white/10 bg-slate-950/62 p-3 text-xs leading-5 text-slate-200">
                 <p>
                   Panels are placed from available Solar API candidate points and adjusted
                   for visual spacing, estimated setbacks, and overlap prevention.
