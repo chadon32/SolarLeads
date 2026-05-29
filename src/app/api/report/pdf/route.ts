@@ -14,13 +14,17 @@ import {
   buildSolarReportFromSolarValues,
   type SolarReport,
 } from "@/lib/solar-report";
+import {
+  buildSolarAdvisorProfile,
+  type SolarAdvisorProfile,
+} from "@/lib/solar-advisor";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
 
 export const runtime = "nodejs";
 
 type Color = ReturnType<typeof rgb>;
-type SourceLabel = "Solar API" | "Modeled" | "User-adjusted" | "Illustrative";
+type SourceLabel = "Solar API" | "Modeled" | "User-adjusted" | "Illustrative" | "Estimated";
 
 type ReportLead = {
   id: string;
@@ -82,9 +86,11 @@ type ProposalData = {
   usableRoofPct?: number;
   roofPitchDeg?: number;
   sunlightHours?: number;
+  suitabilityScore: number;
   installedCost?: number;
   costWithoutSolar20Yr?: number;
   costWithSolar20Yr?: number;
+  advisor: SolarAdvisorProfile;
 };
 
 type PdfAssets = {
@@ -255,6 +261,26 @@ function buildProposalData(
       : geometryScore >= 1 || annualSavings
         ? "Medium"
         : "Low";
+  const suitabilityScore = getPdfSuitabilityScore({
+    energyOffsetPct,
+    panelCount,
+    sunlightHours,
+    usableRoofPct,
+  });
+  const advisor = buildSolarAdvisorProfile({
+    annualSavings: annualSavings ?? 0,
+    annualSunlightHours: sunlightHours ?? 0,
+    coveragePct: energyOffsetPct ?? 0,
+    grossRoofAreaM2: positiveNumber(lead.roof_area_m2),
+    monthlyBill,
+    panelCount: panelCount ?? 0,
+    paybackYears: roiYears,
+    roofSegments: [],
+    suitabilityScore,
+    systemKw: systemKw ?? 0,
+    usablePctRoof: usableRoofPct ?? 0,
+    usableRoofAreaM2: positiveNumber(lead.usable_area_m2) ?? 0,
+  });
 
   return {
     id: lead.id,
@@ -286,9 +312,11 @@ function buildProposalData(
     usableRoofPct,
     roofPitchDeg: positiveNumber(lead.roof_pitch_deg),
     sunlightHours,
+    suitabilityScore,
     installedCost,
     costWithoutSolar20Yr,
     costWithSolar20Yr,
+    advisor,
   };
 }
 
@@ -461,23 +489,49 @@ function drawRoofAnalysisPage(
   drawCard(page, 312, 250, 258, 88, colors);
   drawRoofSummary(page, 328, 315, proposal, fonts, colors);
 
-  drawCard(page, 42, 100, 528, 112, colors);
-  page.drawText("Why panels were placed here", {
+  drawCard(page, 42, 82, 528, 130, colors);
+  page.drawText("AI Solar Advisor", {
     x: 60,
-    y: 184,
+    y: 188,
     size: 13,
     font: fonts.bold,
     color: colors.text,
   });
-  const reasons = [
-    "Prioritizes roof planes with stronger sunlight and cleaner geometry.",
-    "Keeps panel groups aligned into readable rows instead of scattered placements.",
-    "Accounts for edge setbacks, spacing, and obstruction avoidance at an estimate level.",
-    "Final design still requires installer verification, utility review, and site measurements.",
-  ];
-  reasons.forEach((reason, index) => {
-    drawBullet(page, 62, 161 - index * 20, reason, fonts, colors);
+  drawSourceBadge(page, 458, 188, "Estimated", fonts, colors);
+  drawTextBlock(
+    page,
+    proposal.advisor.summary,
+    60,
+    170,
+    492,
+    fonts.regular,
+    8.1,
+    10.2,
+    colors.muted
+  );
+  page.drawText(proposal.advisor.suitability.headline, {
+    x: 60,
+    y: 118,
+    size: 9,
+    font: fonts.bold,
+    color: colors.cyan,
   });
+  proposal.advisor.suitability.positiveFactors
+    .slice(0, 2)
+    .forEach((reason, index) => {
+      drawBullet(page, 62, 99 - index * 15, reason, fonts, colors, 7.4);
+    });
+  drawTextBlock(
+    page,
+    `Shade / sunlight quality: ${proposal.advisor.sunlightQuality.summary}`,
+    304,
+    118,
+    240,
+    fonts.regular,
+    7.5,
+    9.4,
+    colors.muted
+  );
 }
 
 function drawSavingsPage(
@@ -1052,6 +1106,13 @@ function drawRoofSummary(
     font: fonts.regular,
     color: colors.muted,
   });
+  page.drawText(`Suitability ${proposal.suitabilityScore}/100`, {
+    x,
+    y: y - 62,
+    size: 8.5,
+    font: fonts.bold,
+    color: colors.cyan,
+  });
 }
 
 function drawCostComparison(
@@ -1259,7 +1320,9 @@ function drawSourceBadge(
         ? colors.gold
         : label === "User-adjusted"
           ? colors.green
-          : colors.slate;
+          : label === "Estimated"
+            ? colors.orange
+            : colors.slate;
   page.drawRectangle({
     x,
     y,
@@ -1580,6 +1643,34 @@ function shouldRetryLegacySelect(message: string) {
     message.includes("does not exist") ||
     message.includes("schema cache") ||
     message.includes("Could not find")
+  );
+}
+
+function getPdfSuitabilityScore({
+  energyOffsetPct,
+  panelCount,
+  sunlightHours,
+  usableRoofPct,
+}: {
+  energyOffsetPct?: number;
+  panelCount?: number;
+  sunlightHours?: number;
+  usableRoofPct?: number;
+}) {
+  const sunlightScore = clamp(((sunlightHours ?? 0) / 2100) * 100, 0, 100);
+  const areaScore = clamp(usableRoofPct ?? 0, 0, 100);
+  const panelScore = clamp(((panelCount ?? 0) / 24) * 100, 0, 100);
+  const offsetScore = clamp(energyOffsetPct ?? 0, 0, 100);
+
+  return clamp(
+    Math.round(
+      sunlightScore * 0.28 +
+        areaScore * 0.22 +
+        panelScore * 0.26 +
+        offsetScore * 0.24
+    ),
+    0,
+    100
   );
 }
 

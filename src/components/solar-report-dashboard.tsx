@@ -14,6 +14,11 @@ import {
 import { useMemo, useState } from "react";
 import type { RoofAnalysis } from "@/lib/roof-analysis";
 import {
+  buildSolarAdvisorInputFromAnalysis,
+  buildSolarAdvisorProfile,
+  type SolarAdvisorProfile,
+} from "@/lib/solar-advisor";
+import {
   buildSolarMetrics,
   INSTALLED_COST_PER_WATT,
   STANDARD_PANEL_WATTS,
@@ -30,7 +35,7 @@ type SolarReportDashboardProps = {
 
 type DetailTab = "overview" | "savings" | "environment" | "financing" | "next";
 type FinancingMode = "buy" | "lease" | "loan";
-type MetricSource = "solar-api" | "modeled" | "user-adjusted" | "illustrative";
+type MetricSource = "solar-api" | "modeled" | "user-adjusted" | "illustrative" | "estimated";
 
 const monthlyBillOptions = [100, 150, 200, 250, 300, 350, 400, 450, 500];
 
@@ -62,6 +67,7 @@ export function SolarReportDashboard({
   const monthlyBill = externalMonthlyBill;
   const [activeTab, setActiveTab] = useState<DetailTab>("overview");
   const [financingMode, setFinancingMode] = useState<FinancingMode>("loan");
+  const [selectedAdvisorQuestion, setSelectedAdvisorQuestion] = useState(0);
   const values = useMemo(
     () => buildDashboardValues(analysis, monthlyBill, financingMode, activePanelCount),
     [activePanelCount, analysis, financingMode, monthlyBill]
@@ -90,6 +96,7 @@ export function SolarReportDashboard({
             Estimated solar layout generated from available roof and sunlight data.
             Final panel placement, incentives, pricing, and savings require installer confirmation.
           </p>
+          <SuitabilityExplanationCard advisor={values.advisor} />
         </section>
 
         <GuidedProgressStrip />
@@ -180,14 +187,20 @@ export function SolarReportDashboard({
           </div>
         </section>
 
-        <DataProvenanceBlock />
+        <AiSolarAdvisorCard
+          advisor={values.advisor}
+          selectedQuestion={selectedAdvisorQuestion}
+          onSelectQuestion={setSelectedAdvisorQuestion}
+        />
 
         <a
           href="#contact"
           className="inline-flex w-full items-center justify-center rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 shadow-[0_18px_55px_rgba(255,255,255,0.18)] transition hover:-translate-y-0.5 hover:bg-cyan-100"
         >
-          Send My Full Report
+          Send My Full Solar Report
         </a>
+
+        <DataProvenanceBlock />
       </aside>
 
       <section
@@ -442,18 +455,124 @@ function DataProvenanceBlock() {
   );
 }
 
+function SuitabilityExplanationCard({
+  advisor,
+}: {
+  advisor: SolarAdvisorProfile;
+}) {
+  return (
+    <div className="mt-4 rounded-[1.05rem] border border-white/10 bg-black/24 p-3">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-[0.62rem] font-semibold uppercase tracking-[0.24em] text-white/48">
+          {advisor.suitability.headline}
+        </p>
+        <span className="rounded-full border border-cyan-200/18 bg-cyan-200/10 px-2.5 py-1 text-[0.58rem] font-semibold uppercase tracking-[0.16em] text-cyan-100">
+          {advisor.candidateLabel} candidate
+        </span>
+      </div>
+      <div className="mt-3 grid gap-2">
+        {advisor.suitability.positiveFactors.slice(0, 3).map((factor) => (
+          <div key={factor} className="flex gap-2 text-xs leading-5 text-white/66">
+            <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-300" />
+            <span>{factor}</span>
+          </div>
+        ))}
+        {advisor.suitability.limitingFactors.slice(0, 2).map((factor) => (
+          <div key={factor} className="flex gap-2 text-xs leading-5 text-amber-100/80">
+            <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-300" />
+            <span>{factor}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AiSolarAdvisorCard({
+  advisor,
+  onSelectQuestion,
+  selectedQuestion,
+}: {
+  advisor: SolarAdvisorProfile;
+  onSelectQuestion: (index: number) => void;
+  selectedQuestion: number;
+}) {
+  const activeQuestion =
+    advisor.questions[selectedQuestion] ?? advisor.questions[0];
+
+  return (
+    <section className="rounded-[1.15rem] border border-white/12 bg-slate-950/68 p-4 shadow-[0_12px_36px_rgba(0,0,0,0.22)]">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[0.62rem] font-semibold uppercase tracking-[0.28em] text-cyan-100/82">
+            AI Solar Advisor
+          </p>
+          <h3 className="mt-2 text-base font-semibold text-white">
+            Plain-English roof guidance
+          </h3>
+        </div>
+        <SourceBadge source="estimated" />
+      </div>
+      <p className="mt-3 text-sm leading-6 text-white/64">
+        {advisor.summary}
+      </p>
+      <div className="mt-3 rounded-[0.9rem] border border-white/10 bg-black/22 p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-[0.62rem] font-semibold uppercase tracking-[0.2em] text-white/44">
+            Estimated sunlight quality
+          </p>
+          <span className="rounded-full border border-emerald-200/18 bg-emerald-200/10 px-2.5 py-1 text-[0.56rem] font-semibold uppercase tracking-[0.14em] text-emerald-100">
+            {advisor.sunlightQuality.label} / {advisor.sunlightQuality.score}
+          </span>
+        </div>
+        <p className="mt-2 text-xs leading-5 text-white/52">
+          {advisor.sunlightQuality.summary}
+        </p>
+      </div>
+      <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
+        {advisor.questions.map((item, index) => (
+          <button
+            key={item.question}
+            type="button"
+            onClick={() => onSelectQuestion(index)}
+            className={`shrink-0 rounded-full px-3 py-2 text-[0.62rem] font-semibold uppercase tracking-[0.14em] transition ${
+              index === selectedQuestion
+                ? "bg-white text-slate-950"
+                : "border border-white/10 bg-black/20 text-white/58 hover:text-white"
+            }`}
+          >
+            {item.question}
+          </button>
+        ))}
+      </div>
+      {activeQuestion ? (
+        <div className="mt-3 rounded-[0.95rem] border border-cyan-200/12 bg-cyan-200/[0.055] p-3">
+          <p className="text-sm font-semibold text-white">
+            {activeQuestion.question}
+          </p>
+          <p className="mt-2 text-xs leading-5 text-white/62">
+            {activeQuestion.answer}
+          </p>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function SourceBadge({ source }: { source: MetricSource }) {
   const styles: Record<MetricSource, string> = {
     "solar-api": "border-cyan-200/18 bg-cyan-200/10 text-cyan-100",
     modeled: "border-amber-200/18 bg-amber-200/10 text-amber-100",
     "user-adjusted": "border-emerald-200/18 bg-emerald-200/10 text-emerald-100",
     illustrative: "border-slate-200/18 bg-white/8 text-slate-200",
+    estimated: "border-fuchsia-200/18 bg-fuchsia-200/10 text-fuchsia-100",
   };
   const labels: Record<MetricSource, string> = {
     "solar-api": "Solar API",
     modeled: "Modeled",
     "user-adjusted": "User-adjusted",
     illustrative: "Illustrative",
+    estimated: "Estimated",
   };
 
   return (
@@ -625,6 +744,9 @@ function buildDashboardValues(
     monthlyBill,
     selectedPanelCount: panelCount,
   });
+  const advisor = buildSolarAdvisorProfile(
+    buildSolarAdvisorInputFromAnalysis(analysis, metrics, monthlyBill)
+  );
   const usableAreaSqFt = Math.round(metrics.usableRoofAreaM2 * 10.7639);
   const rejectedPanelCandidateCount = metrics.rejectedCandidateCount;
   const annualKwh = metrics.annualKwh;
@@ -668,6 +790,7 @@ function buildDashboardValues(
   const totalSavings = Math.max(totalCostWithoutSolar - totalCostWithSolar, 0);
 
   return {
+    advisor,
     annualKwh,
     annualSavings,
     carbonMetricTons,

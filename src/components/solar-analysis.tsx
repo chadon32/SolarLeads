@@ -1,9 +1,13 @@
-﻿"use client";
+"use client";
 
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ButtonLink } from "@/components/ui/button";
 import { formatDisplayAddress } from "@/lib/address-format";
+import {
+  calculateSunlightQuality,
+  type RoofQualityTone,
+} from "@/lib/solar-advisor";
 import { type RoofGeoBounds, type RoofAnalysis } from "@/lib/roof-analysis";
 import {
   buildSolarMetrics,
@@ -63,6 +67,12 @@ type AnalyzeRoofPayload = {
 };
 
 type ViewMode = "overview" | "irradiance";
+
+type LayerVisibility = {
+  panels: boolean;
+  roofPlanes: boolean;
+  sunlight: boolean;
+};
 
 type AnalysisMetrics = {
   roofArea: number;
@@ -167,8 +177,13 @@ type GoogleOverlayViewInstance = GoogleMapOverlayInstance & {
 
 const viewModes: Array<{ id: ViewMode; label: string }> = [
   { id: "overview", label: "Overview" },
-  { id: "irradiance", label: "Irradiance" },
+  { id: "irradiance", label: "Sunlight" },
 ];
+const defaultLayerVisibility: LayerVisibility = {
+  panels: true,
+  roofPlanes: true,
+  sunlight: false,
+};
 
 const dsmPlaneExtractionCache = new Map<string, Promise<DsmPlaneExtraction | null>>();
 const DISPLAY_PANEL_HEIGHT_METERS = 1.65;
@@ -198,6 +213,9 @@ export function SolarAnalysis({
   const [notice, setNotice] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string>("");
   const [viewMode, setViewMode] = useState<ViewMode>("overview");
+  const [layerVisibility, setLayerVisibility] = useState<LayerVisibility>(
+    defaultLayerVisibility
+  );
   const [internalPanelCount, setInternalPanelCount] = useState<number>(0);
   const selectedPanelCount = activePanelCount ?? internalPanelCount;
   const setSelectedPanelCount = useCallback(
@@ -207,6 +225,19 @@ export function SolarAnalysis({
     },
     [onActivePanelCountChange]
   );
+  const selectViewMode = useCallback((nextViewMode: ViewMode) => {
+    setViewMode(nextViewMode);
+    setLayerVisibility((current) => ({
+      ...current,
+      sunlight: nextViewMode === "irradiance",
+    }));
+  }, []);
+  const updateLayerVisibility = useCallback((nextVisibility: LayerVisibility) => {
+    setLayerVisibility(nextVisibility);
+    setViewMode((current) =>
+      nextVisibility.sunlight ? "irradiance" : current === "irradiance" ? "overview" : current
+    );
+  }, []);
 
   useEffect(() => {
     const trimmedAddress = address.trim();
@@ -489,7 +520,7 @@ export function SolarAnalysis({
             <ViewportHeader
               address={resolvedProperty?.address ?? address}
               viewMode={viewMode}
-              onSelectView={setViewMode}
+              onSelectView={selectViewMode}
             />
             <div className={compact ? "relative min-h-[24rem]" : "relative min-h-[30rem]"}>
               <Image
@@ -527,7 +558,7 @@ export function SolarAnalysis({
             <ViewportHeader
               address={resolvedProperty?.address ?? address}
               viewMode={viewMode}
-              onSelectView={setViewMode}
+              onSelectView={selectViewMode}
             />
             <div className="border-t border-white/8 p-3">
               <div className="relative overflow-hidden rounded-[1.1rem] border border-white/12 bg-slate-800/35">
@@ -540,7 +571,8 @@ export function SolarAnalysis({
                   compact
                   property={resolvedProperty}
                   roofData={roofData}
-                  viewMode={viewMode}
+                  layerVisibility={layerVisibility}
+                  onLayerVisibilityChange={updateLayerVisibility}
                   selectedPanelCount={metrics.selectedPanelCount}
                 />
               </div>
@@ -604,7 +636,7 @@ export function SolarAnalysis({
               <ViewportHeader
                 address={resolvedProperty?.address ?? address}
                 viewMode={viewMode}
-                onSelectView={setViewMode}
+                onSelectView={selectViewMode}
               />
               <div className="border-t border-white/8 p-4 sm:p-5">
                 <div className="relative overflow-hidden rounded-[1.7rem] border border-white/8">
@@ -616,7 +648,8 @@ export function SolarAnalysis({
                     address={resolvedProperty?.address ?? address}
                     property={resolvedProperty}
                     roofData={roofData}
-                    viewMode={viewMode}
+                    layerVisibility={layerVisibility}
+                    onLayerVisibilityChange={updateLayerVisibility}
                     selectedPanelCount={metrics.selectedPanelCount}
                   />
                 </div>
@@ -768,7 +801,8 @@ function ViewportCanvas({
   compact = false,
   property,
   roofData,
-  viewMode,
+  layerVisibility,
+  onLayerVisibilityChange,
   selectedPanelCount,
 }: {
   satelliteImage: string | null;
@@ -779,7 +813,8 @@ function ViewportCanvas({
   compact?: boolean;
   property: ResolvedProperty | null;
   roofData: RoofAnalysis;
-  viewMode: ViewMode;
+  layerVisibility: LayerVisibility;
+  onLayerVisibilityChange: (next: LayerVisibility) => void;
   selectedPanelCount: number;
 }) {
   const mapElementRef = useRef<HTMLDivElement | null>(null);
@@ -882,64 +917,103 @@ function ViewportCanvas({
         return;
       }
 
-      const boundsOverlay = createRoofBoundsOverlay(
-        googleApi,
-        roofData.roofBounds,
-        mapRef.current
-      );
-      if (boundsOverlay) {
-        nextOverlays.push(boundsOverlay);
-      }
+      if (layerVisibility.roofPlanes) {
+        const boundsOverlay = createRoofBoundsOverlay(
+          googleApi,
+          roofData.roofBounds,
+          mapRef.current
+        );
+        if (boundsOverlay) {
+          nextOverlays.push(boundsOverlay);
+        }
 
-      const footprintOverlay = createRoofFootprintOverlay({
-        googleApi,
-        map: mapRef.current,
-        roofData,
-      });
-      if (footprintOverlay) {
-        nextOverlays.push(footprintOverlay);
-      }
+        const footprintOverlay = createRoofFootprintOverlay({
+          googleApi,
+          map: mapRef.current,
+          roofData,
+        });
+        if (footprintOverlay) {
+          nextOverlays.push(footprintOverlay);
+        }
 
-      const dsmPlaneOverlays = dsmExtraction?.planes.length
-        ? createDsmPlaneOverlays({
-            extraction: dsmExtraction,
+        const dsmPlaneOverlays = dsmExtraction?.planes.length
+          ? createDsmPlaneOverlays({
+              extraction: dsmExtraction,
+              googleApi,
+              map: mapRef.current,
+            })
+          : [];
+
+        nextOverlays.push(
+          ...(dsmPlaneOverlays.length
+            ? dsmPlaneOverlays
+            : createRoofSegmentOverlays({
+                googleApi,
+                map: mapRef.current,
+                roofData,
+              }))
+        );
+        const setbackOverlay = createSetbackOverlay({
+          googleApi,
+          map: mapRef.current,
+          roofData,
+        });
+        if (setbackOverlay) {
+          nextOverlays.push(setbackOverlay);
+        }
+        nextOverlays.push(
+          ...createObstructionOverlays({
             googleApi,
             map: mapRef.current,
+            roofData,
           })
-        : [];
+        );
+      }
 
-      nextOverlays.push(
-        ...(dsmPlaneOverlays.length
-          ? dsmPlaneOverlays
-          : createRoofSegmentOverlays({
+      if (layerVisibility.sunlight) {
+        let addedFluxOverlay = false;
+        if (annualFluxUrl) {
+          const heatmapOverlay = await createAnnualFluxMapOverlay({
+            googleApi,
+            annualFluxUrl,
+            solarMaskUrl,
+            fallbackBounds: roofData.roofBounds,
+            opacity: 0.6,
+          });
+
+          if (heatmapOverlay) {
+            if (cancelled || overlayRunRef.current !== overlayRun || !mapRef.current) {
+              heatmapOverlay.setMap(null);
+              return;
+            }
+
+            heatmapOverlay.setMap(mapRef.current);
+            nextOverlays.push(heatmapOverlay);
+            addedFluxOverlay = true;
+          }
+        }
+
+        if (!addedFluxOverlay) {
+          nextOverlays.push(
+            ...createEstimatedSunlightQualityOverlays({
               googleApi,
               map: mapRef.current,
               roofData,
-            }))
-      );
-      const setbackOverlay = createSetbackOverlay({
-        googleApi,
-        map: mapRef.current,
-        roofData,
-      });
-      if (setbackOverlay) {
-        nextOverlays.push(setbackOverlay);
+            })
+          );
+        }
       }
-      nextOverlays.push(
-        ...createObstructionOverlays({
-          googleApi,
-          map: mapRef.current,
-          roofData,
-        })
-      );
-      nextOverlays.push(
-        ...createSolarPanelOverlays({
-          googleApi,
-          map: mapRef.current,
-          roofData,
-          selectedPanelCount,
-        })
-      );
+
+      if (layerVisibility.panels) {
+        nextOverlays.push(
+          ...createSolarPanelOverlays({
+            googleApi,
+            map: mapRef.current,
+            roofData,
+            selectedPanelCount,
+          })
+        );
+      }
       const selectedHomeOverlay = createSelectedHomeOverlay({
         googleApi,
         map: mapRef.current,
@@ -952,26 +1026,6 @@ function ViewportCanvas({
         nextOverlays.push(selectedHomeOverlay);
       }
       overlayRefs.current = nextOverlays;
-
-      if (viewMode === "irradiance") {
-        const heatmapOverlay = await createAnnualFluxMapOverlay({
-          googleApi,
-          annualFluxUrl,
-          solarMaskUrl,
-          fallbackBounds: roofData.roofBounds,
-          opacity: 0.6,
-        });
-
-        if (heatmapOverlay) {
-          if (cancelled || overlayRunRef.current !== overlayRun || !mapRef.current) {
-            heatmapOverlay.setMap(null);
-            return;
-          }
-
-          heatmapOverlay.setMap(mapRef.current);
-          nextOverlays.push(heatmapOverlay);
-        }
-      }
 
       if (!cancelled && overlayRunRef.current === overlayRun && mapRef.current) {
         overlayRefs.current = nextOverlays;
@@ -1003,11 +1057,11 @@ function ViewportCanvas({
   }, [
     annualFluxUrl,
     dsmUrl,
+    layerVisibility,
     mapsApiKey,
     roofData,
     selectedPanelCount,
     solarMaskUrl,
-    viewMode,
     property,
     cameraTarget,
     cameraTargetKey,
@@ -1039,7 +1093,13 @@ function ViewportCanvas({
         </div>
       ) : null}
       {!showMapFallback ? (
-        <MapEvidenceOverlay />
+        <>
+          <LayerControl
+            layerVisibility={layerVisibility}
+            onLayerVisibilityChange={onLayerVisibilityChange}
+          />
+          <MapEvidenceOverlay layerVisibility={layerVisibility} />
+        </>
       ) : null}
     </div>
   );
@@ -1088,7 +1148,57 @@ function loadGoogleMapsApi(apiKey: string) {
   return browserWindow.__solarMapsPromise;
 }
 
-function MapEvidenceOverlay() {
+function LayerControl({
+  layerVisibility,
+  onLayerVisibilityChange,
+}: {
+  layerVisibility: LayerVisibility;
+  onLayerVisibilityChange: (next: LayerVisibility) => void;
+}) {
+  const toggles: Array<{
+    id: keyof LayerVisibility;
+    label: string;
+  }> = [
+    { id: "panels", label: "Panels" },
+    { id: "sunlight", label: "Sunlight quality" },
+    { id: "roofPlanes", label: "Roof planes" },
+  ];
+
+  return (
+    <div className="pointer-events-auto absolute right-3 top-3 z-20 max-w-[calc(100%-1.5rem)] rounded-[0.9rem] border border-white/20 bg-slate-950/54 p-2 shadow-[0_10px_24px_rgba(2,8,20,0.22)] backdrop-blur-md">
+      <p className="px-1 text-[0.5rem] font-bold uppercase tracking-[0.22em] text-cyan-100/80">
+        Layers
+      </p>
+      <div className="mt-2 grid gap-1.5">
+        {toggles.map((toggle) => (
+          <label
+            key={toggle.id}
+            className="flex cursor-pointer items-center justify-between gap-3 rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1.5 text-[0.62rem] font-semibold text-white/80"
+          >
+            <span>{toggle.label}</span>
+            <input
+              type="checkbox"
+              checked={layerVisibility[toggle.id]}
+              onChange={(event) =>
+                onLayerVisibilityChange({
+                  ...layerVisibility,
+                  [toggle.id]: event.target.checked,
+                })
+              }
+              className="h-3.5 w-3.5 accent-cyan-300"
+            />
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MapEvidenceOverlay({
+  layerVisibility,
+}: {
+  layerVisibility: LayerVisibility;
+}) {
   return (
     <>
       <div className="pointer-events-none absolute left-3 top-3 z-10 max-w-[calc(100%-1.5rem)] rounded-full border border-white/10 bg-slate-950/35 px-2.5 py-1.5 text-[0.58rem] font-semibold uppercase tracking-[0.16em] text-cyan-100/90 shadow-none backdrop-blur-[2px]">
@@ -1104,9 +1214,23 @@ function MapEvidenceOverlay() {
           </span>
         </div>
         <div className="mt-1.5 grid gap-1">
-          <LegendItem swatch="border border-cyan-500 bg-cyan-300/30" label="Roof plane - usable solar area" />
-          <LegendItem swatch="border border-amber-500 bg-amber-300/35" label="Setback - required edge buffer" />
-          <LegendItem swatch="bg-slate-700/70" label="Unavailable - shaded or obstructed" />
+          {layerVisibility.roofPlanes ? (
+            <>
+              <LegendItem swatch="border border-cyan-500 bg-cyan-300/30" label="Roof plane - usable solar area" />
+              <LegendItem swatch="border border-amber-500 bg-amber-300/35" label="Setback - required edge buffer" />
+              <LegendItem swatch="bg-slate-700/70" label="Unavailable - shaded or obstructed" />
+            </>
+          ) : null}
+          {layerVisibility.sunlight ? (
+            <>
+              <LegendItem swatch="bg-emerald-400/80" label="Green - strong sunlight" />
+              <LegendItem swatch="bg-amber-300/85" label="Yellow - moderate sunlight" />
+              <LegendItem swatch="bg-rose-400/80" label="Red - limited sunlight" />
+            </>
+          ) : null}
+          {layerVisibility.panels ? (
+            <LegendItem swatch="border border-white bg-blue-500/75" label="Blue - accepted panels" />
+          ) : null}
         </div>
       </div>
     </>
@@ -1458,6 +1582,88 @@ function createObstructionOverlays({
       });
     })
     .filter((overlay): overlay is GoogleMapOverlayInstance => Boolean(overlay));
+}
+
+function createEstimatedSunlightQualityOverlays({
+  googleApi,
+  map,
+  roofData,
+}: {
+  googleApi: GoogleMapsApi;
+  map: GoogleMapInstance;
+  roofData: RoofAnalysis;
+}) {
+  const quality = calculateSunlightQuality({
+    annualSavings: roofData.annualSavingsUSD,
+    annualSunlightHours: roofData.annualSunlightHours,
+    coveragePct: Math.min(100, Math.round((roofData.annualKwh / 14_000) * 100)),
+    grossRoofAreaM2: roofData.grossRoofAreaM2,
+    orientationLabel: formatCompassDirection(roofData.primaryRoofAzimuth),
+    panelCount: roofData.panelCount,
+    rejectedCandidateCount: roofData.rejectedPanelCandidateCount,
+    roofSegments: roofData.roofSegments,
+    shadingRisk: roofData.shadingRisk,
+    suitabilityScore: roofData.rooftopConfidenceScore,
+    systemKw: roofData.systemKw,
+    usablePctRoof: roofData.usablePctRoof,
+    usableRoofAreaM2: roofData.usableRoofAreaM2,
+  });
+  const segmentQualities = new Map(
+    quality.segments.map((segment) => [
+      segment.label.toLowerCase().replace(" plane", ""),
+      segment.quality,
+    ])
+  );
+
+  return roofData.roofSegments
+    .map((segment) => {
+      const path = outlineToLatLngPath(googleApi, segment.outline, roofData.roofBounds);
+
+      if (path.length < 3) {
+        return null;
+      }
+
+      const tone =
+        segmentQualities.get(segment.label) ?? quality.label;
+      const colors = getSunlightQualityMapColors(tone);
+
+      return new googleApi.maps.Polygon({
+        clickable: false,
+        fillColor: colors.fill,
+        fillOpacity: colors.fillOpacity,
+        map,
+        paths: path,
+        strokeColor: colors.stroke,
+        strokeOpacity: 0.58,
+        strokeWeight: 1,
+        zIndex: 16,
+      });
+    })
+    .filter((overlay): overlay is GoogleMapOverlayInstance => Boolean(overlay));
+}
+
+function getSunlightQualityMapColors(tone: RoofQualityTone) {
+  if (tone === "strong") {
+    return {
+      fill: "#22c55e",
+      fillOpacity: 0.22,
+      stroke: "#86efac",
+    };
+  }
+
+  if (tone === "moderate") {
+    return {
+      fill: "#fbbf24",
+      fillOpacity: 0.2,
+      stroke: "#fde68a",
+    };
+  }
+
+  return {
+    fill: "#ef4444",
+    fillOpacity: 0.18,
+    stroke: "#fecdd3",
+  };
 }
 
 function createSolarPanelOverlays({
@@ -2864,10 +3070,10 @@ function RoofStatsPanel({
       <div className="mt-4 grid gap-3">
         <MetricRow label="Roof width" source="Solar API" value={`${roofData.widthM.toFixed(1)} m`} />
         <MetricRow label="Roof depth" source="Solar API" value={`${roofData.depthM.toFixed(1)} m`} />
-        <MetricRow label="Gross roof area" source="Solar API" value={`${metrics.roofArea.toFixed(1)} m²`} />
-        <MetricRow label="Usable roof area" source="Solar API" value={`${metrics.usableArea.toFixed(1)} m²`} />
+        <MetricRow label="Gross roof area" source="Solar API" value={`${metrics.roofArea.toFixed(1)} sq m`} />
+        <MetricRow label="Usable roof area" source="Solar API" value={`${metrics.usableArea.toFixed(1)} sq m`} />
         <MetricRow label="Annual sunlight" source="Solar API" value={`${metrics.annualSunlightHours.toLocaleString()} hrs`} />
-        <MetricRow label="Average roof pitch" source="Solar API" value={`${metrics.averageRoofPitch.toFixed(1)}°`} />
+        <MetricRow label="Average roof pitch" source="Solar API" value={`${metrics.averageRoofPitch.toFixed(1)} deg`} />
         <MetricRow label="Primary orientation" source="Solar API" value={metrics.orientationLabel} />
         <MetricRow label="Panel count" source="Solar API" value={`${metrics.selectedPanelCount}`} />
         <MetricRow label="Rooftop score" source="Solar API" value={`${roofData.rooftopConfidenceScore}/100`} />
@@ -2882,20 +3088,20 @@ function RoofStatsPanel({
           <div className="flex items-center justify-between gap-3 text-sm">
             <span className="text-slate-300">Primary</span>
             <span className="text-white">
-              {primarySegment ? `${primarySegment.areaM2.toFixed(1)} m²` : "-"}
+              {primarySegment ? `${primarySegment.areaM2.toFixed(1)} sq m` : "-"}
             </span>
           </div>
           <div className="flex items-center justify-between gap-3 text-sm">
             <span className="text-slate-300">Secondary</span>
             <span className="text-white">
-              {secondarySegment ? `${secondarySegment.areaM2.toFixed(1)} m²` : "-"}
+              {secondarySegment ? `${secondarySegment.areaM2.toFixed(1)} sq m` : "-"}
             </span>
           </div>
           <div className="flex items-center justify-between gap-3 text-sm">
             <span className="text-slate-300">Garage</span>
             <span className="text-white">
               {roofData.roofSegments[2]
-                ? `${roofData.roofSegments[2].areaM2.toFixed(1)} m²`
+                ? `${roofData.roofSegments[2].areaM2.toFixed(1)} sq m`
                 : "-"}
             </span>
           </div>
@@ -3114,7 +3320,7 @@ function SegmentationPanel({ roofData }: { roofData: RoofAnalysis }) {
               />
             </div>
             <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-400">
-              <span>{segment.areaM2.toFixed(1)} m²</span>
+              <span>{segment.areaM2.toFixed(1)} sq m</span>
               <span>{formatAzimuth(segment.azimuthDeg)}</span>
             </div>
           </div>
