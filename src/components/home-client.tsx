@@ -7,18 +7,21 @@ import {
   Sparkles,
   Star,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AddressSearch } from "@/components/address-search";
 import { AnalysisSequence } from "@/components/analysis-sequence";
 import { LeadCaptureForm } from "@/components/lead-capture-form";
 import { SolarAnalysis } from "@/components/solar-analysis";
-import { SolarReportDashboard } from "@/components/solar-report-dashboard";
+import { SolarReportDashboard, type DetailTab } from "@/components/solar-report-dashboard";
 import { formatDisplayAddress } from "@/lib/address-format";
 import { trackEvent } from "@/lib/analytics";
 import type { RoofAnalysis } from "@/lib/roof-analysis";
+import { buildSolarMetrics } from "@/lib/solar-metrics";
 import {
   DEFAULT_SOLAR_PANEL_ID,
+  getInverterOption,
   getPanelById,
+  getPanelFit,
   type InverterType,
 } from "@/lib/solarPanels";
 
@@ -70,61 +73,17 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
   const [selectedPanelId, setSelectedPanelId] = useState(DEFAULT_SOLAR_PANEL_ID);
   const [selectedInverterType, setSelectedInverterType] =
     useState<InverterType>("string");
+  const [reportTab, setReportTab] = useState<DetailTab>("overview");
   const [shareStatus, setShareStatus] = useState("");
   const [selectedLocation, setSelectedLocation] = useState<{
     address: string;
     lat: number;
     lng: number;
   } | null>(null);
-  const [showStickyCta, setShowStickyCta] = useState(false);
-  const [showReportNav, setShowReportNav] = useState(false);
-  const [activeReportSection, setActiveReportSection] = useState("solar-workspace");
   const roofAnalysis = solarData;
   const hasValidAnalysis = Boolean(solarData?.validSite);
   const heroCompact = Boolean(selectedAddress);
   const selectedPanel = getPanelById(selectedPanelId);
-
-  useEffect(() => {
-    const onScroll = () => {
-      const scrollY = window.scrollY;
-      const contactTop =
-        document.getElementById("contact")?.offsetTop ?? Number.POSITIVE_INFINITY;
-      const addressInput = document.getElementById("address-estimate");
-      const navStart =
-        (addressInput?.offsetTop ?? Number.POSITIVE_INFINITY) +
-        (addressInput?.offsetHeight ?? 0);
-      const workspace = document.getElementById("solar-workspace");
-      const workspaceTop = workspace?.offsetTop ?? Number.POSITIVE_INFINITY;
-      const workspaceBottom = workspaceTop + (workspace?.offsetHeight ?? 0);
-      const workspaceVisible =
-        scrollY + window.innerHeight > workspaceTop + 120 &&
-        scrollY < workspaceBottom - 120;
-
-      setShowStickyCta(
-        hasValidAnalysis &&
-          scrollY > 300 &&
-          scrollY < contactTop - 200 &&
-          !workspaceVisible
-      );
-
-      setShowReportNav(
-        hasValidAnalysis && scrollY > navStart - 24 && scrollY < contactTop + 400
-      );
-
-      const sections = ["solar-workspace", "panel-selection", "report-dashboard", "contact"];
-      const currentSection =
-        sections
-          .map((id) => ({ id, top: document.getElementById(id)?.offsetTop ?? 0 }))
-          .filter((section) => section.top > 0 && scrollY + 120 >= section.top)
-          .at(-1)?.id ?? "solar-workspace";
-      setActiveReportSection(currentSection);
-    };
-
-    onScroll();
-    window.addEventListener("scroll", onScroll, { passive: true });
-
-    return () => window.removeEventListener("scroll", onScroll);
-  }, [hasValidAnalysis]);
 
   useEffect(() => {
     if (!solarData?.validSite) {
@@ -141,9 +100,42 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
     }
   }, [solarData?.annualSunlightHours, solarData?.validSite]);
 
+  const reportMetrics = useMemo(() => {
+    if (!solarData?.validSite) {
+      return null;
+    }
+
+    const baseMetrics = buildSolarMetrics(solarData, {
+      monthlyBill,
+      selectedPanelCount: activePanelCount || undefined,
+    });
+    const selectedFit = getPanelFit(selectedPanel, {
+      roofData: solarData,
+      monthlyBill,
+      selectedPanelCount: activePanelCount || baseMetrics.panelCount,
+      inverterCostAdderPerWatt: getInverterOption(selectedInverterType).costAdderPerWatt,
+    });
+
+    return {
+      annualSavings: selectedFit.annualSavings || baseMetrics.annualSavings,
+      panelCount: selectedFit.maxPanelsFit || baseMetrics.panelCount,
+      score: solarData.rooftopConfidenceScore,
+      systemKw: selectedFit.systemKw || baseMetrics.systemKw,
+    };
+  }, [activePanelCount, monthlyBill, selectedInverterType, selectedPanel, solarData]);
+
+  const openSendReportTab = () => {
+    setReportTab("send");
+    window.requestAnimationFrame(() => {
+      document
+        .getElementById("report-dashboard")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  };
+
   const showAnalysis = Boolean(selectedAddress);
   const reportCtaHref = hasValidAnalysis
-    ? "#contact"
+    ? "#report-dashboard"
     : selectedAddress
       ? "#solar-workspace"
       : "#address-estimate";
@@ -152,43 +144,6 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
       <CinematicVideoBackground />
       <div className="pointer-events-none fixed inset-0 z-[1] bg-[radial-gradient(circle_at_22%_20%,rgba(103,232,249,0.16),transparent_34%),linear-gradient(90deg,rgba(0,0,0,0.78)_0%,rgba(0,0,0,0.34)_45%,rgba(0,0,0,0.72)_100%)]" />
       <div className="pointer-events-none fixed inset-x-0 bottom-0 z-[1] h-1/2 bg-gradient-to-t from-black via-black/58 to-transparent" />
-
-      {showStickyCta ? (
-        <div className="fixed inset-x-0 bottom-0 z-50 p-4 md:inset-x-auto md:right-6 md:bottom-6 md:p-0">
-          <a
-            href="#contact"
-            className="liquid-glass inline-flex w-full items-center justify-center gap-2 rounded-full px-6 py-4 text-sm font-semibold text-white shadow-[0_22px_70px_rgba(103,232,249,0.2)] transition hover:-translate-y-0.5 md:w-auto"
-          >
-            Send My Full Report
-            <ArrowRight className="h-4 w-4" aria-hidden="true" />
-          </a>
-        </div>
-      ) : null}
-
-      {showReportNav ? (
-        <nav className="fixed inset-x-0 top-0 z-50 border-b border-white/10 bg-slate-950/88 px-3 py-2 shadow-[0_12px_34px_rgba(2,8,20,0.32)] backdrop-blur-xl">
-          <div className="mx-auto flex max-w-7xl items-center gap-2 overflow-x-auto text-[0.66rem] font-semibold uppercase tracking-[0.18em] text-white/58">
-            {[
-              ["solar-workspace", "Roof Analysis"],
-              ["panel-selection", "Panel Selection"],
-              ["report-dashboard", "Financing"],
-              ["contact", "Get Report"],
-            ].map(([id, label]) => (
-              <a
-                key={id}
-                href={`#${id}`}
-                className={`shrink-0 rounded-full px-3 py-2 transition ${
-                  activeReportSection === id
-                    ? "bg-cyan-200 text-slate-950"
-                    : "hover:bg-white/[0.08] hover:text-white"
-                }`}
-              >
-                {label}
-              </a>
-            ))}
-          </div>
-        </nav>
-      ) : null}
 
       <section
         className={`relative z-10 mx-auto flex w-full max-w-7xl flex-col px-5 pt-5 sm:px-7 md:px-10 lg:px-12 ${
@@ -240,7 +195,13 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
               </div>
             </details>
             <a
-              href={hasValidAnalysis ? "#contact" : "#address-estimate"}
+              href={hasValidAnalysis ? "#report-dashboard" : "#address-estimate"}
+              onClick={(event) => {
+                if (hasValidAnalysis) {
+                  event.preventDefault();
+                  openSendReportTab();
+                }
+              }}
               className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-3 text-sm font-semibold text-slate-950 shadow-[0_18px_55px_rgba(255,255,255,0.18)] transition hover:-translate-y-0.5 hover:bg-cyan-100 sm:px-5"
             >
               <span className="hidden sm:inline">
@@ -267,14 +228,23 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
                       ? "Review the roof workspace below, then send the full PDF report."
                       : "Satellite imagery and Solar API roof data are loading."}
                   </p>
+                  {reportMetrics ? (
+                    <div className="mt-3 grid gap-2 text-xs sm:grid-cols-4">
+                      <ReportMiniMetric label="Score" value={`${reportMetrics.score}/100`} />
+                      <ReportMiniMetric label="Panels" value={`${reportMetrics.panelCount}`} />
+                      <ReportMiniMetric label="Savings" value={formatMoney(reportMetrics.annualSavings)} />
+                      <ReportMiniMetric label="System" value={`${reportMetrics.systemKw.toFixed(1)} kW`} />
+                    </div>
+                  ) : null}
                 </div>
                 {hasValidAnalysis ? (
-                  <a
-                    href="#contact"
+                  <button
+                    type="button"
+                    onClick={openSendReportTab}
                     className="inline-flex items-center justify-center rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:-translate-y-0.5 hover:bg-cyan-100"
                   >
                     Send My Full Report
-                  </a>
+                  </button>
                 ) : null}
               </div>
             ) : (
@@ -302,6 +272,8 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
               </>
             )}
 
+            {!hasValidAnalysis ? (
+              <>
             <div
               id="address-estimate"
               className={`liquid-glass liquid-glass-unclipped rounded-[1.75rem] p-4 shadow-[0_24px_80px_rgba(0,0,0,0.34)] sm:p-5 ${
@@ -390,6 +362,8 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
             </div>
               </>
             ) : null}
+              </>
+            ) : null}
           </div>
         </div>
       </section>
@@ -441,12 +415,13 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
                 >
                   {shareStatus || "Share estimate"}
                 </button>
-                <a
-                  href="#contact"
+                <button
+                  type="button"
+                  onClick={openSendReportTab}
                   className="inline-flex items-center justify-center rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:-translate-y-0.5 hover:bg-cyan-100"
                 >
                   Send My Full Report
-                </a>
+                </button>
               </div>
             ) : null}
           </div>
@@ -469,44 +444,33 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
             </div>
             {hasValidAnalysis && roofAnalysis ? (
               <SolarReportDashboard
+                activeTab={reportTab}
                 address={selectedAddress}
                 analysis={roofAnalysis}
                 activePanelCount={activePanelCount}
                 monthlyBill={monthlyBill}
                 onActivePanelCountChange={setActivePanelCount}
                 onMonthlyBillChange={setMonthlyBill}
+                onTabChange={setReportTab}
                 selectedInverterType={selectedInverterType}
                 selectedPanelId={selectedPanelId}
                 onSelectedInverterTypeChange={setSelectedInverterType}
                 onSelectedPanelIdChange={setSelectedPanelId}
+                sendReportContent={
+                  <LeadCaptureForm
+                    initialAddress={selectedAddress}
+                    analysis={solarData}
+                    activePanelCount={activePanelCount}
+                    initialMonthlyBill={monthlyBill}
+                    lat={selectedLocation?.lat}
+                    lng={selectedLocation?.lng}
+                    selectedInverterType={selectedInverterType}
+                    selectedPanel={selectedPanel}
+                    onMonthlyBillChange={setMonthlyBill}
+                  />
+                }
               />
             ) : null}
-          </div>
-        </section>
-      ) : null}
-
-      {hasValidAnalysis ? (
-        <section
-          id="contact"
-          className="relative z-10 mx-auto w-full max-w-7xl px-5 pb-12 sm:px-7 md:px-10 lg:px-12"
-        >
-          <SectionIntro
-            eyebrow="Generate report"
-            title="Send your full solar report."
-            copy="We only need a few details to generate the report and send the estimate to you."
-          />
-          <div className="mt-5">
-            <LeadCaptureForm
-              initialAddress={selectedAddress}
-              analysis={solarData}
-              activePanelCount={activePanelCount}
-              initialMonthlyBill={monthlyBill}
-              lat={selectedLocation?.lat}
-              lng={selectedLocation?.lng}
-              selectedInverterType={selectedInverterType}
-              selectedPanel={selectedPanel}
-              onMonthlyBillChange={setMonthlyBill}
-            />
           </div>
         </section>
       ) : null}
@@ -725,6 +689,25 @@ function OptionalTrustSections() {
       </div>
     </section>
   );
+}
+
+function ReportMiniMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-[0.85rem] border border-white/10 bg-black/24 px-3 py-2">
+      <p className="text-[0.54rem] font-semibold uppercase tracking-[0.18em] text-white/42">
+        {label}
+      </p>
+      <p className="mt-1 font-semibold text-white">{value}</p>
+    </div>
+  );
+}
+
+function formatMoney(value: number) {
+  return new Intl.NumberFormat("en-US", {
+    currency: "USD",
+    maximumFractionDigits: 0,
+    style: "currency",
+  }).format(value);
 }
 
 function FeatureCard({ title, copy }: { title: string; copy: string }) {

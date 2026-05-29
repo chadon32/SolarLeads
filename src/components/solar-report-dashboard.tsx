@@ -11,7 +11,7 @@ import {
   Zap,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import type { RoofAnalysis } from "@/lib/roof-analysis";
 import {
   buildSolarAdvisorInputFromAnalysis,
@@ -36,6 +36,7 @@ import {
 } from "@/lib/solarPanels";
 
 type SolarReportDashboardProps = {
+  activeTab?: DetailTab;
   address: string;
   analysis: RoofAnalysis;
   activePanelCount?: number;
@@ -44,11 +45,13 @@ type SolarReportDashboardProps = {
   onMonthlyBillChange?: (monthlyBill: number) => void;
   onSelectedInverterTypeChange?: (inverterType: InverterType) => void;
   onSelectedPanelIdChange?: (panelId: string) => void;
+  onTabChange?: (tab: DetailTab) => void;
   selectedInverterType?: InverterType;
   selectedPanelId?: string;
+  sendReportContent?: ReactNode;
 };
 
-type DetailTab = "overview" | "savings" | "environment" | "financing" | "next";
+export type DetailTab = "overview" | "roof" | "panels" | "savings" | "financing" | "send";
 type FinancingMode = "buy" | "lease" | "loan";
 type MetricSource = "solar-api" | "modeled" | "user-adjusted" | "illustrative" | "estimated";
 
@@ -56,10 +59,11 @@ const monthlyBillOptions = [100, 150, 200, 250, 300, 350, 400, 450, 500];
 
 const detailTabs: Array<{ id: DetailTab; label: string }> = [
   { id: "overview", label: "Overview" },
+  { id: "roof", label: "Roof & Shade" },
+  { id: "panels", label: "Panels" },
   { id: "savings", label: "Savings" },
-  { id: "environment", label: "Environmental Impact" },
-  { id: "financing", label: "Financing Assumptions" },
-  { id: "next", label: "Next Steps" },
+  { id: "financing", label: "Financing" },
+  { id: "send", label: "Send Report" },
 ];
 
 const financingCopy: Record<FinancingMode, string> = {
@@ -72,6 +76,7 @@ const financingCopy: Record<FinancingMode, string> = {
 };
 
 export function SolarReportDashboard({
+  activeTab: externalActiveTab,
   activePanelCount,
   address,
   analysis,
@@ -80,15 +85,18 @@ export function SolarReportDashboard({
   onMonthlyBillChange,
   onSelectedInverterTypeChange,
   onSelectedPanelIdChange,
+  onTabChange,
   selectedInverterType = "string",
   selectedPanelId,
+  sendReportContent,
 }: SolarReportDashboardProps) {
   const monthlyBill = externalMonthlyBill;
-  const [activeTab, setActiveTab] = useState<DetailTab>("overview");
+  const [internalActiveTab, setInternalActiveTab] = useState<DetailTab>("overview");
   const [financingMode, setFinancingMode] = useState<FinancingMode>("loan");
   const [selectedAdvisorQuestion, setSelectedAdvisorQuestion] = useState(0);
   const selectedPanel = getPanelById(selectedPanelId);
   const selectedInverter = getInverterOption(selectedInverterType);
+  const activeTab = externalActiveTab ?? internalActiveTab;
   const values = useMemo(
     () =>
       buildDashboardValues(
@@ -112,6 +120,18 @@ export function SolarReportDashboard({
   const updateMonthlyBill = (value: number) => {
     onMonthlyBillChange?.(value);
   };
+  const setActiveTab = (tab: DetailTab) => {
+    setInternalActiveTab(tab);
+    onTabChange?.(tab);
+  };
+  const openSendReport = () => {
+    setActiveTab("send");
+    window.requestAnimationFrame(() => {
+      document
+        .getElementById("report-dashboard")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  };
 
   return (
     <>
@@ -128,51 +148,17 @@ export function SolarReportDashboard({
             </div>
             <SourceBadge source="solar-api" />
           </div>
-          <p className="mt-3 text-sm leading-6 text-white/58">
+          <p className="mt-3 text-sm leading-6 text-white/62">
             Estimated solar layout generated from available roof and sunlight data.
             Final panel placement, incentives, pricing, and savings require installer confirmation.
           </p>
-          <div className="mt-3 rounded-[0.95rem] border border-white/10 bg-black/22 px-3 py-2">
-            <p className="text-[0.58rem] font-semibold uppercase tracking-[0.18em] text-white/42">
-              Selected panel
-            </p>
-            <p className="mt-1 text-sm font-semibold text-white">
-              {values.selectedPanel.brand} {values.selectedPanel.model}{" "}
-              {values.selectedPanel.watts}W
-            </p>
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            <MiniReadout label="Solar score" source="solar-api" value={`${values.advisor.suitability.score}/100`} />
+            <MiniReadout label="Accepted panels" source="solar-api" value={`${values.panelCount}`} />
+            <MiniReadout label="Annual savings" source="user-adjusted" value={formatMoney(values.annualSavings)} />
+            <MiniReadout label="System size" source="user-adjusted" value={`${values.recommendedKw.toFixed(1)} kW`} />
           </div>
           <SuitabilityExplanationCard advisor={values.advisor} />
-        </section>
-
-        <GuidedProgressStrip />
-
-        <section className="grid grid-cols-2 gap-2.5">
-          <KeyMetric
-            icon={Sun}
-            label="Sunlight"
-            source="solar-api"
-            value={`${formatNumber(values.sunlightHours)} hrs`}
-            tone="gold"
-          />
-          <KeyMetric
-            icon={Grid3X3}
-            label="Solar area"
-            source="solar-api"
-            value={`${formatNumber(values.usableAreaSqFt)} sq ft`}
-          />
-          <KeyMetric
-            icon={TrendingUp}
-            label="20-year savings"
-            source="modeled"
-            value={formatMoney(values.twentyYearSavings)}
-            tone="gold"
-          />
-          <KeyMetric
-            icon={Zap}
-            label="System size"
-            source="user-adjusted"
-            value={`${values.recommendedKw.toFixed(1)} kW`}
-          />
         </section>
 
         <section className="rounded-[1.15rem] border border-white/12 bg-slate-950/68 p-4 shadow-[0_12px_36px_rgba(0,0,0,0.22)]">
@@ -241,12 +227,13 @@ export function SolarReportDashboard({
           onSelectQuestion={setSelectedAdvisorQuestion}
         />
 
-        <a
-          href="#contact"
+        <button
+          type="button"
+          onClick={openSendReport}
           className="inline-flex w-full items-center justify-center rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 shadow-[0_18px_55px_rgba(255,255,255,0.18)] transition hover:-translate-y-0.5 hover:bg-cyan-100"
         >
           Send My Full Solar Report
-        </a>
+        </button>
 
         <DataProvenanceBlock />
       </aside>
@@ -279,9 +266,37 @@ export function SolarReportDashboard({
         </div>
 
         <div className="mt-4">
-          {activeTab === "overview" ? <OverviewTab values={values} /> : null}
-          {activeTab === "savings" ? <SavingsTab values={values} /> : null}
-          {activeTab === "environment" ? <EnvironmentalTab values={values} /> : null}
+          {activeTab === "overview" ? (
+            <ReportOverviewTab
+              onSendReport={openSendReport}
+              values={values}
+            />
+          ) : null}
+          {activeTab === "roof" ? (
+            <RoofShadeTab
+              advisor={values.advisor}
+              analysis={analysis}
+              values={values}
+            />
+          ) : null}
+          {activeTab === "panels" ? (
+            <PanelsTab
+              address={address}
+              analysis={analysis}
+              monthlyBill={monthlyBill}
+              onSelectedInverterTypeChange={onSelectedInverterTypeChange}
+              onSelectedPanelIdChange={onSelectedPanelIdChange}
+              selectedInverterType={selectedInverterType}
+              selectedPanelId={selectedPanel.id}
+              values={values}
+            />
+          ) : null}
+          {activeTab === "savings" ? (
+            <SavingsTab
+              onMonthlyBillChange={updateMonthlyBill}
+              values={values}
+            />
+          ) : null}
           {activeTab === "financing" ? (
             <FinancingTab
               financingMode={financingMode}
@@ -289,19 +304,10 @@ export function SolarReportDashboard({
               values={values}
             />
           ) : null}
-          {activeTab === "next" ? <NextStepsTab /> : null}
+          {activeTab === "send" ? (
+            <SendReportTab sendReportContent={sendReportContent} />
+          ) : null}
         </div>
-
-        <PanelSelectorSection
-          address={address}
-          analysis={analysis}
-          monthlyBill={monthlyBill}
-          onSelectedInverterTypeChange={onSelectedInverterTypeChange}
-          onSelectedPanelIdChange={onSelectedPanelIdChange}
-          selectedInverterType={selectedInverterType}
-          selectedPanelId={selectedPanel.id}
-          values={values}
-        />
       </section>
     </>
   );
@@ -318,7 +324,7 @@ type PanelSortKey =
   | "netCost"
   | "paybackYears";
 
-function PanelSelectorSection({
+function PanelsTab({
   address,
   analysis,
   monthlyBill,
@@ -337,7 +343,7 @@ function PanelSelectorSection({
   selectedPanelId: string;
   values: DashboardValues;
 }) {
-  const [showComparison, setShowComparison] = useState(true);
+  const [showComparison, setShowComparison] = useState(false);
   const [sortKey, setSortKey] = useState<PanelSortKey>("paybackYears");
   const [panelFitsById, setPanelFitsById] = useState<Record<string, PanelFit>>({});
   const selectedInverter = getInverterOption(selectedInverterType);
@@ -398,31 +404,57 @@ function PanelSelectorSection({
     return rightValue - leftValue;
   });
 
+  const bestAlternatives = sortedFits
+    .filter(({ panel }) => panel.id !== selectedPanel.id)
+    .slice(0, 3);
+
   return (
-    <section id="panel-selection" className="mt-5 grid gap-4 scroll-mt-24">
+    <section id="panel-selection" className="grid gap-4 scroll-mt-24">
       <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
         <div>
           <p className="text-[0.62rem] font-semibold uppercase tracking-[0.28em] text-cyan-100/82">
             Panel selection
           </p>
-          <h3 className="mt-2 text-2xl font-semibold tracking-tight text-white">
-            Choose your solar panel
+          <h3 className="mt-2 text-xl font-semibold tracking-tight text-white">
+            Recommended panel for this roof
           </h3>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-white/58">
-            Panel fit, cost, heat performance, and payback are recalculated for
-            this roof using the selected inverter and monthly bill.
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-white/62">
+            We show the current panel first, then a few alternatives. Open the
+            comparison table only if you want the full equipment catalog.
           </p>
         </div>
         <SourceBadge source="modeled" />
       </div>
 
-      <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-        {panelFits.length
-          ? panelFits.map(({ fit, panel }) => (
+      {panelFits.length ? (
+        <div className="grid gap-3 lg:grid-cols-[1.1fr_0.9fr]">
+          <PanelOptionCard
+            fit={selectedFit}
+            isSelected
+            onSelect={() => undefined}
+            panel={selectedPanel}
+            variant="featured"
+          />
+          <div className="grid gap-3">
+            <div className="rounded-[1rem] border border-white/10 bg-black/18 p-4">
+              <p className="text-sm font-semibold text-white">Why this panel?</p>
+              <p className="mt-2 text-sm leading-6 text-white/58">
+                {selectedPanel.brand} {selectedPanel.model} balances output,
+                roof fit, Arizona heat performance, and modeled payback for the
+                current monthly bill.
+              </p>
+              <div className="mt-4 grid grid-cols-2 gap-2">
+                <MiniReadout label="Wattage" source="modeled" value={`${selectedPanel.watts}W`} />
+                <MiniReadout label="Efficiency" source="modeled" value={`${selectedPanel.efficiency}%`} />
+                <MiniReadout label="Warranty" source="modeled" value={`${selectedPanel.warranty_years} yrs`} />
+                <MiniReadout label="Payback" source="modeled" value={`${selectedFit.paybackYears.toFixed(1)} yrs`} />
+              </div>
+            </div>
+            {bestAlternatives.map(({ fit, panel }) => (
               <PanelOptionCard
                 key={panel.id}
                 fit={fit}
-                isSelected={panel.id === selectedPanel.id}
+                isSelected={false}
                 onSelect={() => {
                   onSelectedPanelIdChange?.(panel.id);
                   window.requestAnimationFrame(() => {
@@ -433,11 +465,16 @@ function PanelSelectorSection({
                 }}
                 panel={panel}
               />
-            ))
-          : Array.from({ length: 6 }).map((_, index) => (
-              <PanelOptionSkeleton key={index} />
             ))}
-      </div>
+          </div>
+        </div>
+      ) : (
+        <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+          {Array.from({ length: 3 }).map((_, index) => (
+            <PanelOptionSkeleton key={index} />
+          ))}
+        </div>
+      )}
 
       <InverterSelector
         annualSunlightHours={analysis.annualSunlightHours}
@@ -460,7 +497,7 @@ function PanelSelectorSection({
         >
           <span>
             <span className="block text-sm font-semibold text-white">
-              {showComparison ? "▼" : "▶"} Compare all panels
+              {showComparison ? "v" : ">"} Compare all panels
             </span>
             <span className="mt-1 block text-xs text-white/48">
               Sorted by payback by default.
@@ -493,34 +530,38 @@ function PanelOptionCard({
   isSelected,
   onSelect,
   panel,
+  variant = "compact",
 }: {
   fit: PanelFit;
   isSelected: boolean;
   onSelect: () => void;
   panel: SolarPanel;
+  variant?: "compact" | "featured";
 }) {
+  const isFeatured = variant === "featured";
+
   return (
     <article
-      className={`relative flex min-h-[37rem] flex-col overflow-hidden rounded-[1.1rem] border p-4 transition ${
+      className={`relative flex flex-col overflow-hidden rounded-[1.1rem] border p-4 transition ${
         isSelected
           ? "border-cyan-200/70 bg-cyan-200/[0.09] shadow-[0_0_0_1px_rgba(103,232,249,0.18),0_18px_50px_rgba(34,211,238,0.12)]"
           : "border-white/10 bg-black/18"
-      }`}
+      } ${isFeatured ? "min-h-[25rem]" : "min-h-[18rem]"}`}
     >
       <div className="absolute right-3 top-3 z-10 flex flex-col items-end gap-1.5">
         {isSelected ? (
           <span className="rounded-full bg-cyan-200 px-2 py-1 text-[0.55rem] font-black uppercase tracking-[0.12em] text-slate-950">
-            ✓ Selected
+            Selected
           </span>
         ) : null}
         {fit.recommended ? (
           <span className="rounded-full bg-emerald-300 px-2 py-1 text-[0.55rem] font-black uppercase tracking-[0.12em] text-slate-950">
-            ✓ RECOMMENDED
+            Recommended
           </span>
         ) : null}
         {!fit.fits ? (
           <span className="rounded-full bg-slate-500/70 px-2 py-1 text-[0.55rem] font-black uppercase tracking-[0.12em] text-white">
-            ✗ ROOF TOO SMALL
+            Roof too small
           </span>
         ) : null}
       </div>
@@ -545,6 +586,7 @@ function PanelOptionCard({
         <PanelSpec label="Type" value={panel.type} />
       </div>
 
+      {isFeatured ? (
       <div className="mt-4 rounded-[0.9rem] border border-amber-200/14 bg-amber-200/[0.06] p-3">
         <p className="text-xs font-semibold text-amber-100">
           {fit.azHeatLoss}
@@ -553,11 +595,14 @@ function PanelOptionCard({
           Temperature coefficient: {panel.tempCoefficient}% / C.
         </p>
       </div>
+      ) : null}
 
       <div className="mt-auto grid gap-1.5 pt-4 text-xs text-white/58">
         <PanelFinancialRow label="System size" value={`${fit.systemKw.toFixed(1)} kW`} />
         <PanelFinancialRow label="Panels needed" value={`${fit.maxPanelsFit}`} />
-        <PanelFinancialRow label="Total cost" value={formatMoney(fit.systemCost)} />
+        {isFeatured ? (
+          <PanelFinancialRow label="Total cost" value={formatMoney(fit.systemCost)} />
+        ) : null}
         <PanelFinancialRow label="After 30% tax credit" value={formatMoney(fit.netCost)} />
         <PanelFinancialRow label="Est. payback" value={`${fit.paybackYears.toFixed(1)} years`} />
         <PanelFinancialRow label="Annual savings" value={formatMoney(fit.annualSavings)} />
@@ -581,7 +626,7 @@ function PanelOptionCard({
 
 function PanelOptionSkeleton() {
   return (
-    <div className="min-h-[37rem] animate-pulse rounded-[1.1rem] border border-white/10 bg-black/18 p-4">
+    <div className="min-h-[18rem] animate-pulse rounded-[1.1rem] border border-white/10 bg-black/18 p-4">
       <div className="h-4 w-20 rounded-full bg-white/10" />
       <div className="mt-4 h-6 w-4/5 rounded-full bg-white/10" />
       <div className="mt-2 h-4 w-3/5 rounded-full bg-white/10" />
@@ -864,6 +909,118 @@ function PanelComparisonTable({
   );
 }
 
+function ReportOverviewTab({
+  onSendReport,
+  values,
+}: {
+  onSendReport: () => void;
+  values: DashboardValues;
+}) {
+  return (
+    <div className="grid gap-4 lg:grid-cols-[1fr_0.75fr]">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <CompactInfo
+          icon={Sun}
+          source="solar-api"
+          title={`${values.advisor.suitability.score}/100`}
+          body="Preliminary solar suitability score."
+          tone="gold"
+        />
+        <CompactInfo
+          icon={Grid3X3}
+          source="solar-api"
+          title={`${values.panelCount} accepted panels`}
+          body={`${formatNumber(values.usableAreaSqFt)} square feet estimated solar-ready.`}
+        />
+        <CompactInfo
+          icon={Zap}
+          source="user-adjusted"
+          title={`${values.recommendedKw.toFixed(1)} kW`}
+          body="Current system size from selected panel count."
+        />
+        <CompactInfo
+          icon={TrendingUp}
+          source="user-adjusted"
+          title={formatMoney(values.annualSavings)}
+          body="Estimated annual savings using the monthly bill input."
+          tone="gold"
+        />
+      </div>
+      <div className="rounded-[1rem] border border-white/10 bg-black/20 p-4">
+        <p className="text-[0.62rem] font-semibold uppercase tracking-[0.24em] text-cyan-100/80">
+          AI Solar Advisor
+        </p>
+        <p className="mt-3 text-sm leading-6 text-white/66">
+          {values.advisor.summary}
+        </p>
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          <MiniReadout label="20-year savings" source="modeled" value={formatMoney(values.twentyYearSavings)} />
+          <MiniReadout label="Energy offset" source="modeled" value={`${Math.min(100, Math.round((values.annualKwh / 14000) * 100))}%`} />
+        </div>
+        <button
+          type="button"
+          onClick={onSendReport}
+          className="mt-4 inline-flex w-full items-center justify-center rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100"
+        >
+          Send My Full Report
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function RoofShadeTab({
+  advisor,
+  analysis,
+  values,
+}: {
+  advisor: SolarAdvisorProfile;
+  analysis: RoofAnalysis;
+  values: DashboardValues;
+}) {
+  return (
+    <div className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
+      <div className="rounded-[1rem] border border-white/10 bg-black/20 p-4">
+        <p className="text-[0.62rem] font-semibold uppercase tracking-[0.24em] text-cyan-100/80">
+          Roof and sunlight model
+        </p>
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          <MiniReadout label="Sunlight" source="solar-api" value={`${formatNumber(values.sunlightHours)} hrs`} />
+          <MiniReadout label="Roof area" source="solar-api" value={`${formatNumber(values.usableAreaSqFt)} sq ft`} />
+          <MiniReadout label="Orientation" source="solar-api" value={analysis.roofSegments[0]?.label ?? "Primary"} />
+          <MiniReadout label="Shade risk" source="estimated" value={analysis.shadingRisk} />
+        </div>
+        <p className="mt-4 text-sm leading-6 text-white/58">
+          Use the map layer toggles above the roof image to view panels, roof
+          planes, and estimated sunlight quality. The heat layer is intentionally
+          subtle so the roof remains readable.
+        </p>
+      </div>
+      <div className="rounded-[1rem] border border-white/10 bg-black/20 p-4">
+        <p className="text-[0.62rem] font-semibold uppercase tracking-[0.24em] text-white/48">
+          Estimated sunlight quality
+        </p>
+        <p className="mt-2 text-lg font-semibold text-white">
+          {advisor.sunlightQuality.label} / {advisor.sunlightQuality.score}
+        </p>
+        <p className="mt-3 text-sm leading-6 text-white/58">
+          {advisor.sunlightQuality.summary}
+        </p>
+        <div className="mt-4 grid gap-2">
+          {advisor.sunlightQuality.segments.slice(0, 3).map((segment) => (
+            <MiniReadout
+              key={segment.label}
+              label={segment.label}
+              source="estimated"
+              value={`${segment.score}/100`}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function OverviewTab({
   values,
 }: {
@@ -895,10 +1052,33 @@ function OverviewTab({
   );
 }
 
-function SavingsTab({ values }: { values: DashboardValues }) {
+function SavingsTab({
+  onMonthlyBillChange,
+  values,
+}: {
+  onMonthlyBillChange: (monthlyBill: number) => void;
+  values: DashboardValues;
+}) {
   return (
     <div className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
+        <div className="rounded-[1rem] border border-white/10 bg-black/20 p-4">
+          <p className="text-[0.62rem] font-semibold uppercase tracking-[0.22em] text-cyan-100/80">
+            Monthly electric bill
+          </p>
+          <select
+            value={values.monthlyBill}
+            onChange={(event) => onMonthlyBillChange(Number(event.target.value))}
+            className="mt-3 w-full rounded-full border border-white/12 bg-black/35 px-4 py-3 text-base font-semibold text-white outline-none transition focus:border-cyan-200/50"
+          >
+            {monthlyBillOptions.map((value) => (
+              <option key={value} value={value} className="bg-slate-950">
+                {formatMoney(value)}
+              </option>
+            ))}
+          </select>
+          <BillComparisonCard values={values} />
+        </div>
         <CompactInfo
           icon={Zap}
           source="user-adjusted"
@@ -1010,6 +1190,7 @@ function FinancingTab({
   const [downPaymentPct, setDownPaymentPct] = useState(0);
   const [loanRate, setLoanRate] = useState(6.49);
   const [loanTermYears, setLoanTermYears] = useState(20);
+  const [showDetails, setShowDetails] = useState(false);
   const loanPrincipal = Math.max(
     values.installedCost * (1 - downPaymentPct / 100) - values.taxCredit,
     0
@@ -1022,7 +1203,7 @@ function FinancingTab({
   const netMonthly = values.monthlySavings - monthlyLoanPayment;
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
+    <div className="grid gap-4 lg:grid-cols-[0.95fr_1.05fr]">
       <div className="rounded-[1rem] border border-white/10 bg-black/20 p-4">
         <div className="grid grid-cols-3 rounded-full border border-white/10 bg-black/24 p-1">
           {(["buy", "lease", "loan"] as const).map((mode) => (
@@ -1137,9 +1318,27 @@ function FinancingTab({
           />
           <MiniReadout label="20-year savings" source="illustrative" value={formatMoney(values.totalSavings)} />
         </div>
-        <AssumptionTable rows={values.financingAssumptions} />
       </div>
-      <EstimateTable rows={values.financingRows} />
+      <div className="grid gap-3">
+        <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
+          <MiniReadout label="Cash net cost" source="illustrative" value={formatMoney(values.netCostAfterCredit)} />
+          <MiniReadout label="Loan payment basis" source="illustrative" value={formatMoney(monthlyLoanPayment)} />
+          <MiniReadout label="Lease estimate" source="illustrative" value={formatMoney(values.leaseMonthlyEstimate)} />
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowDetails((current) => !current)}
+          className="rounded-full border border-white/10 bg-white/[0.06] px-4 py-3 text-sm font-semibold text-white/78 transition hover:bg-white/[0.1] hover:text-white"
+        >
+          {showDetails ? "Hide detailed assumptions" : "View detailed assumptions"}
+        </button>
+        {showDetails ? (
+          <div className="grid gap-4">
+            <EstimateTable rows={values.financingRows} />
+            <AssumptionTable rows={values.financingAssumptions} />
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -1183,6 +1382,25 @@ function SliderField({
   );
 }
 
+function SendReportTab({
+  sendReportContent,
+}: {
+  sendReportContent?: ReactNode;
+}) {
+  return (
+    <div id="contact" className="scroll-mt-24">
+      {sendReportContent ?? (
+        <div className="rounded-[1rem] border border-white/10 bg-black/20 p-5">
+          <h3 className="text-xl font-semibold text-white">Send your full report</h3>
+          <p className="mt-2 text-sm leading-6 text-white/60">
+            The lead form is unavailable in this preview, but the report model is ready.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function NextStepsTab() {
   return (
     <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-center">
@@ -1195,7 +1413,7 @@ function NextStepsTab() {
       </div>
       <div className="flex flex-col gap-2 sm:flex-row lg:flex-col">
         <a
-          href="#contact"
+          href="#report-dashboard"
           className="inline-flex items-center justify-center rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100"
         >
           Send My Full Report
