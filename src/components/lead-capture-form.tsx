@@ -1,24 +1,10 @@
 "use client";
 
 import type { FormEvent, InputHTMLAttributes } from "react";
-import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import {
-  getRoofAreaM2,
-  getUsableAreaM2,
-  type RoofAnalysis,
-} from "@/lib/roof-analysis";
-
-const SolarReportGenerator = dynamic(
-  () =>
-    import("@/components/solar-report-generator").then(
-      (module) => module.SolarReportGenerator
-    ),
-  {
-    ssr: false,
-  }
-);
+import type { RoofAnalysis } from "@/lib/roof-analysis";
+import { buildSolarReportFromAnalysis } from "@/lib/solar-report";
 
 type LeadCaptureFormProps = {
   initialAddress: string;
@@ -28,52 +14,19 @@ type LeadCaptureFormProps = {
 };
 
 type FormValues = {
-  name: string;
   email: string;
-  phone: string;
   address: string;
   monthlyBill: string;
 };
 
-type SavedLead = {
-  id: string;
-  name: string;
-  email: string;
-  address: string;
-  monthlyBill: number;
-  estimatedSavings: number;
-  reportUrl: string;
-};
-
 const emptyValues: FormValues = {
-  name: "",
   email: "",
-  phone: "",
   address: "",
   monthlyBill: "",
 };
 
-function normalizePhone(value: string) {
-  return value.replace(/\D/g, "");
-}
-
-function formatPhoneDisplay(value: string) {
-  const digits = normalizePhone(value).slice(0, 10);
-  if (!digits) return "";
-  if (digits.length <= 3) return `(${digits}`;
-  if (digits.length <= 6) {
-    return `(${digits.slice(0, 3)})-${digits.slice(3)}`;
-  }
-  return `(${digits.slice(0, 3)})-${digits.slice(3, 6)}-${digits.slice(6)}`;
-}
-
 function isValidEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
-}
-
-function isValidPhone(value: string) {
-  const digits = normalizePhone(value);
-  return digits.length >= 10 && digits.length <= 15;
 }
 
 function formatMoney(value: number) {
@@ -84,21 +37,18 @@ function formatMoney(value: number) {
   }).format(value);
 }
 
-function buildFingerprint(values: FormValues) {
+function buildFingerprint(values: FormValues, annualSavings: number) {
   return [
-    values.name.trim().toLowerCase(),
     values.email.trim().toLowerCase(),
-    normalizePhone(values.phone),
     values.address.trim().toLowerCase(),
     values.monthlyBill.trim(),
+    Math.round(annualSavings),
   ].join("|");
 }
 
 export function LeadCaptureForm({
   initialAddress,
   analysis,
-  lat,
-  lng,
 }: LeadCaptureFormProps) {
   const [values, setValues] = useState<FormValues>({
     ...emptyValues,
@@ -111,10 +61,8 @@ export function LeadCaptureForm({
     "idle" | "submitting" | "success" | "error"
   >("idle");
   const [message, setMessage] = useState(
-    "Your AI solar report is being generated"
+    "Enter your email and we will send a PDF copy of the report."
   );
-  const [successSavings, setSuccessSavings] = useState<number | null>(null);
-  const [savedLead, setSavedLead] = useState<SavedLead | null>(null);
   const lastSubmittedFingerprint = useRef<string>("");
 
   useEffect(() => {
@@ -138,29 +86,11 @@ export function LeadCaptureForm({
     return 0;
   }, [analysis?.annualSavingsUSD]);
 
-  const handleEmailStatusChange = useCallback(
-    (nextStatus: "idle" | "sending" | "sent" | "error", nextMessage: string) => {
-      setMessage(nextMessage);
-      if (nextStatus === "error") {
-        setStatus("error");
-      }
-    },
-    []
-  );
-
   const validate = () => {
     const nextErrors: Partial<Record<keyof FormValues, string>> = {};
 
-    if (values.name.trim().length < 2) {
-      nextErrors.name = "Please enter your full name.";
-    }
-
     if (!isValidEmail(values.email)) {
       nextErrors.email = "Enter a valid email address.";
-    }
-
-    if (!isValidPhone(values.phone)) {
-      nextErrors.phone = "Enter a valid phone number with at least 10 digits.";
     }
 
     if (values.address.trim().length < 8) {
@@ -196,59 +126,49 @@ export function LeadCaptureForm({
       return;
     }
 
-    const fingerprint = buildFingerprint(values);
+    const monthlyBill = Number(values.monthlyBill);
+    const report = buildSolarReportFromAnalysis(analysis, monthlyBill);
+    const fingerprint = buildFingerprint(values, report.annualSavings);
+
     if (fingerprint === lastSubmittedFingerprint.current) {
       setStatus("error");
-      setMessage("That lead was already submitted.");
+      setMessage("This report was already sent to that email.");
       return;
     }
 
     setStatus("submitting");
-    setMessage("Saving your lead...");
-
-    const monthlyBill = Number(values.monthlyBill);
-    const savings = analysis.annualSavingsUSD;
+    setMessage("Generating the PDF and sending it to your email...");
 
     try {
-      const response = await fetch("/api/leads", {
+      const response = await fetch("/api/report/email", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          name: values.name.trim(),
           email: values.email.trim(),
-          phone: values.phone.trim(),
           address: values.address.trim(),
           monthlyBill,
-          panelCount: analysis.panelCount,
-          systemSizeKw: analysis.systemKw,
-          annualSavings: analysis.annualSavingsUSD,
-          monthlySavings: Math.round(analysis.annualSavingsUSD / 12),
-          annualEnergyKwh: analysis.annualKwh,
-          roofAreaSqm: getRoofAreaM2(analysis),
-          usableAreaSqm: getUsableAreaM2(analysis),
-          roofPitchDegrees: analysis.pitchDeg,
-          lat,
-          lng,
+          report,
         }),
       });
 
-      const payload: { message?: string; lead?: SavedLead } = await response
+      const payload: { message?: string; skipped?: boolean } = await response
         .json()
         .catch(() => ({}));
 
-      if (!response.ok || !payload.lead) {
+      if (!response.ok) {
         setStatus("error");
-        setMessage(payload.message || "Could not save the lead.");
+        setMessage(payload.message || "Could not send the PDF report.");
         return;
       }
 
       lastSubmittedFingerprint.current = fingerprint;
-      setSavedLead(payload.lead);
       setStatus("success");
-      setMessage("Your AI solar report is being generated");
-      setSuccessSavings(payload.lead.estimatedSavings ?? savings);
+      setMessage(
+        payload.message ||
+          "Your PDF report has been sent. Check your email within 2 minutes."
+      );
     } catch {
       setStatus("error");
       setMessage("Network error. Please try again.");
@@ -265,29 +185,21 @@ export function LeadCaptureForm({
           <div className="flex items-start justify-between gap-4">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.34em] text-cyan-300">
-                Lead capture
+                Report delivery
               </p>
               <h3 className="mt-3 text-2xl font-semibold tracking-tight text-white">
-                Get your AI solar report.
+                Email your AI solar report.
               </h3>
               <p className="mt-3 max-w-xl text-sm leading-7 text-slate-300">
-                Enter your details and we will send the report as soon as it is generated.
+                We only need your email to send the PDF. Your report is not saved as a lead.
               </p>
             </div>
             <div className="hidden rounded-full border border-cyan-300/15 bg-cyan-300/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.3em] text-cyan-200 sm:inline-flex">
-              Secure capture
+              PDF delivery
             </div>
           </div>
 
           <div className="mt-6 grid gap-4 sm:grid-cols-2">
-            <Field
-              label="Name"
-              value={values.name}
-              onChange={(value) => updateField("name", value)}
-              error={errors.name}
-              placeholder="Your full name"
-              autoComplete="name"
-            />
             <Field
               label="Email"
               value={values.email}
@@ -296,16 +208,6 @@ export function LeadCaptureForm({
               placeholder="you@example.com"
               type="email"
               autoComplete="email"
-            />
-            <Field
-              label="Phone"
-              value={values.phone}
-              onChange={(value) => updateField("phone", formatPhoneDisplay(value))}
-              error={errors.phone}
-              placeholder="(602) 555-0123"
-              type="tel"
-              inputMode="tel"
-              autoComplete="tel"
             />
             <Field
               label="Monthly bill"
@@ -317,7 +219,7 @@ export function LeadCaptureForm({
               inputMode="decimal"
               prefix="$"
               autoComplete="off"
-              helperText="Used to estimate the savings shown in your report."
+              helperText="Used only to tune the savings shown in your PDF."
             />
             <div className="sm:col-span-2">
               <Field
@@ -332,7 +234,7 @@ export function LeadCaptureForm({
           </div>
 
           <p className="mt-6 text-center text-sm leading-6 text-slate-400">
-            No spam. No sales calls without your permission. Your info is only shared with licensed AZ installers.
+            No lead storage. No sales call signup. The PDF is sent to the email you provide.
           </p>
 
           <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -344,17 +246,17 @@ export function LeadCaptureForm({
             </div>
             {status === "success" ? (
               <div className="inline-flex items-center justify-center rounded-full border border-emerald-300/20 bg-emerald-300/12 px-6 py-3.5 text-sm font-semibold text-emerald-200">
-                Report sent! Check your email within 2 minutes.
+                PDF sent. Check your email.
               </div>
             ) : (
               <Button type="submit" disabled={status === "submitting"} className="px-6 py-3.5">
                 {status === "submitting" ? (
                   <span className="inline-flex items-center gap-2">
-                    <span className="h-4 w-4 rounded-full border-2 border-slate-950/20 border-t-slate-950 animate-spin" />
-                    Generating your report...
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-950/20 border-t-slate-950" />
+                    Sending PDF...
                   </span>
                 ) : (
-                  "Generate Report"
+                  "Email PDF Report"
                 )}
               </Button>
             )}
@@ -385,13 +287,13 @@ export function LeadCaptureForm({
               What happens next
             </p>
             <h4 className="mt-3 text-2xl font-semibold tracking-tight text-white">
-              What happens next
+              Private report delivery
             </h4>
             <div className="mt-6 grid gap-3">
               {[
-                "Validate contact details",
-                "Store lead in Supabase",
-                "Generate the solar report",
+                "Validate the email address",
+                "Generate a PDF from this roof model",
+                "Send the report directly to your inbox",
               ].map((item, index) => (
                 <div
                   key={item}
@@ -420,44 +322,24 @@ export function LeadCaptureForm({
                 Report status
               </p>
               <p className="mt-3 text-lg font-semibold tracking-tight text-white">
-                Your AI solar report is being generated
+                {status === "success"
+                  ? "PDF report sent"
+                  : status === "submitting"
+                    ? "Generating PDF report"
+                    : "Ready to email the report"}
               </p>
               <p className="mt-2 text-sm leading-6 text-slate-300">
                 {status === "success"
-                  ? `Lead saved. Estimated savings: ${formatMoney(
-                      successSavings ?? 0
-                    )}`
+                  ? "The PDF was sent without creating a Supabase lead record."
                   : status === "submitting"
-                    ? "Saving the homeowner details and preparing the report."
-                    : "Once the lead is submitted, the report status will switch here automatically."}
+                    ? "Creating the PDF attachment and sending it through email delivery."
+                    : "Submit the email form when you are ready to receive the PDF copy."}
               </p>
               {status === "submitting" ? <StatusSkeleton /> : null}
-              {status === "success" ? (
-                <div className="mt-4 flex items-center gap-3">
-                  <span className="success-pop flex h-10 w-10 items-center justify-center rounded-full bg-emerald-300/15 text-emerald-200">OK</span>
-                  <span className="text-sm font-medium text-emerald-200">
-                    Report ready
-                  </span>
-                </div>
-              ) : null}
             </div>
           </div>
         </div>
       </div>
-
-      {savedLead ? (
-        <SolarReportGenerator
-          key={savedLead.id}
-          leadId={savedLead.id}
-          reportUrl={savedLead.reportUrl}
-          name={savedLead.name}
-          email={savedLead.email}
-          address={savedLead.address}
-          monthlyBill={savedLead.monthlyBill}
-          analysis={analysis}
-          onEmailStatusChange={handleEmailStatusChange}
-        />
-      ) : null}
     </div>
   );
 }
@@ -521,11 +403,9 @@ function Field({
 function StatusSkeleton() {
   return (
     <div className="mt-4 grid gap-2">
-      <div className="h-2.5 w-3/4 rounded-full bg-white/8 animate-pulse" />
-      <div className="h-2.5 w-1/2 rounded-full bg-white/8 animate-pulse [animation-delay:140ms]" />
-      <div className="h-2.5 w-2/3 rounded-full bg-white/8 animate-pulse [animation-delay:280ms]" />
+      <div className="h-2.5 w-3/4 animate-pulse rounded-full bg-white/8" />
+      <div className="h-2.5 w-1/2 animate-pulse rounded-full bg-white/8 [animation-delay:140ms]" />
+      <div className="h-2.5 w-2/3 animate-pulse rounded-full bg-white/8 [animation-delay:280ms]" />
     </div>
   );
 }
-
-

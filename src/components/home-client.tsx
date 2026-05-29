@@ -499,6 +499,15 @@ function SectionIntro({
   title: string;
   copy: string;
 }) {
+  const displayTitle =
+    eyebrow === "Generate report"
+      ? "Ready to see your full report? Send yourself a PDF copy."
+      : title;
+  const displayCopy =
+    eyebrow === "Generate report"
+      ? "Enter your email and monthly bill to generate the PDF. We do not store this as a lead."
+      : copy;
+
   return (
     <div className="mx-auto max-w-4xl text-center">
       <span className="liquid-glass inline-flex rounded-full px-4 py-2 text-xs font-semibold uppercase tracking-[0.34em] text-cyan-100/82">
@@ -508,10 +517,10 @@ function SectionIntro({
         className="mt-4 text-3xl leading-[0.98] tracking-[-0.04em] text-white md:text-5xl"
         style={{ fontFamily: "'Instrument Serif', serif" }}
       >
-        {title}
+        {displayTitle}
       </h2>
       <p className="mx-auto mt-3 max-w-2xl text-sm leading-6 text-white/62 sm:text-base">
-        {copy}
+        {displayCopy}
       </p>
     </div>
   );
