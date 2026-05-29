@@ -58,7 +58,7 @@ type AnalyzeRoofPayload = {
   detail?: string;
 };
 
-type ViewMode = "overview" | "panels" | "irradiance";
+type ViewMode = "overview" | "irradiance";
 
 type AnalysisMetrics = {
   roofArea: number;
@@ -163,7 +163,6 @@ type GoogleOverlayViewInstance = GoogleMapOverlayInstance & {
 
 const viewModes: Array<{ id: ViewMode; label: string }> = [
   { id: "overview", label: "Overview" },
-  { id: "panels", label: "Panels" },
   { id: "irradiance", label: "Irradiance" },
 ];
 
@@ -725,7 +724,7 @@ export function SolarAnalysis({
             <IntelligenceCard
               eyebrow="Site findings"
               title="Rooftop analysis summary"
-              body={`The primary roof plane faces ${metrics.orientationLabel} with ${metrics.selectedPanelCount} accepted modules across usable roof surfaces. The current model marks ${roofData.usablePctRoof}% of the roof as solar-ready with ${roofData.shadingRisk} shading exposure.`}
+              body={`The primary roof plane faces ${metrics.orientationLabel} across usable roof surfaces. The current model marks ${roofData.usablePctRoof}% of the roof as solar-ready with ${roofData.shadingRisk} shading exposure.`}
             />
             <IntelligenceCard
               eyebrow="Environmental impact"
@@ -762,7 +761,7 @@ function ViewportHeader({
             Rooftop analysis
           </p>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
-            Roof measurements, annual flux, and accepted panel candidates are projected from the current Solar API building model onto the rooftop image.
+            Roof measurements and annual flux are projected from the current Solar API building model onto the rooftop image.
           </p>
         </div>
         <div className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-slate-300">
@@ -988,17 +987,6 @@ function ViewportCanvas({
         }
       }
 
-      if (viewMode === "panels") {
-        nextOverlays.push(
-          ...createPanelMapOverlays({
-            googleApi,
-            map: mapRef.current,
-            roofData,
-            selectedPanelCount,
-          })
-        );
-      }
-
       if (!cancelled && overlayRunRef.current === overlayRun && mapRef.current) {
         overlayRefs.current = nextOverlays;
         if (cameraFitKeyRef.current !== cameraTargetKey) {
@@ -1065,7 +1053,7 @@ function ViewportCanvas({
         </div>
       ) : null}
       {!showMapFallback ? (
-        <MapEvidenceOverlay roofData={roofData} selectedPanelCount={selectedPanelCount} />
+        <MapEvidenceOverlay />
       ) : null}
     </div>
   );
@@ -1114,51 +1102,26 @@ function loadGoogleMapsApi(apiKey: string) {
   return browserWindow.__solarMapsPromise;
 }
 
-function MapEvidenceOverlay({
-  roofData,
-  selectedPanelCount,
-}: {
-  roofData: RoofAnalysis;
-  selectedPanelCount: number;
-}) {
-  const placedByPlane = useMemo(
-    () => getPlacedPanelCountsByPlane(roofData, selectedPanelCount),
-    [roofData, selectedPanelCount]
-  );
-  const rejectedCount = Math.max(0, roofData.rejectedPanelCandidateCount ?? 0);
-
+function MapEvidenceOverlay() {
   return (
     <>
-      <div className="pointer-events-none absolute left-3 top-3 z-10 max-w-[calc(100%-1.5rem)] rounded-[0.95rem] border border-white/12 bg-slate-950/78 px-3 py-2 text-[0.65rem] font-semibold uppercase tracking-[0.18em] text-cyan-100 shadow-[0_10px_28px_rgba(2,8,20,0.24)] backdrop-blur-md">
+      <div className="pointer-events-none absolute left-3 top-3 z-10 max-w-[calc(100%-1.5rem)] rounded-full border border-white/10 bg-slate-950/35 px-2.5 py-1.5 text-[0.58rem] font-semibold uppercase tracking-[0.16em] text-cyan-100/90 shadow-none backdrop-blur-[2px]">
         Google Solar API roof model
       </div>
-      <div className="pointer-events-none absolute bottom-3 left-3 z-10 max-w-[min(22rem,calc(100%-1.5rem))] rounded-[1rem] border border-white/12 bg-slate-950/82 p-3 text-xs text-slate-200 shadow-[0_14px_34px_rgba(2,8,20,0.28)] backdrop-blur-md">
-        <p className="text-[0.58rem] font-semibold uppercase tracking-[0.28em] text-cyan-200">
-          Map legend
-        </p>
-        <div className="mt-2 grid gap-1.5">
-          <LegendItem swatch="bg-blue-500" label="Blue: placed panels" />
-          <LegendItem swatch="border border-cyan-200 bg-cyan-200/10" label="Cyan: roof plane / usable area" />
-          <LegendItem swatch="border border-emerald-200 bg-emerald-200/10" label="Green: estimated setback boundary" />
-          <LegendItem swatch="bg-slate-400/45" label="Gray: unavailable or obstructed area" />
+      <div className="pointer-events-none absolute bottom-3 left-3 z-10 max-w-[min(10.75rem,calc(100%-1.5rem))] rounded-[0.7rem] border border-white/25 bg-white/55 p-2 text-[0.58rem] font-medium text-slate-900 shadow-[0_8px_18px_rgba(15,23,42,0.16)] backdrop-blur-sm">
+        <div className="flex items-center justify-between gap-2 border-b border-slate-900/10 pb-1.5">
+          <p className="text-[0.5rem] font-bold uppercase tracking-[0.22em] text-slate-700">
+            Legend
+          </p>
+          <span className="rounded-full bg-cyan-300/65 px-1.5 py-0.5 text-[0.46rem] font-bold uppercase tracking-[0.16em] text-slate-950">
+            Solar API
+          </span>
         </div>
-        <div className="mt-3 grid gap-1 border-t border-white/10 pt-2 text-[0.7rem] leading-5 text-slate-300">
-          {placedByPlane.map((item) => (
-            <div key={item.label} className="flex justify-between gap-3">
-              <span className="capitalize">{item.label} plane</span>
-              <span className="font-semibold text-white">{item.count} panels</span>
-            </div>
-          ))}
-          {rejectedCount > 0 ? (
-            <div className="flex justify-between gap-3 text-amber-100">
-              <span>Not placed</span>
-              <span className="font-semibold">{rejectedCount} candidates</span>
-            </div>
-          ) : null}
+        <div className="mt-1.5 grid gap-1">
+          <LegendItem swatch="border border-cyan-500 bg-cyan-300/30" label="Roof plane" />
+          <LegendItem swatch="border border-emerald-500 bg-emerald-300/25" label="Setback" />
+          <LegendItem swatch="bg-slate-500/45" label="Unavailable" />
         </div>
-        <p className="mt-3 border-t border-white/10 pt-2 text-[0.68rem] leading-5 text-slate-400">
-          Roof geometry and panel candidates come from Google Solar API. Savings are modeled using Arizona assumptions.
-        </p>
       </div>
     </>
   );
@@ -1166,30 +1129,11 @@ function MapEvidenceOverlay({
 
 function LegendItem({ swatch, label }: { swatch: string; label: string }) {
   return (
-    <div className="flex items-center gap-2">
-      <span className={`h-2.5 w-2.5 shrink-0 rounded-sm ${swatch}`} />
+    <div className="flex items-center gap-1.5 leading-4">
+      <span className={`h-2 w-2 shrink-0 rounded-[0.18rem] ${swatch}`} />
       <span>{label}</span>
     </div>
   );
-}
-
-function getPlacedPanelCountsByPlane(roofData: RoofAnalysis, selectedPanelCount: number) {
-  const panels = roofData.solarPanels.slice(
-    0,
-    clampNumber(selectedPanelCount, 0, getMaxSelectablePanelCount(roofData))
-  );
-  const counts = panels.reduce<Map<number, number>>((nextCounts, panel) => {
-    nextCounts.set(panel.segmentIndex, (nextCounts.get(panel.segmentIndex) ?? 0) + 1);
-    return nextCounts;
-  }, new Map());
-
-  return roofData.roofSegments
-    .map((segment, index) => ({
-      count: counts.get(index) ?? 0,
-      label: segment.label,
-    }))
-    .filter((item) => item.count > 0)
-    .slice(0, 3);
 }
 
 function clearGoogleOverlays(overlays: GoogleMapOverlayInstance[]) {
@@ -1555,43 +1499,6 @@ function createDsmPlaneOverlays({
       strokeWeight: 1,
     });
   });
-}
-
-function createPanelMapOverlays({
-  googleApi,
-  map,
-  roofData,
-  selectedPanelCount,
-}: {
-  googleApi: GoogleMapsApi;
-  map: GoogleMapInstance;
-  roofData: RoofAnalysis;
-  selectedPanelCount: number;
-}) {
-  const panelLayout = buildProfessionalPanelLayout({
-    roofData,
-    selectedPanelCount,
-  });
-
-  return panelLayout.map((placement) => {
-      const path = placement.displayPath.map(
-        (point) => new googleApi.maps.LatLng(point.lat, point.lng)
-      );
-      const segmentTone = placement.panel.segmentIndex % 3;
-      const fillColor =
-        segmentTone === 0 ? "#3b82f6" : segmentTone === 1 ? "#2563eb" : "#60a5fa";
-
-      return new googleApi.maps.Polygon({
-        clickable: false,
-        fillColor,
-        fillOpacity: 0.7,
-        map,
-        paths: path,
-        strokeColor: "#ffffff",
-        strokeOpacity: 0.92,
-        strokeWeight: 1,
-      });
-    });
 }
 
 type PanelLayoutPlacement = {
