@@ -24,6 +24,13 @@ export type DashboardCrmLead = {
   co2OffsetLbs: number;
   estimatedRoiYears: number;
   panelCount: number;
+  federalTaxCredit: number | null;
+  netSystemCost: number | null;
+  selectedInverterType: string | null;
+  selectedPanelBrand: string | null;
+  selectedPanelModel: string | null;
+  selectedPanelWatts: number | null;
+  systemCostBeforeIncentives: number | null;
   systemSizeKw: number;
   reportUrl: string;
   status: DashboardLeadStatus;
@@ -215,6 +222,13 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
         "annual_savings",
         "roi_years",
         "co2_offset",
+        "selected_panel_brand",
+        "selected_panel_model",
+        "selected_panel_watts",
+        "system_cost_before_incentives",
+        "federal_tax_credit",
+        "net_system_cost",
+        "selected_inverter_type",
         "status",
         "created_at",
       ],
@@ -227,6 +241,15 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
         String(Math.round(lead.annualSavings || 0)),
         String(lead.estimatedRoiYears || ""),
         String(Math.round(lead.co2OffsetLbs || 0)),
+        lead.selectedPanelBrand ?? "",
+        lead.selectedPanelModel ?? "",
+        lead.selectedPanelWatts ? String(lead.selectedPanelWatts) : "",
+        lead.systemCostBeforeIncentives
+          ? String(Math.round(lead.systemCostBeforeIncentives))
+          : "",
+        lead.federalTaxCredit ? String(Math.round(lead.federalTaxCredit)) : "",
+        lead.netSystemCost ? String(Math.round(lead.netSystemCost)) : "",
+        lead.selectedInverterType ?? "",
         getStatusLabel(lead.status),
         lead.createdAt,
       ]),
@@ -512,6 +535,38 @@ function LeadDetailPanel({
         <DetailRow label="Annual savings" value={formatMoney(lead.annualSavings)} />
         <DetailRow label="System size" value={`${formatDecimal(lead.systemSizeKw)} kW`} />
         <DetailRow label="Panel count" value={`${lead.panelCount} panels`} />
+        <DetailRow
+          label="Selected panel"
+          value={
+            lead.selectedPanelBrand && lead.selectedPanelModel
+              ? `${lead.selectedPanelBrand} ${lead.selectedPanelModel}${
+                  lead.selectedPanelWatts ? ` ${lead.selectedPanelWatts}W` : ""
+                }`
+              : "Not captured"
+          }
+        />
+        <DetailRow
+          label="Inverter"
+          value={formatInverterLabel(lead.selectedInverterType)}
+        />
+        <DetailRow
+          label="Gross system cost"
+          value={
+            lead.systemCostBeforeIncentives
+              ? formatMoney(lead.systemCostBeforeIncentives)
+              : "Not captured"
+          }
+        />
+        <DetailRow
+          label="Federal credit"
+          value={
+            lead.federalTaxCredit ? formatMoney(lead.federalTaxCredit) : "Not captured"
+          }
+        />
+        <DetailRow
+          label="Net system cost"
+          value={lead.netSystemCost ? formatMoney(lead.netSystemCost) : "Not captured"}
+        />
         <DetailRow label="Estimated ROI" value={`${formatDecimal(lead.estimatedRoiYears)} yrs`} />
         <DetailRow label="CO2 offset" value={`${formatNumber(lead.co2OffsetLbs)} lbs`} />
       </div>
@@ -716,6 +771,22 @@ function formatDecimal(value: number) {
     maximumFractionDigits: 1,
     minimumFractionDigits: 0,
   }).format(Number.isFinite(value) ? value : 0);
+}
+
+function formatInverterLabel(value: string | null) {
+  if (value === "microinverters") {
+    return "Microinverters";
+  }
+
+  if (value === "optimizers") {
+    return "Power optimizers";
+  }
+
+  if (value === "string") {
+    return "String inverter";
+  }
+
+  return "Not captured";
 }
 
 function escapeCsvCell(value: string) {

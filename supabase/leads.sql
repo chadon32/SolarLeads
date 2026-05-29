@@ -21,6 +21,13 @@ alter table public.leads add column if not exists roof_pitch_deg numeric(10, 2);
 alter table public.leads add column if not exists lat double precision;
 alter table public.leads add column if not exists lng double precision;
 alter table public.leads add column if not exists status text not null default 'New';
+alter table public.leads add column if not exists selected_panel_brand text;
+alter table public.leads add column if not exists selected_panel_model text;
+alter table public.leads add column if not exists selected_panel_watts integer;
+alter table public.leads add column if not exists system_cost_before_incentives numeric(12, 2);
+alter table public.leads add column if not exists federal_tax_credit numeric(12, 2);
+alter table public.leads add column if not exists net_system_cost numeric(12, 2);
+alter table public.leads add column if not exists selected_inverter_type text;
 
 alter table public.leads enable row level security;
 

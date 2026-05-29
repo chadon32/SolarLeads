@@ -12,6 +12,12 @@ import {
 } from "@/lib/roof-analysis";
 import { buildSolarMetrics } from "@/lib/solar-metrics";
 import { buildSolarReportFromSolarValues } from "@/lib/solar-report";
+import {
+  getInverterOption,
+  getPanelFit,
+  type InverterType,
+  type SolarPanel,
+} from "@/lib/solarPanels";
 
 type LeadCaptureFormProps = {
   initialAddress: string;
@@ -20,6 +26,8 @@ type LeadCaptureFormProps = {
   initialMonthlyBill?: number;
   lat?: number;
   lng?: number;
+  selectedInverterType?: InverterType;
+  selectedPanel?: SolarPanel | null;
 };
 
 type FormValues = {
@@ -96,6 +104,8 @@ export function LeadCaptureForm({
   initialMonthlyBill = 200,
   lat,
   lng,
+  selectedInverterType = "string",
+  selectedPanel,
 }: LeadCaptureFormProps) {
   const [values, setValues] = useState<FormValues>({
     ...emptyValues,
@@ -129,14 +139,26 @@ export function LeadCaptureForm({
   const estimatedSavings = useMemo(() => {
     if (analysis?.validSite) {
       const monthlyBill = Number(values.monthlyBill);
-      return buildSolarMetrics(analysis, {
+      const baseMetrics = buildSolarMetrics(analysis, {
         monthlyBill: Number.isFinite(monthlyBill) ? monthlyBill : undefined,
         selectedPanelCount: activePanelCount,
-      }).annualSavings;
+      });
+      const inverter = getInverterOption(selectedInverterType);
+
+      if (selectedPanel) {
+        return getPanelFit(selectedPanel, {
+          roofData: analysis,
+          monthlyBill: Number.isFinite(monthlyBill) ? monthlyBill : undefined,
+          selectedPanelCount: activePanelCount ?? baseMetrics.panelCount,
+          inverterCostAdderPerWatt: inverter.costAdderPerWatt,
+        }).annualSavings;
+      }
+
+      return baseMetrics.annualSavings;
     }
 
     return 0;
-  }, [activePanelCount, analysis, values.monthlyBill]);
+  }, [activePanelCount, analysis, selectedInverterType, selectedPanel, values.monthlyBill]);
 
   const validate = () => {
     const nextErrors: Partial<Record<keyof FormValues, string>> = {};
@@ -181,12 +203,34 @@ export function LeadCaptureForm({
     if (!validate()) return;
 
     const monthlyBill = Number(values.monthlyBill);
-    const metrics = analysis?.validSite
+    const baseMetrics = analysis?.validSite
       ? buildSolarMetrics(analysis, {
           monthlyBill,
           selectedPanelCount: activePanelCount,
         })
       : null;
+    const selectedInverter = getInverterOption(selectedInverterType);
+    const panelFit =
+      analysis?.validSite && selectedPanel && baseMetrics
+        ? getPanelFit(selectedPanel, {
+            roofData: analysis,
+            monthlyBill,
+            selectedPanelCount: activePanelCount ?? baseMetrics.panelCount,
+            inverterCostAdderPerWatt: selectedInverter.costAdderPerWatt,
+          })
+        : null;
+    const metrics =
+      baseMetrics && panelFit
+        ? {
+            ...baseMetrics,
+            annualKwh: panelFit.annualKwh,
+            annualSavings: panelFit.annualSavings,
+            monthlySavings: Math.round(panelFit.annualSavings / 12),
+            panelCount: panelFit.maxPanelsFit,
+            paybackYears: panelFit.paybackYears,
+            systemKw: panelFit.systemKw,
+          }
+        : baseMetrics;
 
     if (!analysis?.validSite || !metrics || !metrics.annualSavings) {
       setStatus("error");
@@ -227,6 +271,13 @@ export function LeadCaptureForm({
           roofPitchDegrees: metrics.avgPitchDeg,
           lat,
           lng,
+          selectedPanelBrand: selectedPanel?.brand,
+          selectedPanelModel: selectedPanel?.model,
+          selectedPanelWatts: selectedPanel?.watts,
+          systemCostBeforeIncentives: panelFit?.systemCost,
+          federalTaxCredit: panelFit?.taxCredit,
+          netSystemCost: panelFit?.netCost,
+          selectedInverterType,
         }),
       });
 

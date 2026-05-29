@@ -43,6 +43,13 @@ type DashboardLead = {
   annual_savings?: number | null;
   annual_energy_kwh?: number | null;
   roi_years?: number | null;
+  selected_panel_brand?: string | null;
+  selected_panel_model?: string | null;
+  selected_panel_watts?: number | null;
+  system_cost_before_incentives?: number | null;
+  federal_tax_credit?: number | null;
+  net_system_cost?: number | null;
+  selected_inverter_type?: string | null;
   status?: string | null;
   created_at: string;
 };
@@ -70,7 +77,7 @@ export default async function DashboardPage({
 
   const supabase = getSupabaseAdminClient();
   const extendedLeadSelect =
-    "id, name, email, phone, address, monthly_bill, estimated_savings, panel_count, system_size_kw, annual_savings, annual_energy_kwh, roi_years, status, created_at";
+    "id, name, email, phone, address, monthly_bill, estimated_savings, panel_count, system_size_kw, annual_savings, annual_energy_kwh, roi_years, selected_panel_brand, selected_panel_model, selected_panel_watts, system_cost_before_incentives, federal_tax_credit, net_system_cost, selected_inverter_type, status, created_at";
   const baseLeadSelect =
     "id, name, email, phone, address, monthly_bill, estimated_savings, created_at";
 
@@ -172,6 +179,14 @@ export default async function DashboardPage({
       co2OffsetLbs: report.annualImpactLbs,
       estimatedRoiYears: Number(lead.roi_years ?? report.estimatedRoiYears),
       panelCount: report.panelCount,
+      selectedInverterType: lead.selected_inverter_type ?? null,
+      selectedPanelBrand: lead.selected_panel_brand ?? null,
+      selectedPanelModel: lead.selected_panel_model ?? null,
+      selectedPanelWatts: Number(lead.selected_panel_watts ?? 0) || null,
+      systemCostBeforeIncentives:
+        Number(lead.system_cost_before_incentives ?? 0) || null,
+      federalTaxCredit: Number(lead.federal_tax_credit ?? 0) || null,
+      netSystemCost: Number(lead.net_system_cost ?? 0) || null,
       systemSizeKw,
       reportUrl: buildReportPdfPath(lead.id),
       status:

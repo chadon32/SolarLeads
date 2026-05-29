@@ -20,9 +20,20 @@ import {
 } from "@/lib/solar-advisor";
 import {
   buildSolarMetrics,
-  INSTALLED_COST_PER_WATT,
-  STANDARD_PANEL_WATTS,
 } from "@/lib/solar-metrics";
+import {
+  detectArizonaUtility,
+  getInverterOption,
+  getPanelById,
+  getPanelFit,
+  getRoofShadeRiskLabel,
+  getTierLabel,
+  INVERTER_OPTIONS,
+  SOLAR_PANELS,
+  type InverterType,
+  type PanelFit,
+  type SolarPanel,
+} from "@/lib/solarPanels";
 
 type SolarReportDashboardProps = {
   address: string;
@@ -31,6 +42,10 @@ type SolarReportDashboardProps = {
   monthlyBill?: number;
   onActivePanelCountChange?: (panelCount: number) => void;
   onMonthlyBillChange?: (monthlyBill: number) => void;
+  onSelectedInverterTypeChange?: (inverterType: InverterType) => void;
+  onSelectedPanelIdChange?: (panelId: string) => void;
+  selectedInverterType?: InverterType;
+  selectedPanelId?: string;
 };
 
 type DetailTab = "overview" | "savings" | "environment" | "financing" | "next";
@@ -63,14 +78,35 @@ export function SolarReportDashboard({
   monthlyBill: externalMonthlyBill = 200,
   onActivePanelCountChange,
   onMonthlyBillChange,
+  onSelectedInverterTypeChange,
+  onSelectedPanelIdChange,
+  selectedInverterType = "string",
+  selectedPanelId,
 }: SolarReportDashboardProps) {
   const monthlyBill = externalMonthlyBill;
   const [activeTab, setActiveTab] = useState<DetailTab>("overview");
   const [financingMode, setFinancingMode] = useState<FinancingMode>("loan");
   const [selectedAdvisorQuestion, setSelectedAdvisorQuestion] = useState(0);
+  const selectedPanel = getPanelById(selectedPanelId);
+  const selectedInverter = getInverterOption(selectedInverterType);
   const values = useMemo(
-    () => buildDashboardValues(analysis, monthlyBill, financingMode, activePanelCount),
-    [activePanelCount, analysis, financingMode, monthlyBill]
+    () =>
+      buildDashboardValues(
+        analysis,
+        monthlyBill,
+        financingMode,
+        activePanelCount,
+        selectedPanel,
+        selectedInverter.costAdderPerWatt
+      ),
+    [
+      activePanelCount,
+      analysis,
+      financingMode,
+      monthlyBill,
+      selectedInverter.costAdderPerWatt,
+      selectedPanel,
+    ]
   );
 
   const updateMonthlyBill = (value: number) => {
@@ -96,6 +132,15 @@ export function SolarReportDashboard({
             Estimated solar layout generated from available roof and sunlight data.
             Final panel placement, incentives, pricing, and savings require installer confirmation.
           </p>
+          <div className="mt-3 rounded-[0.95rem] border border-white/10 bg-black/22 px-3 py-2">
+            <p className="text-[0.58rem] font-semibold uppercase tracking-[0.18em] text-white/42">
+              Selected panel
+            </p>
+            <p className="mt-1 text-sm font-semibold text-white">
+              {values.selectedPanel.brand} {values.selectedPanel.model}{" "}
+              {values.selectedPanel.watts}W
+            </p>
+          </div>
           <SuitabilityExplanationCard advisor={values.advisor} />
         </section>
 
@@ -246,8 +291,462 @@ export function SolarReportDashboard({
           ) : null}
           {activeTab === "next" ? <NextStepsTab /> : null}
         </div>
+
+        <PanelSelectorSection
+          address={address}
+          analysis={analysis}
+          monthlyBill={monthlyBill}
+          onSelectedInverterTypeChange={onSelectedInverterTypeChange}
+          onSelectedPanelIdChange={onSelectedPanelIdChange}
+          selectedInverterType={selectedInverterType}
+          selectedPanelId={selectedPanel.id}
+          values={values}
+        />
       </section>
     </>
+  );
+}
+
+type PanelSortKey =
+  | "brand"
+  | "watts"
+  | "efficiency"
+  | "pricePerWatt"
+  | "warranty_years"
+  | "paybackYears";
+
+function PanelSelectorSection({
+  address,
+  analysis,
+  monthlyBill,
+  onSelectedInverterTypeChange,
+  onSelectedPanelIdChange,
+  selectedInverterType,
+  selectedPanelId,
+  values,
+}: {
+  address: string;
+  analysis: RoofAnalysis;
+  monthlyBill: number;
+  onSelectedInverterTypeChange?: (inverterType: InverterType) => void;
+  onSelectedPanelIdChange?: (panelId: string) => void;
+  selectedInverterType: InverterType;
+  selectedPanelId: string;
+  values: DashboardValues;
+}) {
+  const [showComparison, setShowComparison] = useState(false);
+  const [sortKey, setSortKey] = useState<PanelSortKey>("paybackYears");
+  const selectedInverter = getInverterOption(selectedInverterType);
+  const panelFits = useMemo(
+    () =>
+      SOLAR_PANELS.map((panel) => ({
+        fit: getPanelFit(panel, {
+          roofData: analysis,
+          monthlyBill,
+          inverterCostAdderPerWatt: selectedInverter.costAdderPerWatt,
+        }),
+        panel,
+      })),
+    [analysis, monthlyBill, selectedInverter.costAdderPerWatt]
+  );
+  const selectedPanel = getPanelById(selectedPanelId);
+  const selectedFit =
+    panelFits.find((item) => item.panel.id === selectedPanel.id)?.fit ??
+    values.selectedPanelFit;
+  const utility = detectArizonaUtility(address);
+  const federalCredit = selectedFit.taxCredit;
+  const stateCredit = selectedFit.netCost > 0 ? 1000 : 0;
+  const sortedFits = [...panelFits].sort((left, right) => {
+    if (sortKey === "brand") {
+      return left.panel.brand.localeCompare(right.panel.brand);
+    }
+
+    if (sortKey === "paybackYears") {
+      return left.fit.paybackYears - right.fit.paybackYears;
+    }
+
+    const leftValue =
+      sortKey in left.panel ? Number(left.panel[sortKey as keyof SolarPanel]) : 0;
+    const rightValue =
+      sortKey in right.panel ? Number(right.panel[sortKey as keyof SolarPanel]) : 0;
+    return rightValue - leftValue;
+  });
+
+  return (
+    <section className="mt-5 grid gap-4">
+      <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+        <div>
+          <p className="text-[0.62rem] font-semibold uppercase tracking-[0.28em] text-cyan-100/82">
+            Panel selection
+          </p>
+          <h3 className="mt-2 text-2xl font-semibold tracking-tight text-white">
+            Choose your solar panel
+          </h3>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-white/58">
+            Panel fit, cost, heat performance, and payback are recalculated for
+            this roof using the selected inverter and monthly bill.
+          </p>
+        </div>
+        <SourceBadge source="modeled" />
+      </div>
+
+      <div className="grid gap-3 lg:grid-cols-3">
+        {panelFits.map(({ fit, panel }) => (
+          <PanelOptionCard
+            key={panel.id}
+            fit={fit}
+            isSelected={panel.id === selectedPanel.id}
+            onSelect={() => onSelectedPanelIdChange?.(panel.id)}
+            panel={panel}
+          />
+        ))}
+      </div>
+
+      <InverterSelector
+        selectedInverterType={selectedInverterType}
+        shadeRisk={getRoofShadeRiskLabel(analysis.annualSunlightHours)}
+        onSelectedInverterTypeChange={onSelectedInverterTypeChange}
+      />
+
+      <IncentivesSection
+        federalCredit={federalCredit}
+        stateCredit={stateCredit}
+        utility={utility}
+      />
+
+      <div className="rounded-[1rem] border border-white/10 bg-black/18 p-4">
+        <button
+          type="button"
+          onClick={() => setShowComparison((current) => !current)}
+          className="flex w-full items-center justify-between gap-3 text-left"
+        >
+          <span>
+            <span className="block text-sm font-semibold text-white">
+              Compare all panels
+            </span>
+            <span className="mt-1 block text-xs text-white/48">
+              Sorted by payback by default.
+            </span>
+          </span>
+          <span className="rounded-full border border-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-white/70">
+            {showComparison ? "Hide" : "Show"}
+          </span>
+        </button>
+        {showComparison ? (
+          <PanelComparisonTable
+            fits={sortedFits}
+            onSortKeyChange={setSortKey}
+            sortKey={sortKey}
+          />
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function PanelOptionCard({
+  fit,
+  isSelected,
+  onSelect,
+  panel,
+}: {
+  fit: PanelFit;
+  isSelected: boolean;
+  onSelect: () => void;
+  panel: SolarPanel;
+}) {
+  return (
+    <article
+      className={`rounded-[1.1rem] border p-4 transition ${
+        isSelected
+          ? "border-cyan-200/42 bg-cyan-200/[0.075]"
+          : "border-white/10 bg-black/18"
+      }`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-bold text-white">{panel.brand}</p>
+          <h4 className="mt-1 text-base font-semibold text-white/88">
+            {panel.model}
+          </h4>
+          <p className="mt-1 text-xs leading-5 text-white/45">{panel.bestFor}</p>
+        </div>
+        <span className="rounded-full border border-white/10 bg-white/[0.06] px-2 py-1 text-[0.54rem] font-bold uppercase tracking-[0.14em] text-white/68">
+          {getTierLabel(panel.tier)}
+        </span>
+      </div>
+
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        {fit.recommended ? (
+          <span className="rounded-full bg-emerald-300/16 px-2 py-1 text-[0.56rem] font-bold uppercase tracking-[0.12em] text-emerald-100">
+            Recommended for your roof
+          </span>
+        ) : null}
+        {!fit.fits ? (
+          <span className="rounded-full bg-white/[0.08] px-2 py-1 text-[0.56rem] font-bold uppercase tracking-[0.12em] text-white/48">
+            Not enough roof space
+          </span>
+        ) : null}
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
+        <PanelSpec label="Wattage" value={`${panel.watts}W`} />
+        <PanelSpec label="Efficiency" value={`${panel.efficiency}%`} />
+        <PanelSpec label="Warranty" value={`${panel.warranty_years} yrs`} />
+        <PanelSpec label="Type" value={panel.type} />
+      </div>
+
+      <div className="mt-4 rounded-[0.9rem] border border-amber-200/14 bg-amber-200/[0.06] p-3">
+        <p className="text-xs font-semibold text-amber-100">
+          {fit.azHeatLoss}
+        </p>
+        <p className="mt-1 text-xs leading-5 text-white/50">
+          Temperature coefficient: {panel.tempCoefficient}% / C.
+        </p>
+      </div>
+
+      <div className="mt-4 grid gap-1.5 text-xs text-white/58">
+        <PanelFinancialRow label="System size" value={`${fit.systemKw.toFixed(1)} kW`} />
+        <PanelFinancialRow label="Panels needed" value={`${fit.maxPanelsFit}`} />
+        <PanelFinancialRow label="Total cost" value={formatMoney(fit.systemCost)} />
+        <PanelFinancialRow label="After 30% tax credit" value={formatMoney(fit.netCost)} />
+        <PanelFinancialRow label="Est. payback" value={`${fit.paybackYears.toFixed(1)} years`} />
+        <PanelFinancialRow label="Annual savings" value={formatMoney(fit.annualSavings)} />
+      </div>
+
+      <button
+        type="button"
+        onClick={onSelect}
+        disabled={!fit.fits}
+        className={`mt-4 w-full rounded-full px-4 py-2.5 text-sm font-semibold transition ${
+          isSelected
+            ? "bg-white text-slate-950"
+            : "border border-white/10 bg-white/[0.06] text-white hover:bg-white/[0.1]"
+        } disabled:cursor-not-allowed disabled:opacity-50`}
+      >
+        {isSelected ? "Selected panel" : "Select this panel"}
+      </button>
+    </article>
+  );
+}
+
+function PanelSpec({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-[0.75rem] border border-white/8 bg-black/20 p-2">
+      <p className="text-[0.54rem] font-semibold uppercase tracking-[0.14em] text-white/40">
+        {label}
+      </p>
+      <p className="mt-1 font-semibold text-white">{value}</p>
+    </div>
+  );
+}
+
+function PanelFinancialRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3 border-b border-white/8 py-1.5 last:border-b-0">
+      <span>{label}</span>
+      <span className="font-semibold text-white">{value}</span>
+    </div>
+  );
+}
+
+function InverterSelector({
+  onSelectedInverterTypeChange,
+  selectedInverterType,
+  shadeRisk,
+}: {
+  onSelectedInverterTypeChange?: (inverterType: InverterType) => void;
+  selectedInverterType: InverterType;
+  shadeRisk: string;
+}) {
+  return (
+    <div className="rounded-[1rem] border border-white/10 bg-black/18 p-4">
+      <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-end">
+        <div>
+          <p className="text-[0.62rem] font-semibold uppercase tracking-[0.24em] text-cyan-100/80">
+            Inverter option
+          </p>
+          <h4 className="mt-1 text-lg font-semibold text-white">
+            Match electronics to roof shade
+          </h4>
+        </div>
+        <span className="rounded-full border border-white/10 bg-white/[0.06] px-3 py-1.5 text-xs font-semibold text-white/72">
+          Shade risk: {shadeRisk}
+        </span>
+      </div>
+      <div className="mt-4 grid gap-2 md:grid-cols-3">
+        {INVERTER_OPTIONS.map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            onClick={() => onSelectedInverterTypeChange?.(option.id)}
+            className={`rounded-[0.95rem] border p-3 text-left transition ${
+              option.id === selectedInverterType
+                ? "border-cyan-200/42 bg-cyan-200/[0.075]"
+                : "border-white/10 bg-black/20 hover:bg-white/[0.04]"
+            }`}
+          >
+            <p className="text-sm font-semibold text-white">{option.label}</p>
+            <p className="mt-1 text-xs leading-5 text-white/50">{option.brands}</p>
+            <p className="mt-2 text-xs font-semibold text-cyan-100">
+              {option.costAdderPerWatt > 0
+                ? `+$${option.costAdderPerWatt.toFixed(2)}/W`
+                : "$0/W add-on"}
+            </p>
+            <p className="mt-1 text-xs leading-5 text-white/45">{option.bestFor}</p>
+          </button>
+        ))}
+      </div>
+      <p className="mt-3 text-xs leading-5 text-white/50">
+        Microinverters are recommended for roofs with any shading. Final
+        equipment selection should be confirmed by the installer.
+      </p>
+    </div>
+  );
+}
+
+function IncentivesSection({
+  federalCredit,
+  stateCredit,
+  utility,
+}: {
+  federalCredit: number;
+  stateCredit: number;
+  utility: string | null;
+}) {
+  const totalIncentives = federalCredit + stateCredit;
+
+  return (
+    <section className="rounded-[1rem] border border-white/10 bg-black/18 p-4">
+      <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-end">
+        <div>
+          <p className="text-[0.62rem] font-semibold uppercase tracking-[0.24em] text-cyan-100/80">
+            Available incentives
+          </p>
+          <h4 className="mt-1 text-lg font-semibold text-white">
+            Estimated federal and Arizona savings
+          </h4>
+        </div>
+        <span className="rounded-full border border-emerald-200/16 bg-emerald-200/10 px-3 py-1.5 text-xs font-semibold text-emerald-100">
+          Up to {formatMoney(totalIncentives)}
+        </span>
+      </div>
+      <div className="mt-4 grid gap-3 md:grid-cols-2">
+        <IncentiveCard
+          title="Federal ITC (30%)"
+          source="IRS Form 5695"
+          body={`Deduct 30% of your total system cost from federal taxes. Estimated value: ${formatMoney(federalCredit)}.`}
+        />
+        <IncentiveCard
+          title="Arizona State Tax Credit"
+          source="ARS 43-1083"
+          body="Arizona offers a 25% state tax credit up to $1,000 on residential solar installations."
+        />
+        <IncentiveCard
+          title="APS / SRP Net Metering"
+          source="Utility tariff"
+          body="Export excess solar electricity back to the grid for bill credits. Rate varies by utility."
+        />
+        {utility ? (
+          <IncentiveCard
+            title={`${utility} battery incentive`}
+            source="Utility program"
+            body="$200 rebate estimate for adding a battery storage system. Check with your utility for current availability."
+          />
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function IncentiveCard({
+  body,
+  source,
+  title,
+}: {
+  body: string;
+  source: string;
+  title: string;
+}) {
+  return (
+    <article className="rounded-[0.95rem] border border-white/8 bg-white/[0.035] p-3">
+      <h5 className="text-sm font-semibold text-white">{title}</h5>
+      <p className="mt-2 text-xs leading-5 text-white/55">{body}</p>
+      <p className="mt-2 text-[0.56rem] font-semibold uppercase tracking-[0.16em] text-cyan-100/70">
+        Source: {source}
+      </p>
+    </article>
+  );
+}
+
+function PanelComparisonTable({
+  fits,
+  onSortKeyChange,
+  sortKey,
+}: {
+  fits: Array<{ panel: SolarPanel; fit: PanelFit }>;
+  onSortKeyChange: (key: PanelSortKey) => void;
+  sortKey: PanelSortKey;
+}) {
+  const headers: Array<{ key: PanelSortKey; label: string }> = [
+    { key: "brand", label: "Brand" },
+    { key: "watts", label: "Watts" },
+    { key: "efficiency", label: "Efficiency" },
+    { key: "pricePerWatt", label: "$/W" },
+    { key: "warranty_years", label: "Warranty" },
+    { key: "paybackYears", label: "Payback" },
+  ];
+
+  return (
+    <div className="mt-4 overflow-x-auto rounded-[0.9rem] border border-white/10">
+      <table className="min-w-[54rem] w-full text-left text-xs">
+        <thead className="bg-white/[0.05] text-white/50">
+          <tr>
+            {headers.map((header) => (
+              <th key={header.key} className="px-3 py-2">
+                <button
+                  type="button"
+                  onClick={() => onSortKeyChange(header.key)}
+                  className={`font-semibold uppercase tracking-[0.14em] ${
+                    sortKey === header.key ? "text-cyan-100" : ""
+                  }`}
+                >
+                  {header.label}
+                </button>
+              </th>
+            ))}
+            <th className="px-3 py-2 font-semibold uppercase tracking-[0.14em]">
+              Model
+            </th>
+            <th className="px-3 py-2 font-semibold uppercase tracking-[0.14em]">
+              AZ Heat Loss
+            </th>
+            <th className="px-3 py-2 font-semibold uppercase tracking-[0.14em]">
+              Panels
+            </th>
+            <th className="px-3 py-2 font-semibold uppercase tracking-[0.14em]">
+              Net Cost
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {fits.map(({ fit, panel }) => (
+            <tr key={panel.id} className="border-t border-white/8 text-white/68">
+              <td className="px-3 py-2 font-semibold text-white">{panel.brand}</td>
+              <td className="px-3 py-2">{panel.watts}W</td>
+              <td className="px-3 py-2">{panel.efficiency}%</td>
+              <td className="px-3 py-2">${panel.pricePerWatt.toFixed(2)}</td>
+              <td className="px-3 py-2">{panel.warranty_years} yrs</td>
+              <td className="px-3 py-2">{fit.paybackYears.toFixed(1)} yrs</td>
+              <td className="px-3 py-2">{panel.model}</td>
+              <td className="px-3 py-2">{fit.azHeatLoss}</td>
+              <td className="px-3 py-2">{fit.maxPanelsFit}</td>
+              <td className="px-3 py-2">{formatMoney(fit.netCost)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -915,7 +1414,9 @@ function buildDashboardValues(
   analysis: RoofAnalysis,
   monthlyBill: number,
   financingMode: FinancingMode,
-  activePanelCount?: number
+  activePanelCount?: number,
+  selectedPanel: SolarPanel = getPanelById(),
+  inverterCostAdderPerWatt = 0
 ) {
   const baseMetrics = buildSolarMetrics(analysis);
   const maxPanelCount = Math.max(1, baseMetrics.maxPanelCount);
@@ -926,15 +1427,41 @@ function buildDashboardValues(
     monthlyBill,
     selectedPanelCount: panelCount,
   });
+  const selectedPanelFit = getPanelFit(selectedPanel, {
+    roofData: analysis,
+    monthlyBill,
+    selectedPanelCount: panelCount,
+    inverterCostAdderPerWatt,
+  });
+  const panelAdjustedMetrics = {
+    ...metrics,
+    annualKwh: selectedPanelFit.annualKwh,
+    annualSavings: selectedPanelFit.annualSavings,
+    monthlySavings: Math.round(selectedPanelFit.annualSavings / 12),
+    panelCount: selectedPanelFit.maxPanelsFit,
+    paybackYears: selectedPanelFit.paybackYears,
+    systemKw: selectedPanelFit.systemKw,
+  };
   const advisor = buildSolarAdvisorProfile(
-    buildSolarAdvisorInputFromAnalysis(analysis, metrics, monthlyBill)
+    buildSolarAdvisorInputFromAnalysis(
+      {
+        ...analysis,
+        annualKwh: selectedPanelFit.annualKwh,
+        annualSavingsUSD: selectedPanelFit.annualSavings,
+        panelCapacityWatts: selectedPanel.watts,
+        panelCount: selectedPanelFit.maxPanelsFit,
+        systemKw: selectedPanelFit.systemKw,
+      },
+      panelAdjustedMetrics,
+      monthlyBill
+    )
   );
   const usableAreaSqFt = Math.round(metrics.usableRoofAreaM2 * 10.7639);
   const rejectedPanelCandidateCount = metrics.rejectedCandidateCount;
-  const annualKwh = metrics.annualKwh;
-  const recommendedKw = metrics.systemKw;
-  const annualSavings = metrics.annualSavings;
-  const monthlySavings = metrics.monthlySavings;
+  const annualKwh = selectedPanelFit.annualKwh;
+  const recommendedKw = selectedPanelFit.systemKw;
+  const annualSavings = selectedPanelFit.annualSavings;
+  const monthlySavings = Math.round(selectedPanelFit.annualSavings / 12);
   const billWithSolar = Math.max(monthlyBill - monthlySavings, 0);
   const recommendedPanelCount = findRecommendedPanelCount(analysis, monthlyBill, maxPanelCount);
   const twentyYearSavings = Math.round(annualSavings * 20);
@@ -956,9 +1483,9 @@ function buildDashboardValues(
   const buyIncentiveRate = 0.3;
   const utilityEscalationRate = 0.03;
   const loanPaymentMultiplier = 1.38;
-  const installedCost = Math.round(panelCount * STANDARD_PANEL_WATTS * INSTALLED_COST_PER_WATT);
-  const taxCredit = Math.round(installedCost * buyIncentiveRate);
-  const netCostAfterCredit = Math.max(installedCost - taxCredit, 0);
+  const installedCost = selectedPanelFit.systemCost;
+  const taxCredit = selectedPanelFit.taxCredit;
+  const netCostAfterCredit = selectedPanelFit.netCost;
   const leaseMonthlyEstimate = Math.round((recommendedKw * 1000 * 8) / 12);
   const totalCostWithoutSolar = Math.round(
     Array.from({ length: 20 }).reduce<number>(
@@ -992,7 +1519,10 @@ function buildDashboardValues(
     ],
     financingAssumptions: [
       { label: "Arizona electricity rate", value: `$${azRatePerKwh.toFixed(2)}/kWh` },
-      { label: "Installed cost basis", value: `$${INSTALLED_COST_PER_WATT.toFixed(2)}/W` },
+      {
+        label: "Installed cost basis",
+        value: `$${(selectedPanel.pricePerWatt + inverterCostAdderPerWatt).toFixed(2)}/W`,
+      },
       { label: "Utility escalation", value: `${Math.round(utilityEscalationRate * 100)}% / yr` },
       { label: "Buy incentive placeholder", value: `${Math.round(buyIncentiveRate * 100)}%` },
       { label: "Loan payment multiplier", value: `${loanPaymentMultiplier.toFixed(2)}x installed cost` },
@@ -1006,10 +1536,12 @@ function buildDashboardValues(
     billWithSolar,
     netCostAfterCredit,
     panelCount,
-    paybackYears: metrics.paybackYears,
+    paybackYears: selectedPanelFit.paybackYears,
     recommendedKw,
     recommendedPanelCount,
     rejectedPanelCandidateCount,
+    selectedPanelFit,
+    selectedPanel,
     savingsRows: [
       { label: "Average annual savings", source: "user-adjusted" as const, value: annualSavings },
       { label: "Total 20-year cost with solar", source: "illustrative" as const, value: totalCostWithSolar },

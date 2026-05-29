@@ -17,6 +17,7 @@ import {
   formatCompassDirection,
   STANDARD_PANEL_WATTS,
 } from "@/lib/solar-metrics";
+import type { SolarPanel } from "@/lib/solarPanels";
 
 type ResolvedProperty = {
   address: string;
@@ -35,6 +36,7 @@ type SolarAnalysisProps = {
   activePanelCount?: number | null;
   onAnalysisChange?: (analysis: RoofAnalysis | null) => void;
   onActivePanelCountChange?: (panelCount: number) => void;
+  selectedPanel?: SolarPanel | null;
 };
 
 type SatellitePreviewPayload = {
@@ -201,6 +203,7 @@ export function SolarAnalysis({
   monthlyBill,
   onAnalysisChange,
   onActivePanelCountChange,
+  selectedPanel,
 }: SolarAnalysisProps) {
   const [stage, setStage] = useState<
     "idle" | "resolving" | "fetching" | "analyzing" | "done" | "invalid" | "error"
@@ -435,7 +438,18 @@ export function SolarAnalysis({
       monthlyBill,
       selectedPanelCount: livePanelCount,
     });
-    const estimatedNetCost = livePanelCount * STANDARD_PANEL_WATTS * 2.75;
+    const panelWatts = selectedPanel?.watts ?? STANDARD_PANEL_WATTS;
+    const estimatedNetCost = livePanelCount * panelWatts * 2.75;
+    const selectedAnnualKwh = Math.round(
+      sharedMetrics.annualKwh * (panelWatts / STANDARD_PANEL_WATTS)
+    );
+    const annualBill =
+      monthlyBill && monthlyBill > 0 ? monthlyBill * 12 : null;
+    const selectedAnnualSavingsUSD = Math.round(
+      annualBill
+        ? Math.min(selectedAnnualKwh * ARIZONA_AVG_RATE_PER_KWH, annualBill)
+        : selectedAnnualKwh * ARIZONA_AVG_RATE_PER_KWH
+    );
     const carbonOffsetLbs = sharedMetrics.co2OffsetLbs;
     const carbonOffsetTons = carbonOffsetLbs / 2000;
     const treesEquivalent = Math.max(1, Math.round(carbonOffsetLbs / 48));
@@ -450,11 +464,14 @@ export function SolarAnalysis({
       averageRoofPitch: sharedMetrics.avgPitchDeg,
       annualSunlightHours: sharedMetrics.annualSunlightHours,
       selectedPanelCount: sharedMetrics.panelCount,
-      selectedSystemKw: sharedMetrics.systemKw,
-      selectedAnnualKwh: sharedMetrics.annualKwh,
-      selectedAnnualSavingsUSD: sharedMetrics.annualSavings,
-      monthlySavings: sharedMetrics.monthlySavings,
-      roiYears: sharedMetrics.paybackYears,
+      selectedSystemKw: Math.round(((livePanelCount * panelWatts) / 1000) * 10) / 10,
+      selectedAnnualKwh,
+      selectedAnnualSavingsUSD,
+      monthlySavings: Math.round(selectedAnnualSavingsUSD / 12),
+      roiYears:
+        selectedAnnualSavingsUSD > 0
+          ? Math.round((estimatedNetCost / selectedAnnualSavingsUSD) * 10) / 10
+          : 0,
       carbonOffsetLbs,
       carbonOffsetTons,
       treesEquivalent,
@@ -462,7 +479,7 @@ export function SolarAnalysis({
       financingFrom: Math.round(estimatedNetCost / 300),
       orientationLabel: sharedMetrics.primaryOrientationLabel,
     };
-  }, [monthlyBill, roofData, selectedPanelCount]);
+  }, [monthlyBill, roofData, selectedPanel?.watts, selectedPanelCount]);
 
   const stageStep =
     stage === "resolving"
@@ -589,6 +606,7 @@ export function SolarAnalysis({
                   layerVisibility={layerVisibility}
                   onLayerVisibilityChange={updateLayerVisibility}
                   selectedPanelCount={metrics.selectedPanelCount}
+                  selectedPanel={selectedPanel}
                 />
               </div>
               <div className="mt-3">
@@ -666,6 +684,7 @@ export function SolarAnalysis({
                     layerVisibility={layerVisibility}
                     onLayerVisibilityChange={updateLayerVisibility}
                     selectedPanelCount={metrics.selectedPanelCount}
+                    selectedPanel={selectedPanel}
                   />
                 </div>
               </div>
@@ -819,6 +838,7 @@ function ViewportCanvas({
   layerVisibility,
   onLayerVisibilityChange,
   selectedPanelCount,
+  selectedPanel,
 }: {
   satelliteImage: string | null;
   annualFluxUrl: string | null;
@@ -831,6 +851,7 @@ function ViewportCanvas({
   layerVisibility: LayerVisibility;
   onLayerVisibilityChange: (next: LayerVisibility) => void;
   selectedPanelCount: number;
+  selectedPanel?: SolarPanel | null;
 }) {
   const mapElementRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<GoogleMapInstance | null>(null);
@@ -1120,10 +1141,15 @@ function ViewportCanvas({
             systemKw={
               Math.round(
                 ((Math.min(selectedPanelCount, getMaxSelectablePanelCount(roofData)) *
-                  STANDARD_PANEL_WATTS) /
+                  (selectedPanel?.watts ?? STANDARD_PANEL_WATTS)) /
                   1000) *
                   10
               ) / 10
+            }
+            panelLabel={
+              selectedPanel
+                ? `Panel: ${selectedPanel.brand} ${selectedPanel.model} ${selectedPanel.watts}W`
+                : null
             }
           />
         </>
@@ -1224,10 +1250,12 @@ function LayerControl({
 function MapEvidenceOverlay({
   layerVisibility,
   panelCount,
+  panelLabel,
   systemKw,
 }: {
   layerVisibility: LayerVisibility;
   panelCount: number;
+  panelLabel?: string | null;
   systemKw: number;
 }) {
   return (
@@ -1239,6 +1267,11 @@ function MapEvidenceOverlay({
         <span className="rounded-full border border-white/10 bg-slate-950/55 px-2.5 py-1.5 text-[0.58rem] font-semibold uppercase tracking-[0.12em] text-white/90 shadow-none backdrop-blur-[2px]">
           {panelCount} panels {"\u00b7"} {systemKw.toFixed(1)} kW
         </span>
+        {panelLabel ? (
+          <span className="rounded-full border border-white/10 bg-slate-950/55 px-2.5 py-1.5 text-[0.58rem] font-semibold uppercase tracking-[0.1em] text-white/90 shadow-none backdrop-blur-[2px]">
+            {panelLabel}
+          </span>
+        ) : null}
       </div>
       <div className="pointer-events-none absolute bottom-8 left-3 z-10 max-w-[min(15rem,calc(100%-1.5rem))] rounded-[0.85rem] border border-white/30 bg-white/68 p-2.5 text-[0.66rem] font-medium text-slate-900 shadow-[0_8px_18px_rgba(15,23,42,0.16)] backdrop-blur-md sm:bottom-3">
         <div className="flex items-center justify-between gap-2 border-b border-slate-900/10 pb-1.5">

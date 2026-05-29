@@ -16,6 +16,11 @@ import { SolarReportDashboard } from "@/components/solar-report-dashboard";
 import { formatDisplayAddress } from "@/lib/address-format";
 import { trackEvent } from "@/lib/analytics";
 import type { RoofAnalysis } from "@/lib/roof-analysis";
+import {
+  DEFAULT_SOLAR_PANEL_ID,
+  getPanelById,
+  type InverterType,
+} from "@/lib/solarPanels";
 
 const VIDEO_SRC =
   "/Drone_shot_over_solar_neighborhood_202605281518.mp4";
@@ -62,6 +67,9 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
   const [solarData, setSolarData] = useState<RoofAnalysis | null>(null);
   const [activePanelCount, setActivePanelCount] = useState(0);
   const [monthlyBill, setMonthlyBill] = useState(200);
+  const [selectedPanelId, setSelectedPanelId] = useState(DEFAULT_SOLAR_PANEL_ID);
+  const [selectedInverterType, setSelectedInverterType] =
+    useState<InverterType>("string");
   const [shareStatus, setShareStatus] = useState("");
   const [selectedLocation, setSelectedLocation] = useState<{
     address: string;
@@ -72,6 +80,7 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
   const roofAnalysis = solarData;
   const hasValidAnalysis = Boolean(solarData?.validSite);
   const heroCompact = Boolean(selectedAddress);
+  const selectedPanel = getPanelById(selectedPanelId);
 
   useEffect(() => {
     const onScroll = () => {
@@ -391,6 +400,7 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
                   onAnalysisChange={setSolarData}
                   activePanelCount={activePanelCount || null}
                   onActivePanelCountChange={setActivePanelCount}
+                  selectedPanel={selectedPanel}
                 />
               </div>
             </div>
@@ -402,6 +412,10 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
                 monthlyBill={monthlyBill}
                 onActivePanelCountChange={setActivePanelCount}
                 onMonthlyBillChange={setMonthlyBill}
+                selectedInverterType={selectedInverterType}
+                selectedPanelId={selectedPanelId}
+                onSelectedInverterTypeChange={setSelectedInverterType}
+                onSelectedPanelIdChange={setSelectedPanelId}
               />
             ) : null}
           </div>
@@ -426,6 +440,8 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
               initialMonthlyBill={monthlyBill}
               lat={selectedLocation?.lat}
               lng={selectedLocation?.lng}
+              selectedInverterType={selectedInverterType}
+              selectedPanel={selectedPanel}
             />
           </div>
         </section>
