@@ -28,6 +28,14 @@ alter table public.leads add column if not exists system_cost_before_incentives 
 alter table public.leads add column if not exists federal_tax_credit numeric(12, 2);
 alter table public.leads add column if not exists net_system_cost numeric(12, 2);
 alter table public.leads add column if not exists selected_inverter_type text;
+alter table public.leads add column if not exists lead_score integer;
+alter table public.leads add column if not exists lead_score_label text;
+alter table public.leads add column if not exists solar_suitability_score integer;
+alter table public.leads add column if not exists twenty_year_savings numeric(12, 2);
+alter table public.leads add column if not exists energy_offset_pct numeric(10, 2);
+alter table public.leads add column if not exists pdf_generated boolean not null default false;
+alter table public.leads add column if not exists pdf_downloaded boolean not null default false;
+alter table public.leads add column if not exists utility_bill_uploaded boolean not null default false;
 
 alter table public.leads enable row level security;
 
@@ -40,5 +48,6 @@ drop policy if exists "Allow anon select on leads" on public.leads;
 
 create index if not exists leads_created_at_idx on public.leads (created_at desc);
 create index if not exists leads_status_idx on public.leads (status);
+create index if not exists leads_lead_score_idx on public.leads (lead_score desc);
 create unique index if not exists leads_dedupe_idx
 on public.leads (lower(email), lower(address), monthly_bill);

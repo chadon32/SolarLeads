@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { Resend } from "resend";
 import { formatDisplayAddress } from "@/lib/address-format";
+import { calculateLeadScore } from "@/lib/lead-scoring";
 import { buildReportPdfPath } from "@/lib/report-access";
 import { enforceRateLimit } from "@/lib/rate-limit";
 
@@ -16,6 +17,11 @@ type LeadBody = {
   annualSavings?: number;
   monthlySavings?: number;
   annualEnergyKwh?: number;
+  energyOffsetPct?: number;
+  pdfGenerated?: boolean;
+  solarSuitabilityScore?: number;
+  twentyYearSavings?: number;
+  utilityBillUploaded?: boolean;
   roofAreaSqm?: number;
   usableAreaSqm?: number;
   roofPitchDegrees?: number;
@@ -78,6 +84,14 @@ export async function POST(request: Request) {
     const panelCount = Number(body.panelCount);
     const selectedPanelWatts = Number(body.selectedPanelWatts);
     const netSystemCost = Number(body.netSystemCost);
+    const twentyYearSavings =
+      toNullableNumber(body.twentyYearSavings) ??
+      (Number.isFinite(annualSavingsOverride) && annualSavingsOverride > 0
+        ? Math.round(annualSavingsOverride * 20)
+        : null);
+    const pdfGenerated = body.pdfGenerated ?? true;
+    const pdfDownloaded = false;
+    const utilityBillUploaded = body.utilityBillUploaded ?? false;
     const estimatedSavings =
       Number.isFinite(annualSavingsOverride) && annualSavingsOverride > 0
         ? Math.round(annualSavingsOverride)
@@ -97,6 +111,19 @@ export async function POST(request: Request) {
             ).toFixed(1)
           )
         : null;
+    const leadScore = calculateLeadScore({
+      annualSavings: estimatedSavings,
+      email,
+      energyOffsetPct: body.energyOffsetPct,
+      panelCount,
+      pdfDownloaded,
+      pdfGenerated,
+      phone,
+      solarSuitabilityScore: body.solarSuitabilityScore,
+      systemSizeKw: body.systemSizeKw,
+      twentyYearSavings,
+      utilityBillUploaded,
+    });
 
     if (
       !name ||
@@ -157,11 +184,24 @@ export async function POST(request: Request) {
       net_system_cost: toNullableNumber(body.netSystemCost),
       selected_inverter_type: toNullableText(body.selectedInverterType),
     };
+    const scoredInsert = {
+      ...extendedInsert,
+      energy_offset_pct: toNullableNumber(body.energyOffsetPct),
+      lead_score: leadScore.score,
+      lead_score_label: leadScore.label,
+      pdf_downloaded: pdfDownloaded,
+      pdf_generated: pdfGenerated,
+      solar_suitability_score: toNullableInteger(body.solarSuitabilityScore),
+      twenty_year_savings: twentyYearSavings,
+      utility_bill_uploaded: utilityBillUploaded,
+    };
 
     console.info("[lead-insert]", {
       address,
       annualSavings: estimatedSavings,
       panelCount,
+      leadScore: leadScore.score,
+      leadScoreLabel: leadScore.label,
       roiYears,
       selectedInverterType: body.selectedInverterType,
       selectedPanel: [body.selectedPanelBrand, body.selectedPanelModel]
@@ -171,9 +211,17 @@ export async function POST(request: Request) {
 
     let insertResult = await supabase
       .from("leads")
-      .insert(extendedInsert)
+      .insert(scoredInsert)
       .select("id, name, email, address, monthly_bill, estimated_savings")
       .single();
+
+    if (insertResult.error && shouldRetryLegacyInsert(insertResult.error.message)) {
+      insertResult = await supabase
+        .from("leads")
+        .insert(extendedInsert)
+        .select("id, name, email, address, monthly_bill, estimated_savings")
+        .single();
+    }
 
     if (insertResult.error && shouldRetryLegacyInsert(insertResult.error.message)) {
       insertResult = await supabase
@@ -203,6 +251,8 @@ export async function POST(request: Request) {
       address,
       annualSavings: estimatedSavings,
       email,
+      leadScoreLabel: leadScore.label,
+      leadScoreValue: leadScore.score,
       monthlyBill,
       name,
       panelCount,
@@ -223,6 +273,8 @@ export async function POST(request: Request) {
         address: data.address,
         monthlyBill: data.monthly_bill,
         estimatedSavings: data.estimated_savings,
+        leadScore: leadScore.score,
+        leadScoreLabel: leadScore.label,
         reportUrl: buildReportPdfPath(data.id),
       },
     });
@@ -241,6 +293,8 @@ async function sendOwnerLeadEmail({
   address,
   annualSavings,
   email,
+  leadScoreLabel,
+  leadScoreValue,
   monthlyBill,
   name,
   panelCount,
@@ -255,6 +309,8 @@ async function sendOwnerLeadEmail({
   address: string;
   annualSavings: number;
   email: string;
+  leadScoreLabel: string;
+  leadScoreValue: number;
   monthlyBill: number;
   name: string;
   panelCount: number;
@@ -293,6 +349,7 @@ async function sendOwnerLeadEmail({
         }`,
         `Inverter: ${selectedInverterType ?? "Unavailable"}`,
         `ROI: ${roiYears ?? "Unavailable"} years`,
+        `Lead score: ${leadScoreValue}/100 - ${leadScoreLabel}`,
         `Submitted: ${new Date().toISOString()}`,
       ].join("\n"),
     });

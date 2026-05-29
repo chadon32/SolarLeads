@@ -4,6 +4,10 @@ import { startTransition, useDeferredValue, useEffect, useMemo, useState } from 
 import { ArrowDownToLine, Download, Search, SlidersHorizontal } from "lucide-react";
 import { formatDisplayAddress } from "@/lib/address-format";
 import { trackEvent } from "@/lib/analytics";
+import {
+  LEAD_SCORE_EXPLANATION,
+  type LeadScoreLabel,
+} from "@/lib/lead-scoring";
 
 export type DashboardLeadStatus =
   | "new"
@@ -23,6 +27,7 @@ export type DashboardCrmLead = {
   annualSavings: number;
   co2OffsetLbs: number;
   estimatedRoiYears: number;
+  energyOffsetPct: number;
   panelCount: number;
   federalTaxCredit: number | null;
   netSystemCost: number | null;
@@ -32,6 +37,9 @@ export type DashboardCrmLead = {
   selectedPanelWatts: number | null;
   systemCostBeforeIncentives: number | null;
   systemSizeKw: number;
+  leadScore: number;
+  leadScoreExplanation: string;
+  leadScoreLabel: LeadScoreLabel;
   reportUrl: string;
   status: DashboardLeadStatus;
   pdfStatus: "ready" | "pending";
@@ -57,6 +65,7 @@ type DashboardCrmProps = {
   stats: {
     totalLeads: number;
     averageSavings: number;
+    averageLeadScore: number;
     queuedFollowUps: number;
     pdfsGenerated: number;
     conversionRate: number | null;
@@ -220,8 +229,11 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
         "address",
         "monthly_bill",
         "annual_savings",
+        "lead_score",
+        "lead_score_label",
         "roi_years",
         "co2_offset",
+        "energy_offset_pct",
         "selected_panel_brand",
         "selected_panel_model",
         "selected_panel_watts",
@@ -239,8 +251,11 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
         formatDisplayAddress(lead.address),
         String(Math.round(lead.monthlyBill || 0)),
         String(Math.round(lead.annualSavings || 0)),
+        String(lead.leadScore),
+        lead.leadScoreLabel,
         String(lead.estimatedRoiYears || ""),
         String(Math.round(lead.co2OffsetLbs || 0)),
+        String(Math.round(lead.energyOffsetPct || 0)),
         lead.selectedPanelBrand ?? "",
         lead.selectedPanelModel ?? "",
         lead.selectedPanelWatts ? String(lead.selectedPanelWatts) : "",
@@ -301,12 +316,9 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
         <section className="grid gap-3 md:grid-cols-5">
           <KpiCard label="Total Leads" value={formatNumber(stats.totalLeads)} />
           <KpiCard label="Avg Savings" value={formatMoney(stats.averageSavings)} />
+          <KpiCard label="Avg Lead Score" value={`${formatNumber(stats.averageLeadScore)}/100`} />
           <KpiCard label="Queued Follow-ups" value={formatNumber(stats.queuedFollowUps)} />
           <KpiCard label="PDFs Generated" value={formatNumber(stats.pdfsGenerated)} />
-          <KpiCard
-            label="Conversion Rate"
-            value={stats.conversionRate === null ? "Tracking" : `${stats.conversionRate}%`}
-          />
         </section>
 
         <section className="grid gap-4 lg:grid-cols-[minmax(0,7fr)_minmax(22rem,3fr)]">
@@ -346,6 +358,9 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
                 />
               </div>
             </div>
+            <p className="mt-3 rounded-[0.95rem] border border-white/8 bg-slate-950/34 px-3 py-2 text-xs leading-5 text-slate-400">
+              {LEAD_SCORE_EXPLANATION}
+            </p>
 
             {filteredLeads.length ? (
               <div className="mt-4 grid min-h-[28rem] gap-3 overflow-x-auto pb-2 lg:grid-cols-5">
@@ -468,11 +483,11 @@ function LeadPipelineCard({
               {formatDisplayAddress(lead.address)}
             </p>
           </div>
-          <StatusBadge status={lead.status} />
+          <LeadScoreBadge label={lead.leadScoreLabel} score={lead.leadScore} />
         </div>
         <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
           <MiniMetric label="Savings" value={formatMoney(lead.annualSavings)} />
-          <MiniMetric label="ROI" value={`${formatDecimal(lead.estimatedRoiYears)} yrs`} />
+          <MiniMetric label="Lead score" value={`${lead.leadScore}/100`} />
         </div>
       </button>
       <div className="mt-3 flex items-center justify-between gap-2 border-t border-white/8 pt-3">
@@ -525,7 +540,27 @@ function LeadDetailPanel({
             {formatDisplayAddress(lead.address)}
           </p>
         </div>
-        <StatusBadge status={lead.status} />
+        <div className="flex shrink-0 flex-col items-end gap-2">
+          <LeadScoreBadge label={lead.leadScoreLabel} score={lead.leadScore} />
+          <StatusBadge status={lead.status} />
+        </div>
+      </div>
+
+      <div className="mt-4 rounded-[1.05rem] border border-white/8 bg-slate-950/38 p-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-[0.62rem] font-semibold uppercase tracking-[0.24em] text-slate-500">
+              Lead score
+            </p>
+            <p className="mt-1 text-3xl font-semibold text-white">
+              {lead.leadScore}/100
+            </p>
+          </div>
+          <LeadScoreBadge label={lead.leadScoreLabel} score={lead.leadScore} />
+        </div>
+        <p className="mt-3 text-xs leading-5 text-slate-400">
+          {lead.leadScoreExplanation}
+        </p>
       </div>
 
       <div className="mt-5 grid gap-2 text-sm">
@@ -568,6 +603,7 @@ function LeadDetailPanel({
           value={lead.netSystemCost ? formatMoney(lead.netSystemCost) : "Not captured"}
         />
         <DetailRow label="Estimated ROI" value={`${formatDecimal(lead.estimatedRoiYears)} yrs`} />
+        <DetailRow label="Energy offset" value={`${formatNumber(lead.energyOffsetPct)}%`} />
         <DetailRow label="CO2 offset" value={`${formatNumber(lead.co2OffsetLbs)} lbs`} />
       </div>
 
@@ -690,6 +726,30 @@ function StatusBadge({ status }: { status: DashboardLeadStatus }) {
   return (
     <span className={`shrink-0 rounded-full px-2.5 py-1 text-[0.58rem] font-bold uppercase tracking-[0.14em] ${color}`}>
       {getStatusLabel(status)}
+    </span>
+  );
+}
+
+function LeadScoreBadge({
+  label,
+  score,
+}: {
+  label: LeadScoreLabel;
+  score: number;
+}) {
+  const color =
+    label === "Hot Lead"
+      ? "border-rose-300/25 bg-rose-300/16 text-rose-50"
+      : label === "Warm Lead"
+        ? "border-amber-300/25 bg-amber-300/16 text-amber-50"
+        : "border-slate-300/18 bg-white/[0.08] text-slate-200";
+
+  return (
+    <span
+      className={`shrink-0 rounded-full border px-2.5 py-1 text-[0.58rem] font-bold uppercase tracking-[0.14em] ${color}`}
+      title={`${score}/100`}
+    >
+      {label}
     </span>
   );
 }

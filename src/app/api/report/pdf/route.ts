@@ -18,6 +18,11 @@ import {
   buildSolarAdvisorProfile,
   type SolarAdvisorProfile,
 } from "@/lib/solar-advisor";
+import {
+  calculateLeadScore,
+  normalizeLeadScoreLabel,
+  type LeadScoreLabel,
+} from "@/lib/lead-scoring";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
 
@@ -43,6 +48,14 @@ type ReportLead = {
   roof_area_m2?: number | null;
   usable_area_m2?: number | null;
   roof_pitch_deg?: number | null;
+  energy_offset_pct?: number | null;
+  lead_score?: number | null;
+  lead_score_label?: string | null;
+  pdf_downloaded?: boolean | null;
+  pdf_generated?: boolean | null;
+  solar_suitability_score?: number | null;
+  twenty_year_savings?: number | null;
+  utility_bill_uploaded?: boolean | null;
   lat?: number | null;
   lng?: number | null;
 };
@@ -81,6 +94,8 @@ type ProposalData = {
   energyOffsetPct?: number;
   annualImpactLbs?: number;
   roiYears?: number;
+  leadScore: number;
+  leadScoreLabel: LeadScoreLabel;
   roofAreaSqFt?: number;
   usableAreaSqFt?: number;
   usableRoofPct?: number;
@@ -131,6 +146,8 @@ export async function GET(request: Request) {
     void token;
 
     const supabase = getSupabaseAdminClient();
+    const scoredLeadSelect =
+      "id, name, email, phone, address, monthly_bill, estimated_savings, created_at, panel_count, system_size_kw, annual_savings, monthly_savings, annual_energy_kwh, roof_area_m2, usable_area_m2, roof_pitch_deg, energy_offset_pct, lead_score, lead_score_label, pdf_downloaded, pdf_generated, solar_suitability_score, twenty_year_savings, utility_bill_uploaded, lat, lng";
     const extendedLeadSelect =
       "id, name, email, phone, address, monthly_bill, estimated_savings, created_at, panel_count, system_size_kw, annual_savings, monthly_savings, annual_energy_kwh, roof_area_m2, usable_area_m2, roof_pitch_deg, lat, lng";
     const baseLeadSelect =
@@ -138,9 +155,17 @@ export async function GET(request: Request) {
 
     let leadResult = (await supabase
       .from("leads")
-      .select(extendedLeadSelect)
+      .select(scoredLeadSelect)
       .eq("id", leadId)
       .single()) as unknown as LeadQueryResult;
+
+    if (leadResult.error && shouldRetryLegacySelect(leadResult.error.message)) {
+      leadResult = (await supabase
+        .from("leads")
+        .select(extendedLeadSelect)
+        .eq("id", leadId)
+        .single()) as unknown as LeadQueryResult;
+    }
 
     if (leadResult.error && shouldRetryLegacySelect(leadResult.error.message)) {
       leadResult = (await supabase
@@ -176,6 +201,7 @@ export async function GET(request: Request) {
     };
     const colors = createColors();
     const proposal = buildProposalData(lead, report, request.url);
+    await markPdfDownloaded(supabase, lead.id, proposal);
     const assets: PdfAssets = {
       roofImage: await loadRoofImage(pdf, proposal),
       qrImage: await loadQrImage(pdf, request.url),
@@ -251,7 +277,9 @@ function buildProposalData(
       ? Math.max(0, costWithoutSolar20Yr - twentyYearSavings)
       : undefined;
   const annualImpactLbs = positiveNumber(report.annualImpactLbs);
-  const energyOffsetPct = positiveNumber(report.annualEnergyOffset);
+  const energyOffsetPct = positiveNumber(
+    lead.energy_offset_pct ?? report.annualEnergyOffset
+  );
   const geometryScore = [panelCount, systemKw, annualKwh, usableAreaSqFt].filter(
     Boolean
   ).length;
@@ -267,6 +295,26 @@ function buildProposalData(
     sunlightHours,
     usableRoofPct,
   });
+  const calculatedLeadScore = calculateLeadScore({
+    annualSavings,
+    email: lead.email,
+    energyOffsetPct,
+    panelCount,
+    pdfDownloaded: true,
+    pdfGenerated: lead.pdf_generated ?? true,
+    phone: lead.phone,
+    solarSuitabilityScore: lead.solar_suitability_score ?? suitabilityScore,
+    systemSizeKw: systemKw,
+    twentyYearSavings: lead.twenty_year_savings ?? twentyYearSavings,
+    utilityBillUploaded: lead.utility_bill_uploaded,
+  });
+  const storedLeadScore =
+    lead.lead_score === null || lead.lead_score === undefined
+      ? null
+      : Number(lead.lead_score);
+  const leadScore = storedLeadScore !== null && Number.isFinite(storedLeadScore)
+    ? Math.max(Math.round(storedLeadScore), calculatedLeadScore.score)
+    : calculatedLeadScore.score;
   const advisor = buildSolarAdvisorProfile({
     annualSavings: annualSavings ?? 0,
     annualSunlightHours: sunlightHours ?? 0,
@@ -307,6 +355,8 @@ function buildProposalData(
     energyOffsetPct,
     annualImpactLbs,
     roiYears: roiYears && roiYears > 0 ? roiYears : undefined,
+    leadScore,
+    leadScoreLabel: normalizeLeadScoreLabel(lead.lead_score_label, leadScore),
     roofAreaSqFt,
     usableAreaSqFt,
     usableRoofPct,
@@ -371,6 +421,20 @@ function drawExecutiveSummary(
     color: colors.text,
   });
   drawConfidenceBadge(page, 456, 599, proposal.confidence, fonts, colors);
+  page.drawText(`Lead score ${proposal.leadScore}/100`, {
+    x: 326,
+    y: 582,
+    size: 8,
+    font: fonts.bold,
+    color: colors.cyan,
+  });
+  page.drawText(proposal.leadScoreLabel, {
+    x: 408,
+    y: 582,
+    size: 8,
+    font: fonts.bold,
+    color: getLeadScorePdfColor(proposal.leadScoreLabel, colors),
+  });
 
   drawRoofVisual(page, 42, 328, 528, 218, proposal, assets.roofImage, fonts, colors, {
     compact: false,
@@ -449,6 +513,26 @@ function drawExecutiveSummary(
   drawSourceBadge(page, 60, 126, "Solar API", fonts, colors);
   drawSourceBadge(page, 132, 126, "Modeled", fonts, colors);
   drawSourceBadge(page, 196, 126, "User-adjusted", fonts, colors);
+}
+
+async function markPdfDownloaded(
+  supabase: ReturnType<typeof getSupabaseAdminClient>,
+  leadId: string,
+  proposal: ProposalData
+) {
+  try {
+    await supabase
+      .from("leads")
+      .update({
+        lead_score: proposal.leadScore,
+        lead_score_label: proposal.leadScoreLabel,
+        pdf_downloaded: true,
+        pdf_generated: true,
+      })
+      .eq("id", leadId);
+  } catch (error) {
+    console.error("[pdf-downloaded-score]", error);
+  }
 }
 
 function drawRoofAnalysisPage(
@@ -1373,6 +1457,18 @@ function drawConfidenceBadge(
     font: fonts.bold,
     color: colors.text,
   });
+}
+
+function getLeadScorePdfColor(label: LeadScoreLabel, colors: PdfColors) {
+  if (label === "Hot Lead") {
+    return colors.orange;
+  }
+
+  if (label === "Warm Lead") {
+    return colors.gold;
+  }
+
+  return colors.muted;
 }
 
 function drawLegend(page: PDFPage, x: number, y: number, fonts: PdfFonts, colors: PdfColors) {

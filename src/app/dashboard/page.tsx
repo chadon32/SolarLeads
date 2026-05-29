@@ -6,6 +6,10 @@ import {
   type DashboardLeadStatus,
 } from "@/components/dashboard-crm";
 import { Button } from "@/components/ui/button";
+import {
+  calculateLeadScore,
+  normalizeLeadScoreLabel,
+} from "@/lib/lead-scoring";
 import { buildSolarReportFromSolarValues } from "@/lib/solar-report";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
 import { buildReportPdfPath } from "@/lib/report-access";
@@ -50,6 +54,14 @@ type DashboardLead = {
   federal_tax_credit?: number | null;
   net_system_cost?: number | null;
   selected_inverter_type?: string | null;
+  energy_offset_pct?: number | null;
+  lead_score?: number | null;
+  lead_score_label?: string | null;
+  pdf_downloaded?: boolean | null;
+  pdf_generated?: boolean | null;
+  solar_suitability_score?: number | null;
+  twenty_year_savings?: number | null;
+  utility_bill_uploaded?: boolean | null;
   status?: string | null;
   created_at: string;
 };
@@ -76,6 +88,8 @@ export default async function DashboardPage({
   }
 
   const supabase = getSupabaseAdminClient();
+  const scoredLeadSelect =
+    "id, name, email, phone, address, monthly_bill, estimated_savings, panel_count, system_size_kw, annual_savings, annual_energy_kwh, roi_years, selected_panel_brand, selected_panel_model, selected_panel_watts, system_cost_before_incentives, federal_tax_credit, net_system_cost, selected_inverter_type, energy_offset_pct, lead_score, lead_score_label, pdf_downloaded, pdf_generated, solar_suitability_score, twenty_year_savings, utility_bill_uploaded, status, created_at";
   const extendedLeadSelect =
     "id, name, email, phone, address, monthly_bill, estimated_savings, panel_count, system_size_kw, annual_savings, annual_energy_kwh, roi_years, selected_panel_brand, selected_panel_model, selected_panel_watts, system_cost_before_incentives, federal_tax_credit, net_system_cost, selected_inverter_type, status, created_at";
   const baseLeadSelect =
@@ -83,9 +97,20 @@ export default async function DashboardPage({
 
   let leadsResult = await supabase
     .from("leads")
-    .select(extendedLeadSelect)
+    .select(scoredLeadSelect)
     .order("created_at", { ascending: false })
     .limit(10) as unknown as LeadsQueryResult;
+
+  if (
+    leadsResult.error &&
+    shouldRetryLegacySelect(leadsResult.error.message)
+  ) {
+    leadsResult = await supabase
+      .from("leads")
+      .select(extendedLeadSelect)
+      .order("created_at", { ascending: false })
+      .limit(10) as unknown as LeadsQueryResult;
+  }
 
   if (
     leadsResult.error &&
@@ -166,6 +191,27 @@ export default async function DashboardPage({
       systemKw: systemSizeKw,
       monthlyBill: Number(lead.monthly_bill),
     });
+    const calculatedScore = calculateLeadScore({
+      annualSavings: report.annualSavings,
+      email: lead.email,
+      energyOffsetPct: lead.energy_offset_pct ?? report.annualEnergyOffset,
+      panelCount: report.panelCount,
+      pdfDownloaded: lead.pdf_downloaded,
+      pdfGenerated: lead.pdf_generated ?? true,
+      phone: lead.phone,
+      solarSuitabilityScore: lead.solar_suitability_score,
+      systemSizeKw,
+      twentyYearSavings:
+        Number(lead.twenty_year_savings ?? 0) || report.annualSavings * 20,
+      utilityBillUploaded: lead.utility_bill_uploaded,
+    });
+    const storedScore =
+      lead.lead_score === null || lead.lead_score === undefined
+        ? null
+        : Number(lead.lead_score);
+    const leadScore = storedScore !== null && Number.isFinite(storedScore)
+      ? Math.round(storedScore)
+      : calculatedScore.score;
 
     return {
       id: lead.id,
@@ -183,11 +229,15 @@ export default async function DashboardPage({
       selectedPanelBrand: lead.selected_panel_brand ?? null,
       selectedPanelModel: lead.selected_panel_model ?? null,
       selectedPanelWatts: Number(lead.selected_panel_watts ?? 0) || null,
+      energyOffsetPct: Number(lead.energy_offset_pct ?? report.annualEnergyOffset),
       systemCostBeforeIncentives:
         Number(lead.system_cost_before_incentives ?? 0) || null,
       federalTaxCredit: Number(lead.federal_tax_credit ?? 0) || null,
       netSystemCost: Number(lead.net_system_cost ?? 0) || null,
       systemSizeKw,
+      leadScore,
+      leadScoreExplanation: calculatedScore.explanation,
+      leadScoreLabel: normalizeLeadScoreLabel(lead.lead_score_label, leadScore),
       reportUrl: buildReportPdfPath(lead.id),
       status:
         normalizeLeadStatus(lead.status) ??
@@ -195,6 +245,12 @@ export default async function DashboardPage({
       pdfStatus: "ready",
     };
   });
+  const averageLeadScore = crmLeads.length
+    ? Math.round(
+        crmLeads.reduce((sum, lead) => sum + lead.leadScore, 0) /
+          crmLeads.length
+      )
+    : 0;
 
   const crmFollowUps: DashboardCrmFollowUp[] = followUpList.map((item) => ({
     id: item.id,
@@ -219,6 +275,7 @@ export default async function DashboardPage({
         averageSavings,
         queuedFollowUps,
         pdfsGenerated: leadList.length,
+        averageLeadScore,
         conversionRate: null,
       }}
     />
