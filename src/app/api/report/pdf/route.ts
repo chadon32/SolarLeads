@@ -44,11 +44,13 @@ export async function GET(request: Request) {
     if (!signatureCheck.ok) {
       return NextResponse.json(
         {
-          message: signatureCheck.expired
-            ? "This report link has expired."
-            : "This report link is invalid.",
+          message: signatureCheck.missingSecret
+            ? "Report link signing is not configured for production."
+            : signatureCheck.expired
+              ? "This report link has expired."
+              : "This report link is invalid.",
         },
-        { status: 401 }
+        { status: signatureCheck.missingSecret ? 500 : 401 }
       );
     }
 

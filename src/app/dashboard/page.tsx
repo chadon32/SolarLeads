@@ -22,6 +22,10 @@ export default async function DashboardPage({
   const token = (await searchParams)?.token?.trim();
   const accessToken = process.env.DASHBOARD_ACCESS_TOKEN?.trim();
 
+  if (process.env.NODE_ENV === "production" && !accessToken) {
+    return <DashboardAccessGate configurationMissing />;
+  }
+
   if (accessToken && token !== accessToken) {
     return <DashboardAccessGate />;
   }
@@ -212,7 +216,11 @@ export default async function DashboardPage({
   );
 }
 
-function DashboardAccessGate() {
+function DashboardAccessGate({
+  configurationMissing = false,
+}: {
+  configurationMissing?: boolean;
+}) {
   return (
     <main className="relative min-h-screen bg-[radial-gradient(circle_at_top,_rgba(25,72,108,0.3),_transparent_36%),linear-gradient(180deg,#05070d_0%,#07111d_68%,#06070b_100%)] px-4 py-8 text-slate-100 sm:px-6 md:px-10 lg:px-12">
       <div className="mx-auto max-w-4xl rounded-[2rem] border border-white/10 bg-white/5 p-5 backdrop-blur-xl sm:p-6">
@@ -220,23 +228,27 @@ function DashboardAccessGate() {
           Homeowner dashboard
         </p>
         <h1 className="mt-3 text-3xl font-semibold tracking-tight text-white">
-          Access required.
+          {configurationMissing ? "Dashboard is not configured." : "Access required."}
         </h1>
         <p className="mt-3 text-sm leading-7 text-slate-300">
-          Enter the dashboard access token to view lead history, PDF links, and follow-up status.
+          {configurationMissing
+            ? "Set DASHBOARD_ACCESS_TOKEN in Vercel to protect lead history before using this dashboard in production."
+            : "Enter the dashboard access token to view lead history, PDF links, and follow-up status."}
         </p>
 
-        <form method="get" className="mt-6 flex flex-col gap-3 sm:flex-row">
-          <input
-            name="token"
-            type="password"
-            placeholder="Dashboard token"
-            className="flex-1 rounded-[1.1rem] border border-white/10 bg-slate-950/45 px-4 py-3 text-base text-white outline-none placeholder:text-slate-500 focus:border-cyan-300/35"
-          />
-          <Button type="submit" className="px-5 py-3 text-sm">
-            Unlock dashboard
-          </Button>
-        </form>
+        {configurationMissing ? null : (
+          <form method="get" className="mt-6 flex flex-col gap-3 sm:flex-row">
+            <input
+              name="token"
+              type="password"
+              placeholder="Dashboard token"
+              className="flex-1 rounded-[1.1rem] border border-white/10 bg-slate-950/45 px-4 py-3 text-base text-white outline-none placeholder:text-slate-500 focus:border-cyan-300/35"
+            />
+            <Button type="submit" className="px-5 py-3 text-sm">
+              Unlock dashboard
+            </Button>
+          </form>
+        )}
       </div>
     </main>
   );

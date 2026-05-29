@@ -342,6 +342,7 @@ function FinancingTab({
           <MiniReadout label="Upfront after incentives" source="illustrative" value={formatMoney(values.upfrontAfterIncentives)} />
           <MiniReadout label="20-year savings" source="illustrative" value={formatMoney(values.totalSavings)} />
         </div>
+        <AssumptionTable rows={values.financingAssumptions} />
       </div>
       <EstimateTable rows={values.financingRows} />
     </div>
@@ -553,6 +554,31 @@ function EstimateTable({
   );
 }
 
+function AssumptionTable({
+  rows,
+}: {
+  rows: Array<{ label: string; value: string }>;
+}) {
+  return (
+    <div className="mt-4 overflow-hidden rounded-[0.9rem] border border-white/10 bg-black/20">
+      <div className="border-b border-white/8 px-3 py-2">
+        <p className="text-[0.58rem] font-semibold uppercase tracking-[0.22em] text-white/42">
+          Estimate assumptions
+        </p>
+      </div>
+      {rows.map((row) => (
+        <div
+          key={row.label}
+          className="grid gap-1 border-b border-white/8 px-3 py-2.5 last:border-b-0 sm:grid-cols-[1fr_auto]"
+        >
+          <span className="text-xs text-white/54">{row.label}</span>
+          <span className="text-xs font-semibold text-white">{row.value}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 type DashboardValues = ReturnType<typeof buildDashboardValues>;
 
 function buildDashboardValues(
@@ -612,21 +638,26 @@ function buildDashboardValues(
   const carbonMetricTons = roundTo(annualKwh * 0.00039, 1);
   const carsRemoved = roundTo(carbonMetricTons / 4.6, 1);
   const treesEquivalent = roundTo(carbonMetricTons * 16.7, 1);
-  const installedCost = Math.round(recommendedKw * 1000 * 2.75);
+  const azRatePerKwh = 0.13;
+  const installedCostPerWatt = 2.75;
+  const buyIncentiveRate = 0.3;
+  const utilityEscalationRate = 0.03;
+  const loanPaymentMultiplier = 1.38;
+  const installedCost = Math.round(recommendedKw * 1000 * installedCostPerWatt);
   const totalCostWithoutSolar = Math.round(
     Array.from({ length: 20 }).reduce<number>(
-      (sum, _, year) => sum + monthlyBill * 12 * 1.03 ** year,
+      (sum, _, year) => sum + monthlyBill * 12 * (1 + utilityEscalationRate) ** year,
       0
     )
   );
   const upfrontAfterIncentives =
-    financingMode === "buy" ? Math.round(installedCost * 0.7) : 0;
+    financingMode === "buy" ? Math.round(installedCost * (1 - buyIncentiveRate)) : 0;
   const totalPayments =
     financingMode === "buy"
       ? upfrontAfterIncentives
       : financingMode === "lease"
         ? Math.round(Math.max(totalCostWithoutSolar - twentyYearSavings * 0.55, 0))
-        : Math.round(installedCost * 1.38);
+        : Math.round(installedCost * loanPaymentMultiplier);
   const totalCostWithSolar = Math.max(totalCostWithoutSolar - twentyYearSavings, totalPayments);
   const totalSavings = Math.max(totalCostWithoutSolar - totalCostWithSolar, 0);
 
@@ -641,6 +672,13 @@ function buildDashboardValues(
       { label: "Total 20-year cost with solar", source: "illustrative" as const, value: totalCostWithSolar },
       { label: "Total 20-year cost without solar", source: "modeled" as const, value: totalCostWithoutSolar },
       { label: "Total 20-year savings", source: "illustrative" as const, value: totalSavings },
+    ],
+    financingAssumptions: [
+      { label: "Arizona electricity rate", value: `$${azRatePerKwh.toFixed(2)}/kWh` },
+      { label: "Installed cost basis", value: `$${installedCostPerWatt.toFixed(2)}/W` },
+      { label: "Utility escalation", value: `${Math.round(utilityEscalationRate * 100)}% / yr` },
+      { label: "Buy incentive placeholder", value: `${Math.round(buyIncentiveRate * 100)}%` },
+      { label: "Loan payment multiplier", value: `${loanPaymentMultiplier.toFixed(2)}x installed cost` },
     ],
     installationSqFt,
     maxPanelCount,

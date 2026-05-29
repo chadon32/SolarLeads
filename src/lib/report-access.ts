@@ -3,6 +3,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 const REPORT_SECRET = process.env.REPORT_SIGNING_SECRET?.trim();
 const SITE_URL =
   process.env.NEXT_PUBLIC_SITE_URL?.trim() ?? "http://localhost:3000";
+const REQUIRE_SIGNED_REPORTS = process.env.NODE_ENV === "production";
 
 function toExpiry(expiresInSeconds = 24 * 60 * 60) {
   return Date.now() + expiresInSeconds * 1000;
@@ -34,6 +35,10 @@ export function buildReportPdfPath(
   options: { expiresInSeconds?: number } = {}
 ) {
   if (!REPORT_SECRET) {
+    if (REQUIRE_SIGNED_REPORTS) {
+      return `/api/report/pdf?leadId=${encodeURIComponent(leadId)}&signature=required`;
+    }
+
     return `/api/report/pdf?leadId=${encodeURIComponent(leadId)}`;
   }
 
@@ -81,21 +86,25 @@ export function verifyReportSignature(
   token: string | null
 ) {
   if (!REPORT_SECRET) {
-    return { ok: true, expired: false };
+    return {
+      expired: false,
+      missingSecret: REQUIRE_SIGNED_REPORTS,
+      ok: !REQUIRE_SIGNED_REPORTS,
+    };
   }
 
   if (!expiresAt || !token) {
-    return { ok: false, expired: false };
+    return { ok: false, expired: false, missingSecret: false };
   }
 
   const expiry = Number(expiresAt);
 
   if (!Number.isFinite(expiry)) {
-    return { ok: false, expired: false };
+    return { ok: false, expired: false, missingSecret: false };
   }
 
   if (Date.now() > expiry) {
-    return { ok: false, expired: true };
+    return { ok: false, expired: true, missingSecret: false };
   }
 
   const expected = signValue(leadId, expiry);
@@ -103,5 +112,6 @@ export function verifyReportSignature(
   return {
     ok: constantTimeEquals(expected, token),
     expired: false,
+    missingSecret: false,
   };
 }

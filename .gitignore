@@ -31,9 +31,13 @@ yarn-error.log*
 .pnpm-debug.log*
 dev-start.log
 .codex-artifacts/
+.codex-dev*.log
+.codex-home-verification.png
+/Drone_shot_over_solar_neighborhood_202605281518.mp4
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
 
 # vercel
 .vercel
