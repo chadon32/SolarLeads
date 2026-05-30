@@ -226,7 +226,7 @@ export async function GET(request: Request) {
     return new Response(Buffer.from(bytes), {
       headers: {
         "Content-Type": "application/pdf",
-        "Content-Disposition": `attachment; filename="arizona-solar-ai-report-${leadId}.pdf"`,
+        "Content-Disposition": `inline; filename="arizona-solar-ai-report-${leadId}.pdf"`,
         "Cache-Control": "no-store",
       },
     });

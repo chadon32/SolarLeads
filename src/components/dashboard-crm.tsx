@@ -88,6 +88,10 @@ const sortOptions = [
 
 type SortValue = (typeof sortOptions)[number]["value"];
 
+function getReportViewerPath(leadId: string) {
+  return `/report/${encodeURIComponent(leadId)}`;
+}
+
 export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
   const [leadItems, setLeadItems] = useState(leads);
   const [selectedLeadId, setSelectedLeadId] = useState(leads[0]?.id ?? "");
@@ -148,33 +152,14 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
     ? followUps.filter((followUp) => followUp.leadId === selectedLead.id)
     : [];
 
-  const handlePdfDownload = async (lead: DashboardCrmLead) => {
+  const handlePdfDownload = (lead: DashboardCrmLead) => {
     if (pdfUnavailableIds.has(lead.id)) {
       return;
     }
 
-    try {
-      const response = await fetch(lead.reportUrl);
-
-      if (!response.ok) {
-        throw new Error("PDF unavailable");
-      }
-
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = `solar-report-${lead.id}.pdf`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(url);
-      trackEvent("pdf_downloaded", {
-        lead_id: lead.id,
-      });
-    } catch {
-      setPdfUnavailableIds((current) => new Set(current).add(lead.id));
-    }
+    trackEvent("pdf_downloaded", {
+      lead_id: lead.id,
+    });
   };
 
   const handleStatusChange = async (
@@ -389,7 +374,7 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
                             lead={lead}
                             isSelected={selectedLead?.id === lead.id}
                             isUpdating={updatingIds.has(lead.id)}
-                            onDownloadPdf={() => void handlePdfDownload(lead)}
+                            onDownloadPdf={() => handlePdfDownload(lead)}
                             onSelect={() => setSelectedLeadId(lead.id)}
                             onStatusChange={(nextStatus) =>
                               void handleStatusChange(lead, nextStatus)
@@ -420,7 +405,7 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
               <LeadDetailPanel
                 followUps={followUpsForSelected}
                 lead={selectedLead}
-                onDownloadPdf={() => void handlePdfDownload(selectedLead)}
+                onDownloadPdf={() => handlePdfDownload(selectedLead)}
                 onStatusChange={(nextStatus) =>
                   void handleStatusChange(selectedLead, nextStatus)
                 }
@@ -499,14 +484,14 @@ function LeadPipelineCard({
         {pdfUnavailable ? (
           <span className="text-xs font-semibold text-slate-500">PDF unavailable</span>
         ) : (
-          <button
-            type="button"
+          <a
+            href={getReportViewerPath(lead.id)}
             onClick={onDownloadPdf}
             className="inline-flex items-center gap-1.5 rounded-full bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-cyan-100"
           >
             <Download className="h-3.5 w-3.5" aria-hidden="true" />
             PDF
-          </button>
+          </a>
         )}
       </div>
     </article>
@@ -614,17 +599,17 @@ function LeadDetailPanel({
             PDF unavailable
           </div>
         ) : (
-          <button
-            type="button"
+          <a
+            href={getReportViewerPath(lead.id)}
             onClick={onDownloadPdf}
             className="inline-flex items-center justify-center gap-2 rounded-full bg-white px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100"
           >
             <Download className="h-4 w-4" aria-hidden="true" />
             Download PDF
-          </button>
+          </a>
         )}
         <a
-          href={lead.reportUrl}
+          href={getReportViewerPath(lead.id)}
           className="inline-flex items-center justify-center rounded-full border border-white/10 bg-white/[0.05] px-4 py-3 text-sm font-semibold text-white transition hover:bg-white/[0.09]"
         >
           Open Report

@@ -135,6 +135,10 @@ const dateFilters = [
   { label: "Last 30 days", value: "30d" },
 ] as const;
 
+function getReportViewerPath(leadId: string) {
+  return `/report/${encodeURIComponent(leadId)}`;
+}
+
 export function InstallerDashboard({
   automationConnected,
   leads,
@@ -228,39 +232,20 @@ export function InstallerDashboard({
     filteredLeads[0] ??
     null;
 
-  const handlePdfDownload = async (lead: InstallerLead) => {
+  const handlePdfDownload = (lead: InstallerLead) => {
     if (pdfUnavailableIds.has(lead.id)) {
       return;
     }
 
-    try {
-      const response = await fetch(lead.reportUrl);
-
-      if (!response.ok) {
-        throw new Error("PDF unavailable");
-      }
-
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = `solar-report-${lead.id}.pdf`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(url);
-      setLeadItems((current) =>
-        current.map((item) =>
-          item.id === lead.id ? { ...item, pdfDownloaded: true } : item
-        )
-      );
-      trackEvent("pdf_downloaded", {
-        lead_id: lead.id,
-        surface: "installer_dashboard",
-      });
-    } catch {
-      setPdfUnavailableIds((current) => new Set(current).add(lead.id));
-    }
+    setLeadItems((current) =>
+      current.map((item) =>
+        item.id === lead.id ? { ...item, pdfDownloaded: true } : item
+      )
+    );
+    trackEvent("pdf_downloaded", {
+      lead_id: lead.id,
+      surface: "installer_dashboard",
+    });
   };
 
   const updateStatus = async (
@@ -653,16 +638,25 @@ export function InstallerDashboard({
                         >
                           <Eye className="h-3.5 w-3.5" aria-hidden="true" />
                         </IconButton>
-                        <IconButton
-                          disabled={pdfUnavailableIds.has(lead.id)}
-                          label="Download PDF"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            void handlePdfDownload(lead);
-                          }}
-                        >
-                          <Download className="h-3.5 w-3.5" aria-hidden="true" />
-                        </IconButton>
+                        {pdfUnavailableIds.has(lead.id) ? (
+                          <span className="grid h-8 w-8 cursor-not-allowed place-items-center rounded-full border border-white/10 bg-white/[0.03] text-slate-600" title="PDF unavailable">
+                            <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                            <span className="sr-only">PDF unavailable</span>
+                          </span>
+                        ) : (
+                          <a
+                            href={getReportViewerPath(lead.id)}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              handlePdfDownload(lead);
+                            }}
+                            className="grid h-8 w-8 place-items-center rounded-full border border-white/10 bg-white/[0.06] text-slate-300 transition hover:bg-white/[0.1] hover:text-white"
+                            title="Download PDF"
+                          >
+                            <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                            <span className="sr-only">Download PDF</span>
+                          </a>
+                        )}
                         <CompactStatusButton
                           label="Contacted"
                           onClick={(event) => {
@@ -717,7 +711,7 @@ export function InstallerDashboard({
           lead={selectedLead}
           noteDraft={noteDrafts[selectedLead.id] ?? selectedLead.notes}
           onClose={() => setSelectedLeadId(null)}
-          onDownloadPdf={() => void handlePdfDownload(selectedLead)}
+          onDownloadPdf={() => handlePdfDownload(selectedLead)}
           onFollowUpAction={(action) =>
             void updateFollowUp(selectedLead, action, {
               nextFollowUpAt:
@@ -848,14 +842,14 @@ function LeadDrawer({
               {pdfUnavailable ? (
                 <span className="text-xs font-semibold text-slate-500">PDF unavailable</span>
               ) : (
-                <button
-                  type="button"
+                <a
+                  href={getReportViewerPath(lead.id)}
                   onClick={onDownloadPdf}
                   className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-2 text-xs font-semibold text-slate-950 transition hover:bg-cyan-100"
                 >
                   <Download className="h-3.5 w-3.5" aria-hidden="true" />
                   PDF
-                </button>
+                </a>
               )}
             </div>
           </section>
