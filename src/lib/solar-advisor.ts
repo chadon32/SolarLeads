@@ -105,6 +105,12 @@ export function generateSolarAdvisorSummary(
   score = getSuitabilityScore(input),
   candidateLabel = getCandidateLabel(score)
 ) {
+  const candidateCopy =
+    candidateLabel === "strong"
+      ? "strong preliminary"
+      : candidateLabel === "moderate"
+        ? "moderate preliminary"
+        : "limited preliminary";
   const systemSize =
     input.systemKw > 0 ? `${input.systemKw.toFixed(1)} kW` : "the recommended system";
   const panelCopy =
@@ -114,7 +120,11 @@ export function generateSolarAdvisorSummary(
       ? `$${Math.round(input.annualSavings).toLocaleString()} per year`
       : "the homeowner's bill and utility assumptions";
 
-  return `Your home appears to be a ${candidateLabel} solar candidate. The current roof model supports ${panelCopy}, a modeled ${systemSize} system, and estimated annual savings of ${savingsCopy}. Panels are prioritized on usable roof planes with stronger sunlight, cleaner geometry, and fewer placement conflicts. Savings are modeled using the monthly bill input and Arizona assumptions. ${DISCLAIMER}`;
+  if (candidateLabel === "strong") {
+    return `Your home appears to be a ${candidateCopy} solar candidate based on available satellite and solar data. The current roof model supports ${panelCopy}, a modeled ${systemSize} system, and estimated annual savings of ${savingsCopy}. Panels are prioritized on usable roof planes with stronger sunlight, cleaner geometry, and fewer placement conflicts. Savings are modeled using the monthly bill input and Arizona assumptions. ${DISCLAIMER}`;
+  }
+
+  return `Your home appears to be a ${candidateCopy} solar candidate based on available satellite and solar data. The model found ${panelCopy} and a modeled ${systemSize} system, but the estimated system size or bill offset may be more limited than stronger solar candidates. Savings are modeled using the monthly bill input and Arizona assumptions. ${DISCLAIMER}`;
 }
 
 export function generateSuitabilityExplanation(

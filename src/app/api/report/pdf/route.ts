@@ -1,5 +1,3 @@
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 import { NextResponse } from "next/server";
 import {
   PDFDocument,
@@ -32,6 +30,7 @@ type Color = ReturnType<typeof rgb>;
 type SourceLabel =
   | "Solar API"
   | "Modeled"
+  | "Modeled from panel layout"
   | "User-adjusted"
   | "Illustrative"
   | "Estimated"
@@ -90,7 +89,7 @@ type ProposalData = {
   lat?: number;
   lng?: number;
   generatedDate: string;
-  confidence: "High" | "Medium" | "Low";
+  confidence: "High" | "Good" | "Moderate" | "Limited";
   systemKwSource: SourceLabel;
   monthlyBill?: number;
   annualSavings?: number;
@@ -289,21 +288,13 @@ function buildProposalData(
   const energyOffsetPct = positiveNumber(
     lead.energy_offset_pct ?? report.annualEnergyOffset
   );
-  const geometryScore = [panelCount, systemKw, annualKwh, usableAreaSqFt].filter(
-    Boolean
-  ).length;
-  const confidence =
-    geometryScore >= 3 && annualSavings
-      ? "High"
-      : geometryScore >= 1 || annualSavings
-        ? "Medium"
-        : "Low";
   const suitabilityScore = getPdfSuitabilityScore({
     energyOffsetPct,
     panelCount,
     sunlightHours,
     usableRoofPct,
   });
+  const confidence = getPdfConfidenceLabel(suitabilityScore);
   const calculatedLeadScore = calculateLeadScore({
     annualSavings,
     email: lead.email,
@@ -354,7 +345,7 @@ function buildProposalData(
       { month: "long", day: "numeric", year: "numeric" }
     ),
     confidence,
-    systemKwSource: directSystemKw ? "Solar API" : "Modeled",
+    systemKwSource: "Modeled from panel layout",
     monthlyBill,
     annualSavings,
     monthlySavings,
@@ -512,7 +503,7 @@ function drawExecutiveSummary(
   });
   drawTextBlock(
     page,
-    "This report combines satellite roof analysis, solar suitability modeling, and Arizona-specific savings assumptions. It is designed to help you decide whether solar is worth exploring before a final installer visit.",
+    "This report combines available satellite imagery, Solar API roof data, and Arizona-specific modeled savings assumptions. It is a preliminary estimate; final design, pricing, incentives, and savings require installer verification.",
     60,
     151,
     486,
@@ -521,9 +512,9 @@ function drawExecutiveSummary(
     13,
     colors.muted
   );
-  drawSourceBadge(page, 60, 126, "Solar API", fonts, colors);
-  drawSourceBadge(page, 132, 126, "Modeled", fonts, colors);
-  drawSourceBadge(page, 196, 126, "User-adjusted", fonts, colors);
+  drawSourceBadge(page, 60, 122, "Solar API", fonts, colors);
+  drawSourceBadge(page, 132, 122, "Modeled", fonts, colors);
+  drawSourceBadge(page, 196, 122, "User-adjusted", fonts, colors);
 }
 
 async function markPdfDownloaded(
@@ -564,7 +555,7 @@ function drawRoofAnalysisPage(
   });
   drawTextBlock(
     page,
-    "Roof imagery, usable area, and panel placement are organized to explain why this home may be a strong solar candidate.",
+    "Roof imagery, usable area, and modeled panel capacity are organized to explain the preliminary solar opportunity for this home. Final panel placement may change after installer site review.",
     42,
     674,
     470,
@@ -909,7 +900,7 @@ function drawNextStepsPage(
   });
   drawTextBlock(
     page,
-    "Use this report to request local solar quotes that can be verified by licensed installers.",
+    "Use this report to review your solar options and discuss final design, pricing, incentives, and installation details with a licensed installer.",
     42,
     672,
     440,
@@ -920,11 +911,11 @@ function drawNextStepsPage(
   );
 
   drawStep(page, 42, 566, "1", "Review your report", "Confirm that the modeled savings, roof area, and panel count look aligned with your goals.", fonts, colors);
-  drawStep(page, 42, 456, "2", "Get 3 Local Solar Quotes", "Use the quote request flow to compare local Arizona providers with this report context.", fonts, colors);
-  drawStep(page, 42, 346, "3", "Speak with a solar specialist", "A solar specialist can follow up with your report details, contact preferences, and final design questions.", fonts, colors);
+  drawStep(page, 42, 456, "2", "Request a final installer review", "A licensed installer can verify roof condition, setbacks, electrical requirements, incentives, and final pricing.", fonts, colors);
+  drawStep(page, 42, 346, "3", "Decide when you're ready", "Use this report as a starting point for a no-pressure solar conversation.", fonts, colors);
 
   drawCard(page, 342, 356, 228, 320, colors);
-  page.drawText("Get 3 Local Quotes", {
+  page.drawText("Next Step", {
     x: 360,
     y: 644,
     size: 13,
@@ -932,13 +923,20 @@ function drawNextStepsPage(
     color: colors.text,
   });
   drawSourceBadge(page, 360, 618, proposal.quoteRequested ? "Requested" : "Next Step", fonts, colors);
+  page.drawText("Request Final Review", {
+    x: 360,
+    y: 596,
+    size: 11,
+    font: fonts.bold,
+    color: colors.cyan,
+  });
   drawTextBlock(
     page,
     proposal.quoteRequested
-      ? "Quote request received. A solar specialist can follow up with this report."
-      : "Submit the quote request on the website to compare local providers.",
+      ? "Your review request was received. A solar specialist can follow up with this report context."
+      : "Use this report to discuss final design and pricing with a licensed installer.",
     360,
-    594,
+    576,
     176,
     fonts.regular,
     8.4,
@@ -957,13 +955,13 @@ function drawNextStepsPage(
     color: colors.muted,
   });
   if (assets.qrImage) {
-    page.drawRectangle({ x: 360, y: 294, width: 114, height: 114, color: rgb(1, 1, 1) });
-    page.drawImage(assets.qrImage, { x: 366, y: 300, width: 102, height: 102 });
+    page.drawRectangle({ x: 360, y: 304, width: 88, height: 88, color: rgb(1, 1, 1) });
+    page.drawImage(assets.qrImage, { x: 365, y: 309, width: 78, height: 78 });
   } else {
-    drawCard(page, 360, 294, 114, 114, colors);
+    drawCard(page, 360, 304, 88, 88, colors);
     page.drawText("QR unavailable", {
-      x: 378,
-      y: 348,
+      x: 371,
+      y: 344,
       size: 9,
       font: fonts.bold,
       color: colors.muted,
@@ -973,7 +971,7 @@ function drawNextStepsPage(
     page,
     "Scan to reopen or share your report link.",
     360,
-    272,
+    286,
     168,
     fonts.regular,
     8.5,
@@ -993,7 +991,7 @@ function drawNextStepsPage(
     "Satellite imagery may not show recent roof changes, tree trimming, or new obstructions.",
     "Final panel placement depends on setbacks, fire code, roof condition, electrical service, and installer measurements.",
     "Savings depend on utility rates, usage, financing, incentives, and future energy costs.",
-    "This report is a premium screening tool, not a binding installation contract.",
+    "This is a preliminary estimate, not a binding installation contract.",
   ];
   notes.forEach((note, index) => drawBullet(page, 62, 242 - index * 24, note, fonts, colors));
 }
@@ -1065,64 +1063,48 @@ function drawRoofVisual(
       y: y + 6,
       width: width - 12,
       height: height - 12,
+      opacity: 0.9,
+    });
+    page.drawRectangle({ x: x + 6, y: y + 6, width: width - 12, height: height - 12, color: colors.bg, opacity: 0.08 });
+    drawSelectedPropertyMarker(page, x, y, width, height, fonts, colors);
+  } else {
+    page.drawRectangle({
+      x: x + 6,
+      y: y + 6,
+      width: width - 12,
+      height: height - 12,
+      color: colors.bg,
       opacity: 0.72,
     });
-  } else {
-    drawMapPattern(page, x + 6, y + 6, width - 12, height - 12, colors);
-  }
-
-  page.drawRectangle({ x: x + 6, y: y + 6, width: width - 12, height: height - 12, color: colors.bg, opacity: 0.14 });
-
-  const roof = {
-    x: x + width * 0.45,
-    y: y + height * 0.28,
-    w: width * 0.34,
-    h: height * 0.44,
-  };
-  const primary = [
-    [roof.x, roof.y + roof.h * 0.12],
-    [roof.x + roof.w * 0.72, roof.y],
-    [roof.x + roof.w, roof.y + roof.h * 0.58],
-    [roof.x + roof.w * 0.26, roof.y + roof.h],
-  ];
-  const secondary = [
-    [roof.x - roof.w * 0.24, roof.y + roof.h * 0.42],
-    [roof.x + roof.w * 0.25, roof.y + roof.h * 0.27],
-    [roof.x + roof.w * 0.47, roof.y + roof.h * 0.78],
-    [roof.x - roof.w * 0.06, roof.y + roof.h * 0.92],
-  ];
-  const obstruction = [
-    [roof.x + roof.w * 0.42, roof.y + roof.h * 0.46],
-    [roof.x + roof.w * 0.64, roof.y + roof.h * 0.4],
-    [roof.x + roof.w * 0.7, roof.y + roof.h * 0.62],
-    [roof.x + roof.w * 0.48, roof.y + roof.h * 0.68],
-  ];
-
-  drawPolygon(page, secondary, colors.gold, 0.13, colors.gold, 0.8);
-  drawPolygon(page, primary, colors.cyan, 0.13, colors.cyan, 1.25);
-  drawPolygon(page, obstruction, colors.slate, 0.45, colors.line, 0.6);
-
-  if (proposal.panelCount) {
-    drawPanelArray(page, roof.x + roof.w * 0.12, roof.y + roof.h * 0.18, proposal.panelCount, colors);
-  } else {
-    page.drawText("Panel layout unavailable", {
-      x: roof.x + 6,
-      y: roof.y + roof.h * 0.52,
-      size: 9,
+    page.drawText("Roof image unavailable", {
+      x: x + 28,
+      y: y + height / 2 + 8,
+      size: 15,
       font: fonts.bold,
-      color: colors.gold,
+      color: colors.text,
     });
+    drawTextBlock(
+      page,
+      "Live satellite imagery could not be embedded for this report. Metrics are still shown from the saved solar estimate where available.",
+      x + 28,
+      y + height / 2 - 14,
+      width - 72,
+      fonts.regular,
+      8.8,
+      11.5,
+      colors.muted
+    );
   }
 
   page.drawRectangle({
     x: x + 18,
     y: y + height - 36,
-    width: 178,
+    width: image ? 190 : 182,
     height: 22,
     color: colors.badgeFill,
     opacity: 0.9,
   });
-  page.drawText("ROOF MODEL PREVIEW", {
+  page.drawText(image ? "SATELLITE ROOF IMAGE" : "ROOF IMAGE UNAVAILABLE", {
     x: x + 30,
     y: y + height - 29,
     size: 7.5,
@@ -1131,23 +1113,35 @@ function drawRoofVisual(
   });
 
   if (options.showLegend) {
-    drawLegend(page, x + 20, y + 18, fonts, colors);
+    drawImageLegend(page, x + 20, y + 18, fonts, colors, Boolean(image));
   }
 }
 
-function drawPanelArray(page: PDFPage, startX: number, startY: number, panelCount: number, colors: PdfColors) {
-  const visiblePanels = Math.min(panelCount, 24);
-  const cols = Math.min(6, Math.ceil(Math.sqrt(visiblePanels * 1.2)));
-  const panelW = 18;
-  const panelH = 10;
-  const gap = 3.5;
-  for (let index = 0; index < visiblePanels; index += 1) {
-    const col = index % cols;
-    const row = Math.floor(index / cols);
-    const px = startX + col * (panelW + gap) + row * 2.2;
-    const py = startY + row * (panelH + gap);
-    drawRotatedRect(page, px, py, panelW, panelH, -10, colors.blue, 0.72, rgb(0.9, 0.97, 1), 0.55);
-  }
+function drawSelectedPropertyMarker(
+  page: PDFPage,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  fonts: PdfFonts,
+  colors: PdfColors
+) {
+  const cx = x + width / 2;
+  const cy = y + height / 2;
+  page.drawCircle({ x: cx, y: cy, size: 9, color: colors.cyan, opacity: 0.18 });
+  page.drawCircle({ x: cx, y: cy, size: 4.2, borderColor: colors.cyan, borderWidth: 1.2, color: colors.bg, opacity: 0.72 });
+  page.drawLine({ start: { x: cx - 14, y: cy }, end: { x: cx - 5, y: cy }, color: colors.cyan, opacity: 0.75, thickness: 0.8 });
+  page.drawLine({ start: { x: cx + 5, y: cy }, end: { x: cx + 14, y: cy }, color: colors.cyan, opacity: 0.75, thickness: 0.8 });
+  page.drawLine({ start: { x: cx, y: cy - 14 }, end: { x: cx, y: cy - 5 }, color: colors.cyan, opacity: 0.75, thickness: 0.8 });
+  page.drawLine({ start: { x: cx, y: cy + 5 }, end: { x: cx, y: cy + 14 }, color: colors.cyan, opacity: 0.75, thickness: 0.8 });
+  page.drawRectangle({ x: cx + 12, y: cy + 12, width: 102, height: 18, color: colors.badgeFill, opacity: 0.86 });
+  page.drawText("SELECTED HOME", {
+    x: cx + 21,
+    y: cy + 18,
+    size: 6.6,
+    font: fonts.bold,
+    color: colors.text,
+  });
 }
 
 function drawPanelSummary(
@@ -1410,7 +1404,7 @@ function drawMetricCard(
     15,
     value.includes("unavailable") ? colors.muted : colors.text
   );
-  drawSourceBadge(page, x + 10, y + 10, source, fonts, colors);
+  drawSourceBadge(page, x + 10, y + 10, source, fonts, colors, width - 20);
 }
 
 function drawSourceBadge(
@@ -1419,13 +1413,19 @@ function drawSourceBadge(
   y: number,
   label: SourceLabel,
   fonts: PdfFonts,
-  colors: PdfColors
+  colors: PdfColors,
+  maxWidth?: number
 ) {
-  const width = Math.max(48, label.length * 5.8 + 14);
+  const naturalWidth = Math.max(48, label.length * 5.8 + 14);
+  const width = maxWidth ? Math.min(naturalWidth, maxWidth) : naturalWidth;
+  let fontSize = 5.8;
+  while (fonts.bold.widthOfTextAtSize(label.toUpperCase(), fontSize) > width - 12 && fontSize > 3.6) {
+    fontSize -= 0.2;
+  }
   const color =
     label === "Solar API"
       ? colors.cyan
-      : label === "Modeled"
+      : label === "Modeled" || label === "Modeled from panel layout"
         ? colors.gold
         : label === "User-adjusted"
           ? colors.green
@@ -1444,8 +1444,8 @@ function drawSourceBadge(
   });
   page.drawText(label.toUpperCase(), {
     x: x + 7,
-    y: y + 5,
-    size: 5.8,
+    y: y + 5.2,
+    size: fontSize,
     font: fonts.bold,
     color: colors.text,
   });
@@ -1462,20 +1462,24 @@ function drawConfidenceBadge(
   const color =
     confidence === "High"
       ? colors.green
-      : confidence === "Medium"
+      : confidence === "Good"
         ? colors.gold
-        : colors.orange;
+        : confidence === "Moderate"
+          ? colors.orange
+          : colors.slate;
+  const label = `${confidence} confidence`;
+  const width = Math.max(98, fonts.bold.widthOfTextAtSize(label, 7.8) + 20);
   page.drawRectangle({
     x,
     y,
-    width: 92,
+    width,
     height: 24,
     color,
     opacity: 0.16,
     borderColor: color,
     borderWidth: 0.8,
   });
-  page.drawText(`${confidence} confidence`, {
+  page.drawText(label, {
     x: x + 10,
     y: y + 8,
     size: 7.8,
@@ -1496,8 +1500,15 @@ function getLeadScorePdfColor(label: LeadScoreLabel, colors: PdfColors) {
   return colors.muted;
 }
 
-function drawLegend(page: PDFPage, x: number, y: number, fonts: PdfFonts, colors: PdfColors) {
-  page.drawRectangle({ x, y, width: 174, height: 70, color: colors.bg, opacity: 0.72 });
+function drawImageLegend(
+  page: PDFPage,
+  x: number,
+  y: number,
+  fonts: PdfFonts,
+  colors: PdfColors,
+  hasImage: boolean
+) {
+  page.drawRectangle({ x, y, width: 208, height: 70, color: colors.bg, opacity: 0.72 });
   page.drawText("LEGEND", {
     x: x + 10,
     y: y + 54,
@@ -1506,9 +1517,9 @@ function drawLegend(page: PDFPage, x: number, y: number, fonts: PdfFonts, colors
     color: colors.cyan,
   });
   const items = [
-    ["Blue", "Recommended panels", colors.blue],
-    ["Cyan", "Usable roof area", colors.cyan],
-    ["Gray", "Non-usable roof area", colors.slate],
+    ["Satellite", hasImage ? "Selected property imagery" : "Image unavailable", colors.cyan],
+    ["Solar API", "Roof and solar metrics", colors.gold],
+    ["Modeled", "Savings and system assumptions", colors.green],
   ] as const;
   items.forEach(([name, label, color], index) => {
     const itemY = y + 38 - index * 15;
@@ -1704,16 +1715,27 @@ async function loadRoofImage(pdf: PDFDocument, proposal: ProposalData) {
     process.env.GOOGLE_MAPS_API_KEY?.trim() ||
     process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY?.trim();
 
-  if (mapsKey && proposal.lat && proposal.lng) {
+  if (mapsKey) {
     try {
+      const coordinates =
+        proposal.lat && proposal.lng
+          ? { lat: proposal.lat, lng: proposal.lng }
+          : await geocodeReportAddress(proposal.address, mapsKey);
+
+      if (!coordinates) {
+        return null;
+      }
+
       const params = new URLSearchParams({
-        center: `${proposal.lat},${proposal.lng}`,
+        center: `${coordinates.lat},${coordinates.lng}`,
         zoom: "20",
         size: "640x360",
         scale: "2",
         maptype: "satellite",
+        format: "png",
         key: mapsKey,
       });
+      params.append("style", "feature:all|element:labels|visibility:off");
       const response = await fetch(
         `https://maps.googleapis.com/maps/api/staticmap?${params.toString()}`
       );
@@ -1729,14 +1751,46 @@ async function loadRoofImage(pdf: PDFDocument, proposal: ProposalData) {
         return await pdf.embedJpg(bytes);
       }
     } catch {
-      // Fall through to the bundled visual if live satellite imagery is unavailable.
+      // The PDF should never fall back to a generic home photo.
+      // A clearly labeled unavailable state is rendered instead.
     }
   }
 
+  return null;
+}
+
+async function geocodeReportAddress(address: string, mapsKey: string) {
+  if (!address || address === "Address unavailable") {
+    return null;
+  }
+
   try {
-    const imagePath = join(process.cwd(), "public", "modern-arizona-luxury-house.jpeg");
-    const bytes = await readFile(imagePath);
-    return await pdf.embedJpg(bytes);
+    const url = new URL("https://maps.googleapis.com/maps/api/geocode/json");
+    url.searchParams.set("address", address);
+    url.searchParams.set("key", mapsKey);
+
+    const response = await fetch(url, {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const payload = (await response.json()) as {
+      results?: Array<{ geometry?: { location?: { lat?: number; lng?: number } } }>;
+      status?: string;
+    };
+    const location = payload.results?.[0]?.geometry?.location;
+    const lat = Number(location?.lat);
+    const lng = Number(location?.lng);
+
+    if (payload.status !== "OK" || !Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return null;
+    }
+
+    return { lat, lng };
   } catch {
     return null;
   }
@@ -1803,6 +1857,13 @@ function getPdfSuitabilityScore({
     0,
     100
   );
+}
+
+function getPdfConfidenceLabel(score: number): ProposalData["confidence"] {
+  if (score >= 85) return "High";
+  if (score >= 65) return "Good";
+  if (score >= 45) return "Moderate";
+  return "Limited";
 }
 
 function positiveNumber(value: unknown) {
