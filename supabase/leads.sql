@@ -36,6 +36,7 @@ alter table public.leads add column if not exists energy_offset_pct numeric(10, 
 alter table public.leads add column if not exists pdf_generated boolean not null default false;
 alter table public.leads add column if not exists pdf_downloaded boolean not null default false;
 alter table public.leads add column if not exists utility_bill_uploaded boolean not null default false;
+alter table public.leads add column if not exists notes text;
 
 alter table public.leads enable row level security;
 
