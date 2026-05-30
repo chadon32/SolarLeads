@@ -233,7 +233,7 @@ function getSunlightQualityFromHours(hoursValue: number) {
 
   if (!Number.isFinite(hours)) {
     return {
-      label: "MODERATE 🌤️",
+      label: "MODERATE",
       quality: "moderate" as const,
       score: 65,
     };
@@ -241,7 +241,7 @@ function getSunlightQualityFromHours(hoursValue: number) {
 
   if (hours > 1800) {
     return {
-      label: "HIGH ☀️",
+      label: "HIGH",
       quality: "strong" as const,
       score: 90,
     };
@@ -249,14 +249,14 @@ function getSunlightQualityFromHours(hoursValue: number) {
 
   if (hours >= 1400) {
     return {
-      label: "MODERATE 🌤️",
+      label: "MODERATE",
       quality: "moderate" as const,
       score: 65,
     };
   }
 
   return {
-    label: "LOW ☁️",
+    label: "LOW",
     quality: "limited" as const,
     score: 42,
   };

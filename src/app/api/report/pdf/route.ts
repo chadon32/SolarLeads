@@ -1644,7 +1644,7 @@ function drawTextBlock(
   lineHeight: number,
   color: Color
 ) {
-  const words = text.split(/\s+/);
+  const words = sanitizePdfText(text).split(/\s+/);
   const lines: string[] = [];
   let current = "";
 
@@ -1668,6 +1668,16 @@ function drawTextBlock(
       color,
     });
   });
+}
+
+function sanitizePdfText(text: string) {
+  return text
+    .replace(/[\u{1F000}-\u{1FAFF}]/gu, "")
+    .replace(/[\u2600-\u27BF]/g, "")
+    .replace(/\uFE0F/g, "")
+    .replace(/[^\x09\x0A\x0D\x20-\x7E]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function createColors() {
