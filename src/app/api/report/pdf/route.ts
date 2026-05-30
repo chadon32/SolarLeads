@@ -29,7 +29,14 @@ import { getSupabaseAdminClient } from "@/lib/supabase-admin";
 export const runtime = "nodejs";
 
 type Color = ReturnType<typeof rgb>;
-type SourceLabel = "Solar API" | "Modeled" | "User-adjusted" | "Illustrative" | "Estimated";
+type SourceLabel =
+  | "Solar API"
+  | "Modeled"
+  | "User-adjusted"
+  | "Illustrative"
+  | "Estimated"
+  | "Requested"
+  | "Next Step";
 
 type ReportLead = {
   id: string;
@@ -53,6 +60,7 @@ type ReportLead = {
   lead_score_label?: string | null;
   pdf_downloaded?: boolean | null;
   pdf_generated?: boolean | null;
+  quote_requested?: boolean | null;
   solar_suitability_score?: number | null;
   twenty_year_savings?: number | null;
   utility_bill_uploaded?: boolean | null;
@@ -96,6 +104,7 @@ type ProposalData = {
   roiYears?: number;
   leadScore: number;
   leadScoreLabel: LeadScoreLabel;
+  quoteRequested: boolean;
   roofAreaSqFt?: number;
   usableAreaSqFt?: number;
   usableRoofPct?: number;
@@ -147,7 +156,7 @@ export async function GET(request: Request) {
 
     const supabase = getSupabaseAdminClient();
     const scoredLeadSelect =
-      "id, name, email, phone, address, monthly_bill, estimated_savings, created_at, panel_count, system_size_kw, annual_savings, monthly_savings, annual_energy_kwh, roof_area_m2, usable_area_m2, roof_pitch_deg, energy_offset_pct, lead_score, lead_score_label, pdf_downloaded, pdf_generated, solar_suitability_score, twenty_year_savings, utility_bill_uploaded, lat, lng";
+      "id, name, email, phone, address, monthly_bill, estimated_savings, created_at, panel_count, system_size_kw, annual_savings, monthly_savings, annual_energy_kwh, roof_area_m2, usable_area_m2, roof_pitch_deg, energy_offset_pct, lead_score, lead_score_label, pdf_downloaded, pdf_generated, quote_requested, solar_suitability_score, twenty_year_savings, utility_bill_uploaded, lat, lng";
     const extendedLeadSelect =
       "id, name, email, phone, address, monthly_bill, estimated_savings, created_at, panel_count, system_size_kw, annual_savings, monthly_savings, annual_energy_kwh, roof_area_m2, usable_area_m2, roof_pitch_deg, lat, lng";
     const baseLeadSelect =
@@ -303,6 +312,7 @@ function buildProposalData(
     pdfDownloaded: true,
     pdfGenerated: lead.pdf_generated ?? true,
     phone: lead.phone,
+    quoteRequested: lead.quote_requested,
     solarSuitabilityScore: lead.solar_suitability_score ?? suitabilityScore,
     systemSizeKw: systemKw,
     twentyYearSavings: lead.twenty_year_savings ?? twentyYearSavings,
@@ -357,6 +367,7 @@ function buildProposalData(
     roiYears: roiYears && roiYears > 0 ? roiYears : undefined,
     leadScore,
     leadScoreLabel: normalizeLeadScoreLabel(lead.lead_score_label, leadScore),
+    quoteRequested: Boolean(lead.quote_requested),
     roofAreaSqFt,
     usableAreaSqFt,
     usableRoofPct,
@@ -898,7 +909,7 @@ function drawNextStepsPage(
   });
   drawTextBlock(
     page,
-    "Use this report to decide whether a final solar design is worth pursuing for your home.",
+    "Use this report to request local solar quotes that can be verified by licensed installers.",
     42,
     672,
     440,
@@ -909,36 +920,50 @@ function drawNextStepsPage(
   );
 
   drawStep(page, 42, 566, "1", "Review your report", "Confirm that the modeled savings, roof area, and panel count look aligned with your goals.", fonts, colors);
-  drawStep(page, 42, 456, "2", "Speak with a solar specialist", "Ask for final pricing, equipment options, utility details, and incentive eligibility.", fonts, colors);
-  drawStep(page, 42, 346, "3", "Receive a finalized design", "A licensed installer should verify measurements, setbacks, obstructions, and electrical details.", fonts, colors);
+  drawStep(page, 42, 456, "2", "Get 3 Local Solar Quotes", "Use the quote request flow to compare local Arizona providers with this report context.", fonts, colors);
+  drawStep(page, 42, 346, "3", "Speak with a solar specialist", "A solar specialist can follow up with your report details, contact preferences, and final design questions.", fonts, colors);
 
   drawCard(page, 342, 356, 228, 320, colors);
-  page.drawText("Contact", {
+  page.drawText("Get 3 Local Quotes", {
     x: 360,
     y: 644,
     size: 13,
     font: fonts.bold,
     color: colors.text,
   });
-  drawContactRow(page, 360, 612, "Email", proposal.email, fonts, colors);
-  drawContactRow(page, 360, 574, "Report ID", proposal.id, fonts, colors);
-  drawContactRow(page, 360, 536, "Website", "solar-leads-psi.vercel.app", fonts, colors);
+  drawSourceBadge(page, 360, 618, proposal.quoteRequested ? "Requested" : "Next Step", fonts, colors);
+  drawTextBlock(
+    page,
+    proposal.quoteRequested
+      ? "Quote request received. A solar specialist can follow up with this report."
+      : "Submit the quote request on the website to compare local providers.",
+    360,
+    594,
+    176,
+    fonts.regular,
+    8.4,
+    11,
+    colors.muted
+  );
+  drawContactRow(page, 360, 540, "Email", proposal.email, fonts, colors);
+  drawContactRow(page, 360, 502, "Report ID", proposal.id, fonts, colors);
+  drawContactRow(page, 360, 464, "Website", "solar-leads-psi.vercel.app", fonts, colors);
 
   page.drawText("Open this report", {
     x: 360,
-    y: 492,
+    y: 432,
     size: 9,
     font: fonts.bold,
     color: colors.muted,
   });
   if (assets.qrImage) {
-    page.drawRectangle({ x: 360, y: 366, width: 114, height: 114, color: rgb(1, 1, 1) });
-    page.drawImage(assets.qrImage, { x: 366, y: 372, width: 102, height: 102 });
+    page.drawRectangle({ x: 360, y: 294, width: 114, height: 114, color: rgb(1, 1, 1) });
+    page.drawImage(assets.qrImage, { x: 366, y: 300, width: 102, height: 102 });
   } else {
-    drawCard(page, 360, 366, 114, 114, colors);
+    drawCard(page, 360, 294, 114, 114, colors);
     page.drawText("QR unavailable", {
       x: 378,
-      y: 420,
+      y: 348,
       size: 9,
       font: fonts.bold,
       color: colors.muted,
@@ -948,7 +973,7 @@ function drawNextStepsPage(
     page,
     "Scan to reopen or share your report link.",
     360,
-    344,
+    272,
     168,
     fonts.regular,
     8.5,

@@ -102,7 +102,7 @@ type InstallerDashboardProps = {
 const statusOptions: Array<{ label: string; value: InstallerLeadStatus }> = [
   { label: "New", value: "new" },
   { label: "Contacted", value: "contacted" },
-  { label: "Quoted", value: "quoted" },
+  { label: "Quote Requested", value: "quoted" },
   { label: "Closed Won", value: "closed-won" },
   { label: "Closed Lost", value: "closed-lost" },
 ];
@@ -671,7 +671,7 @@ export function InstallerDashboard({
                           }}
                         />
                         <CompactStatusButton
-                          label="Quoted"
+                          label="Quote"
                           onClick={(event) => {
                             event.stopPropagation();
                             void updateStatus(lead, "quoted");
@@ -1358,6 +1358,10 @@ function normalizeInstallerStatus(value?: string | null): InstallerLeadStatus | 
   }
 
   const normalized = value.trim().toLowerCase().replace(/\s+/g, "-");
+  if (normalized === "quote-requested") {
+    return "quoted";
+  }
+
   if (
     normalized === "new" ||
     normalized === "contacted" ||

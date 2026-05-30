@@ -18,6 +18,8 @@ type ThankYouPayload = {
   firstName?: string;
   panelCount?: number;
   paybackYears?: number;
+  preferredContactMethod?: string;
+  quoteRequested?: boolean;
   reportUrl?: string;
   systemKw?: number;
 };
@@ -30,6 +32,8 @@ const fallbackPayload: Required<Omit<ThankYouPayload, "reportUrl">> & {
   firstName: "there",
   panelCount: 0,
   paybackYears: 0,
+  preferredContactMethod: "Phone",
+  quoteRequested: false,
   systemKw: 0,
 };
 
@@ -60,6 +64,8 @@ export function ThankYouClient() {
       firstName: source.firstName?.trim() || "there",
       panelCount: Math.max(0, Math.round(safeNumber(source.panelCount))),
       paybackYears: safeNumber(source.paybackYears),
+      preferredContactMethod: source.preferredContactMethod || "Phone",
+      quoteRequested: Boolean(source.quoteRequested),
       systemKw: safeNumber(source.systemKw),
     };
   }, [payload]);
@@ -77,14 +83,17 @@ export function ThankYouClient() {
             <div>
               <span className="inline-flex items-center gap-2 rounded-full border border-emerald-300/20 bg-emerald-300/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.22em] text-emerald-100">
                 <CheckCircle2 className="h-4 w-4" />
-                Report ready
+                {summary.quoteRequested ? "Get 3 Local Quotes" : "Report ready"}
               </span>
               <h1 className="mt-5 text-4xl font-semibold tracking-tight text-white sm:text-5xl">
-                Your solar report is ready, {loaded ? summary.firstName : "there"}.
+                {summary.quoteRequested
+                  ? `Your quote request was received, ${loaded ? summary.firstName : "there"}.`
+                  : `Your solar report is ready, ${loaded ? summary.firstName : "there"}.`}
               </h1>
               <p className="mt-4 max-w-2xl text-base leading-7 text-slate-300">
-                We emailed your personalized Arizona Solar AI proposal and saved
-                the roof model summary for your next step.
+                {summary.quoteRequested
+                  ? "Your quote request was received. A solar specialist can follow up with your report details."
+                  : "We emailed your personalized Arizona Solar AI proposal and saved the roof model summary for your next step."}
               </p>
             </div>
             <Link
@@ -129,6 +138,14 @@ export function ThankYouClient() {
                   label="Payback"
                   value={summary.paybackYears > 0 ? `${summary.paybackYears.toFixed(1)} yrs` : "Pending"}
                 />
+                <SummaryMetric
+                  label="Quote request"
+                  value={summary.quoteRequested ? "Received" : "Pending"}
+                />
+                <SummaryMetric
+                  label="Preferred contact"
+                  value={summary.preferredContactMethod}
+                />
               </div>
 
               {summary.reportUrl ? (
@@ -158,8 +175,8 @@ export function ThankYouClient() {
                 <NextStep
                   index="2"
                   icon={SunMedium}
-                  title="Solar advisor calls within 24 hours"
-                  body="A licensed Arizona solar advisor can answer roof, savings, and financing questions."
+                  title="Get matched with local quote options"
+                  body="A solar specialist can follow up with your report details and quote preferences."
                 />
                 <NextStep
                   index="3"

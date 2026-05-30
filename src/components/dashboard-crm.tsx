@@ -75,7 +75,7 @@ type DashboardCrmProps = {
 const statusColumns: Array<{ id: DashboardLeadStatus; label: string }> = [
   { id: "new", label: "New" },
   { id: "contacted", label: "Contacted" },
-  { id: "quoted", label: "Quoted" },
+  { id: "quoted", label: "Quote Requested" },
   { id: "closed-won", label: "Closed Won" },
   { id: "closed-lost", label: "Closed Lost" },
 ];

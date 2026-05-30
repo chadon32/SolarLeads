@@ -59,6 +59,7 @@ type DashboardLead = {
   lead_score_label?: string | null;
   pdf_downloaded?: boolean | null;
   pdf_generated?: boolean | null;
+  quote_requested?: boolean | null;
   solar_suitability_score?: number | null;
   twenty_year_savings?: number | null;
   utility_bill_uploaded?: boolean | null;
@@ -89,7 +90,7 @@ export default async function DashboardPage({
 
   const supabase = getSupabaseAdminClient();
   const scoredLeadSelect =
-    "id, name, email, phone, address, monthly_bill, estimated_savings, panel_count, system_size_kw, annual_savings, annual_energy_kwh, roi_years, selected_panel_brand, selected_panel_model, selected_panel_watts, system_cost_before_incentives, federal_tax_credit, net_system_cost, selected_inverter_type, energy_offset_pct, lead_score, lead_score_label, pdf_downloaded, pdf_generated, solar_suitability_score, twenty_year_savings, utility_bill_uploaded, status, created_at";
+    "id, name, email, phone, address, monthly_bill, estimated_savings, panel_count, system_size_kw, annual_savings, annual_energy_kwh, roi_years, selected_panel_brand, selected_panel_model, selected_panel_watts, system_cost_before_incentives, federal_tax_credit, net_system_cost, selected_inverter_type, energy_offset_pct, lead_score, lead_score_label, pdf_downloaded, pdf_generated, quote_requested, solar_suitability_score, twenty_year_savings, utility_bill_uploaded, status, created_at";
   const extendedLeadSelect =
     "id, name, email, phone, address, monthly_bill, estimated_savings, panel_count, system_size_kw, annual_savings, annual_energy_kwh, roi_years, selected_panel_brand, selected_panel_model, selected_panel_watts, system_cost_before_incentives, federal_tax_credit, net_system_cost, selected_inverter_type, status, created_at";
   const baseLeadSelect =
@@ -199,6 +200,7 @@ export default async function DashboardPage({
       pdfDownloaded: lead.pdf_downloaded,
       pdfGenerated: lead.pdf_generated ?? true,
       phone: lead.phone,
+      quoteRequested: lead.quote_requested,
       solarSuitabilityScore: lead.solar_suitability_score,
       systemSizeKw,
       twentyYearSavings:
@@ -354,6 +356,10 @@ function normalizeLeadStatus(value?: string | null): DashboardLeadStatus | null 
   }
 
   const normalized = value.trim().toLowerCase().replace(/\s+/g, "-");
+
+  if (normalized === "quote-requested") {
+    return "quoted";
+  }
 
   if (
     normalized === "new" ||

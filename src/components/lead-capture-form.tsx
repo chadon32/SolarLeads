@@ -37,6 +37,9 @@ type FormValues = {
   phone: string;
   address: string;
   monthlyBill: string;
+  preferredContactMethod: string;
+  bestTimeToContact: string;
+  notes: string;
 };
 
 type SavedLead = {
@@ -46,6 +49,7 @@ type SavedLead = {
   address: string;
   monthlyBill: number;
   estimatedSavings: number;
+  quoteRequested?: boolean;
   reportUrl: string;
 };
 
@@ -55,7 +59,13 @@ const emptyValues: FormValues = {
   phone: "",
   address: "",
   monthlyBill: "",
+  preferredContactMethod: "Phone",
+  bestTimeToContact: "Afternoon",
+  notes: "",
 };
+
+const contactMethodOptions = ["Phone", "Text", "Email"] as const;
+const bestTimeOptions = ["Morning", "Afternoon", "Evening", "Weekend"] as const;
 
 function normalizePhone(value: string) {
   return value.replace(/\D/g, "");
@@ -95,6 +105,9 @@ function buildFingerprint(values: FormValues) {
     normalizePhone(values.phone),
     values.address.trim().toLowerCase(),
     values.monthlyBill.trim(),
+    values.preferredContactMethod.trim().toLowerCase(),
+    values.bestTimeToContact.trim().toLowerCase(),
+    values.notes.trim().toLowerCase(),
   ].join("|");
 }
 
@@ -191,6 +204,14 @@ export function LeadCaptureForm({
       nextErrors.monthlyBill = "Enter your estimated monthly electric bill.";
     }
 
+    if (!values.preferredContactMethod.trim()) {
+      nextErrors.preferredContactMethod = "Choose how you prefer to be contacted.";
+    }
+
+    if (!values.bestTimeToContact.trim()) {
+      nextErrors.bestTimeToContact = "Choose the best time to contact you.";
+    }
+
     setErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
   };
@@ -268,6 +289,10 @@ export function LeadCaptureForm({
           phone: values.phone.trim(),
           address: values.address.trim(),
           monthlyBill,
+          preferredContactMethod: values.preferredContactMethod,
+          bestTimeToContact: values.bestTimeToContact,
+          notes: values.notes.trim(),
+          quoteRequested: true,
           panelCount: metrics.panelCount,
           systemSizeKw: metrics.systemKw,
           annualSavings: metrics.annualSavings,
@@ -351,6 +376,8 @@ export function LeadCaptureForm({
           firstName: values.name.trim().split(/\s+/)[0] ?? "there",
           panelCount: metrics.panelCount,
           paybackYears: metrics.paybackYears,
+          preferredContactMethod: values.preferredContactMethod,
+          quoteRequested: true,
           reportUrl: payload.lead.reportUrl,
           systemKw: metrics.systemKw,
         })
@@ -372,13 +399,14 @@ export function LeadCaptureForm({
           <div className="flex items-start justify-between gap-4">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.34em] text-cyan-300">
-                Full PDF report
+                Quote request
               </p>
               <h3 className="mt-3 text-2xl font-semibold tracking-tight text-white">
-                Send my full solar report.
+                Get 3 local solar quotes.
               </h3>
               <p className="mt-3 max-w-xl text-sm leading-7 text-slate-300">
-                Enter your details and we will email the complete homeowner proposal.
+                Enter your details and we will send your report while flagging this
+                home for local Arizona quote follow-up.
               </p>
             </div>
             <div className="hidden rounded-full border border-cyan-300/15 bg-cyan-300/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.3em] text-cyan-200 sm:inline-flex">
@@ -444,8 +472,33 @@ export function LeadCaptureForm({
             </div>
           </div>
 
+          <div className="mt-4 grid gap-4 sm:grid-cols-2">
+            <SelectField
+              label="Preferred contact method"
+              value={values.preferredContactMethod}
+              onChange={(value) => updateField("preferredContactMethod", value)}
+              options={contactMethodOptions}
+              error={errors.preferredContactMethod}
+            />
+            <SelectField
+              label="Best time to contact"
+              value={values.bestTimeToContact}
+              onChange={(value) => updateField("bestTimeToContact", value)}
+              options={bestTimeOptions}
+              error={errors.bestTimeToContact}
+            />
+            <div className="sm:col-span-2">
+              <TextAreaField
+                label="Notes"
+                value={values.notes}
+                onChange={(value) => updateField("notes", value)}
+                placeholder="Anything a solar specialist should know? Roof concerns, battery interest, timeline, or utility questions..."
+              />
+            </div>
+          </div>
+
           <p className="mt-6 text-center text-sm leading-6 text-slate-400">
-            No spam. No sales calls without your permission. Your info is only shared with licensed AZ installers.
+            No spam. Your report details are used to help licensed Arizona solar specialists prepare relevant quotes.
           </p>
 
           <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -459,10 +512,10 @@ export function LeadCaptureForm({
               {status === "submitting" ? (
                 <span className="inline-flex items-center gap-2">
                   <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-950/20 border-t-slate-950" />
-                  Generating your report...
+                  Sending quote request...
                 </span>
               ) : (
-                "Send My Full Report"
+                "Get 3 Local Quotes"
               )}
             </Button>
           </div>
@@ -494,9 +547,9 @@ export function LeadCaptureForm({
             </h4>
             <div className="mt-6 grid gap-3">
               {[
-                "Validate contact details",
-                "Securely save report details",
-                "Generate and email the solar report",
+                "Validate quote request details",
+                "Email your full solar report",
+                "Flag your lead as Quote Requested",
               ].map((item, index) => (
                 <div
                   key={item}
@@ -524,13 +577,13 @@ export function LeadCaptureForm({
               </p>
               <p className="mt-3 text-lg font-semibold tracking-tight text-white">
                 {status === "submitting"
-                    ? "Generating report"
+                    ? "Sending quote request"
                     : "Your AI solar report is being generated"}
               </p>
               <p className="mt-2 text-sm leading-6 text-slate-300">
                 {status === "submitting"
-                    ? "Saving the homeowner details and preparing the PDF email."
-                    : "Once the lead is submitted, the report status will switch here automatically."}
+                    ? "Saving your preferences, preparing the PDF email, and marking the lead for local quote follow-up."
+                    : "Submit when you are ready for local quote options based on this report."}
               </p>
               {status === "submitting" ? <StatusSkeleton /> : null}
             </div>
@@ -594,6 +647,68 @@ function Field({
       {!error && helperText ? (
         <p className="mt-2 text-sm leading-6 text-slate-400">{helperText}</p>
       ) : null}
+    </label>
+  );
+}
+
+function SelectField({
+  error,
+  label,
+  onChange,
+  options,
+  value,
+}: {
+  error?: string;
+  label: string;
+  onChange: (value: string) => void;
+  options: readonly string[];
+  value: string;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">
+        {label}
+      </span>
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className={`w-full rounded-[1.2rem] border bg-slate-950/40 px-4 py-3 text-base text-white outline-none transition focus:border-cyan-300/35 focus:bg-slate-950/65 ${
+          error ? "border-rose-400/50" : "border-white/10"
+        }`}
+      >
+        {options.map((option) => (
+          <option key={option} value={option} className="bg-slate-950">
+            {option}
+          </option>
+        ))}
+      </select>
+      {error ? <p className="mt-2 text-sm text-rose-300">{error}</p> : null}
+    </label>
+  );
+}
+
+function TextAreaField({
+  label,
+  onChange,
+  placeholder,
+  value,
+}: {
+  label: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  value: string;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">
+        {label}
+      </span>
+      <textarea
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        className="min-h-28 w-full resize-y rounded-[1.2rem] border border-white/10 bg-slate-950/40 px-4 py-3 text-base leading-7 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/35 focus:bg-slate-950/65"
+      />
     </label>
   );
 }

@@ -8,7 +8,7 @@ const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const statusLabels = {
   new: "New",
   contacted: "Contacted",
-  quoted: "Quoted",
+  quoted: "Quote Requested",
   "closed-won": "Closed Won",
   "closed-lost": "Closed Lost",
 } as const;

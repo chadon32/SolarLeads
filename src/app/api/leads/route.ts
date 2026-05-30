@@ -10,6 +10,10 @@ type LeadBody = {
   name?: string;
   email?: string;
   phone?: string;
+  bestTimeToContact?: string;
+  notes?: string;
+  preferredContactMethod?: string;
+  quoteRequested?: boolean;
   address?: string;
   monthlyBill?: number;
   panelCount?: number;
@@ -79,6 +83,10 @@ export async function POST(request: Request) {
     const email = body.email?.trim().toLowerCase();
     const phone = body.phone?.trim();
     const address = body.address?.trim();
+    const quoteRequested = Boolean(body.quoteRequested);
+    const preferredContactMethod = toNullableText(body.preferredContactMethod);
+    const bestTimeToContact = toNullableText(body.bestTimeToContact);
+    const quoteNotes = toNullableText(body.notes);
     const monthlyBill = Number(body.monthlyBill);
     const annualSavingsOverride = Number(body.annualSavings);
     const panelCount = Number(body.panelCount);
@@ -119,6 +127,7 @@ export async function POST(request: Request) {
       pdfDownloaded,
       pdfGenerated,
       phone,
+      quoteRequested,
       solarSuitabilityScore: body.solarSuitabilityScore,
       systemSizeKw: body.systemSizeKw,
       twentyYearSavings,
@@ -139,7 +148,8 @@ export async function POST(request: Request) {
       monthlyBill <= 0 ||
       !Number.isFinite(panelCount) ||
       panelCount < 1 ||
-      !estimatedSavings
+      !estimatedSavings ||
+      (quoteRequested && (!preferredContactMethod || !bestTimeToContact))
     ) {
       return NextResponse.json(
         { message: "Missing required lead fields or Solar API analysis values." },
@@ -162,9 +172,10 @@ export async function POST(request: Request) {
       monthly_bill: monthlyBill,
       estimated_savings: estimatedSavings,
     };
+    const leadStatus = quoteRequested ? "Quote Requested" : "New";
     const extendedInsert = {
       ...baseInsert,
-      status: "New",
+      status: leadStatus,
       panel_count: toNullableInteger(body.panelCount),
       system_size_kw: toNullableNumber(body.systemSizeKw),
       annual_savings: toNullableNumber(body.annualSavings),
@@ -186,11 +197,18 @@ export async function POST(request: Request) {
     };
     const scoredInsert = {
       ...extendedInsert,
+      best_time_to_contact: bestTimeToContact,
       energy_offset_pct: toNullableNumber(body.energyOffsetPct),
+      follow_up_notes: quoteNotes,
+      follow_up_status: quoteRequested ? "Quote requested" : "Not started",
       lead_score: leadScore.score,
       lead_score_label: leadScore.label,
       pdf_downloaded: pdfDownloaded,
       pdf_generated: pdfGenerated,
+      preferred_contact_method: preferredContactMethod,
+      quote_notes: quoteNotes,
+      quote_requested: quoteRequested,
+      quote_requested_at: quoteRequested ? new Date().toISOString() : null,
       solar_suitability_score: toNullableInteger(body.solarSuitabilityScore),
       twenty_year_savings: twentyYearSavings,
       utility_bill_uploaded: utilityBillUploaded,
@@ -202,6 +220,7 @@ export async function POST(request: Request) {
       panelCount,
       leadScore: leadScore.score,
       leadScoreLabel: leadScore.label,
+      quoteRequested,
       roiYears,
       selectedInverterType: body.selectedInverterType,
       selectedPanel: [body.selectedPanelBrand, body.selectedPanelModel]
@@ -263,6 +282,10 @@ export async function POST(request: Request) {
       selectedPanelModel: toNullableText(body.selectedPanelModel),
       selectedPanelWatts: toNullableInteger(body.selectedPanelWatts),
       systemSizeKw: toNullableNumber(body.systemSizeKw),
+      bestTimeToContact,
+      preferredContactMethod,
+      quoteNotes,
+      quoteRequested,
     });
 
     return NextResponse.json({
@@ -275,6 +298,7 @@ export async function POST(request: Request) {
         estimatedSavings: data.estimated_savings,
         leadScore: leadScore.score,
         leadScoreLabel: leadScore.label,
+        quoteRequested,
         reportUrl: buildReportPdfPath(data.id),
       },
     });
@@ -292,6 +316,7 @@ export async function POST(request: Request) {
 async function sendOwnerLeadEmail({
   address,
   annualSavings,
+  bestTimeToContact,
   email,
   leadScoreLabel,
   leadScoreValue,
@@ -300,6 +325,9 @@ async function sendOwnerLeadEmail({
   panelCount,
   phone,
   roiYears,
+  preferredContactMethod,
+  quoteNotes,
+  quoteRequested,
   selectedInverterType,
   selectedPanelBrand,
   selectedPanelModel,
@@ -308,6 +336,7 @@ async function sendOwnerLeadEmail({
 }: {
   address: string;
   annualSavings: number;
+  bestTimeToContact: string | null;
   email: string;
   leadScoreLabel: string;
   leadScoreValue: number;
@@ -316,6 +345,9 @@ async function sendOwnerLeadEmail({
   panelCount: number;
   phone: string;
   roiYears: number | null;
+  preferredContactMethod: string | null;
+  quoteNotes: string | null;
+  quoteRequested: boolean;
   selectedInverterType: string | null;
   selectedPanelBrand: string | null;
   selectedPanelModel: string | null;
@@ -335,10 +367,13 @@ async function sendOwnerLeadEmail({
       to: ownerEmail,
       subject: `New solar lead - ${name} in ${city}`,
       text: [
+        `Lead type: ${quoteRequested ? "Quote requested" : "Report requested"}`,
         `Name: ${name}`,
         `Address: ${formatDisplayAddress(address)}`,
         `Email: ${email}`,
         `Phone: ${phone}`,
+        `Preferred contact: ${preferredContactMethod ?? "Unavailable"}`,
+        `Best time to contact: ${bestTimeToContact ?? "Unavailable"}`,
         `Monthly bill: $${Math.round(monthlyBill)}`,
         `Annual savings: $${Math.round(annualSavings)}`,
         `System: ${systemSizeKw ?? "Unavailable"} kW / ${panelCount} panels`,
@@ -348,6 +383,7 @@ async function sendOwnerLeadEmail({
             : "Unavailable"
         }`,
         `Inverter: ${selectedInverterType ?? "Unavailable"}`,
+        `Quote notes: ${quoteNotes ?? "None"}`,
         `ROI: ${roiYears ?? "Unavailable"} years`,
         `Lead score: ${leadScoreValue}/100 - ${leadScoreLabel}`,
         `Submitted: ${new Date().toISOString()}`,

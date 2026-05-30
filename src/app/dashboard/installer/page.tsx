@@ -55,6 +55,7 @@ type DashboardLead = {
   panel_count?: number | null;
   pdf_downloaded?: boolean | null;
   pdf_generated?: boolean | null;
+  quote_requested?: boolean | null;
   phone: string;
   roi_years?: number | null;
   solar_suitability_score?: number | null;
@@ -98,7 +99,7 @@ export default async function InstallerDashboardPage({
 
   const supabase = getSupabaseAdminClient();
   const scoredLeadSelect =
-    "id, name, email, phone, address, monthly_bill, estimated_savings, panel_count, system_size_kw, annual_savings, annual_energy_kwh, roi_years, energy_offset_pct, lead_score, lead_score_label, notes, follow_up_status, follow_up_notes, last_contacted_at, next_follow_up_at, pdf_downloaded, pdf_generated, solar_suitability_score, twenty_year_savings, utility_bill_uploaded, status, created_at";
+    "id, name, email, phone, address, monthly_bill, estimated_savings, panel_count, system_size_kw, annual_savings, annual_energy_kwh, roi_years, energy_offset_pct, lead_score, lead_score_label, notes, follow_up_status, follow_up_notes, last_contacted_at, next_follow_up_at, pdf_downloaded, pdf_generated, quote_requested, solar_suitability_score, twenty_year_savings, utility_bill_uploaded, status, created_at";
   const extendedLeadSelect =
     "id, name, email, phone, address, monthly_bill, estimated_savings, panel_count, system_size_kw, annual_savings, annual_energy_kwh, roi_years, status, created_at";
   const baseLeadSelect =
@@ -221,6 +222,7 @@ function mapInstallerLead(
     pdfDownloaded: lead.pdf_downloaded,
     pdfGenerated: lead.pdf_generated ?? true,
     phone: lead.phone,
+    quoteRequested: lead.quote_requested,
     solarSuitabilityScore: solarScore,
     systemSizeKw,
     twentyYearSavings:
@@ -449,6 +451,10 @@ function normalizeLeadStatus(value?: string | null): InstallerLeadStatus | null 
   }
 
   const normalized = value.trim().toLowerCase().replace(/\s+/g, "-");
+
+  if (normalized === "quote-requested") {
+    return "quoted";
+  }
 
   if (
     normalized === "new" ||

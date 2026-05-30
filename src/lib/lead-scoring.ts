@@ -9,6 +9,7 @@ export type LeadScoreInput = {
   panelCount?: number | null;
   pdfDownloaded?: boolean | null;
   pdfGenerated?: boolean | null;
+  quoteRequested?: boolean | null;
   phone?: string | null;
   solarSuitabilityScore?: number | null;
   systemSizeKw?: number | null;
@@ -45,6 +46,7 @@ export function calculateLeadScore(input: LeadScoreInput): LeadScoreResult {
     (hasText(input.phone) ? 6 : 0) +
     (input.pdfGenerated ? 2 : 0) +
     (input.pdfDownloaded ? 2 : 0) +
+    (input.quoteRequested ? 8 : 0) +
     (input.utilityBillUploaded ? 1 : 0);
 
   const roundedScore = clamp(Math.round(score), 0, 100);

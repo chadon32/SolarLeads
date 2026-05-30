@@ -232,7 +232,7 @@ export function SolarReportDashboard({
           onClick={openSendReport}
           className="inline-flex w-full items-center justify-center rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 shadow-[0_18px_55px_rgba(255,255,255,0.18)] transition hover:-translate-y-0.5 hover:bg-cyan-100"
         >
-          Send My Full Solar Report
+          Get 3 Local Quotes
         </button>
 
         <DataProvenanceBlock />
@@ -962,7 +962,7 @@ function ReportOverviewTab({
           onClick={onSendReport}
           className="mt-4 inline-flex w-full items-center justify-center rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100"
         >
-          Send My Full Report
+          Get 3 Local Quotes
         </button>
       </div>
     </div>
@@ -1391,9 +1391,9 @@ function SendReportTab({
     <div id="contact" className="scroll-mt-24">
       {sendReportContent ?? (
         <div className="rounded-[1rem] border border-white/10 bg-black/20 p-5">
-          <h3 className="text-xl font-semibold text-white">Send your full report</h3>
+          <h3 className="text-xl font-semibold text-white">Get 3 Local Quotes</h3>
           <p className="mt-2 text-sm leading-6 text-white/60">
-            The lead form is unavailable in this preview, but the report model is ready.
+            The quote request form is unavailable in this preview, but the report model is ready.
           </p>
         </div>
       )}
@@ -1416,7 +1416,7 @@ function NextStepsTab() {
           href="#report-dashboard"
           className="inline-flex items-center justify-center rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100"
         >
-          Send My Full Report
+          Get 3 Local Quotes
         </a>
         <a
           href="#how-it-works"

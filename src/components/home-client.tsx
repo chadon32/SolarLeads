@@ -205,9 +205,9 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
               className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-3 text-sm font-semibold text-slate-950 shadow-[0_18px_55px_rgba(255,255,255,0.18)] transition hover:-translate-y-0.5 hover:bg-cyan-100 sm:px-5"
             >
               <span className="hidden sm:inline">
-                {hasValidAnalysis ? "Send My Full Report" : "Get My Free Estimate"}
+                {hasValidAnalysis ? "Get 3 Local Quotes" : "Get My Free Estimate"}
               </span>
-              <span className="sm:hidden">{hasValidAnalysis ? "Send" : "Estimate"}</span>
+              <span className="sm:hidden">{hasValidAnalysis ? "Quotes" : "Estimate"}</span>
             </a>
           </div>
         </nav>
@@ -225,7 +225,7 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
                   </h1>
                   <p className="mt-1 text-sm text-white/58">
                     {hasValidAnalysis
-                      ? "Review the roof workspace below, then send the full PDF report."
+                      ? "Review the roof workspace below, then request local quote options."
                       : "Satellite imagery and Solar API roof data are loading."}
                   </p>
                   {reportMetrics ? (
@@ -243,7 +243,7 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
                     onClick={openSendReportTab}
                     className="inline-flex items-center justify-center rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:-translate-y-0.5 hover:bg-cyan-100"
                   >
-                    Send My Full Report
+                    Get 3 Local Quotes
                   </button>
                 ) : null}
               </div>
@@ -420,7 +420,7 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
                   onClick={openSendReportTab}
                   className="inline-flex items-center justify-center rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:-translate-y-0.5 hover:bg-cyan-100"
                 >
-                  Send My Full Report
+                  Get 3 Local Quotes
                 </button>
               </div>
             ) : null}

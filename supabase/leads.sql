@@ -41,6 +41,11 @@ alter table public.leads add column if not exists follow_up_status text not null
 alter table public.leads add column if not exists last_contacted_at timestamptz;
 alter table public.leads add column if not exists next_follow_up_at timestamptz;
 alter table public.leads add column if not exists follow_up_notes text;
+alter table public.leads add column if not exists quote_requested boolean not null default false;
+alter table public.leads add column if not exists quote_requested_at timestamptz;
+alter table public.leads add column if not exists preferred_contact_method text;
+alter table public.leads add column if not exists best_time_to_contact text;
+alter table public.leads add column if not exists quote_notes text;
 
 alter table public.leads enable row level security;
 
@@ -56,5 +61,6 @@ create index if not exists leads_status_idx on public.leads (status);
 create index if not exists leads_lead_score_idx on public.leads (lead_score desc);
 create index if not exists leads_follow_up_status_idx on public.leads (follow_up_status);
 create index if not exists leads_next_follow_up_at_idx on public.leads (next_follow_up_at);
+create index if not exists leads_quote_requested_idx on public.leads (quote_requested, quote_requested_at desc);
 create unique index if not exists leads_dedupe_idx
 on public.leads (lower(email), lower(address), monthly_bill);

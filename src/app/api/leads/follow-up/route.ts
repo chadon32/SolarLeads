@@ -18,7 +18,7 @@ const leadStatusByFollowUpAction: Partial<Record<FollowUpAction, string>> = {
   contacted: "Contacted",
   closed: "Closed Won",
   lost: "Closed Lost",
-  "quote-requested": "Quoted",
+  "quote-requested": "Quote Requested",
 };
 
 type FollowUpBody = {
