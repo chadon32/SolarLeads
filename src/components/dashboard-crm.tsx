@@ -388,7 +388,7 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
           </div>
         </header>
 
-        <section className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+        <section className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
           <KpiCard label="Total Leads" value={formatNumber(stats.totalLeads)} />
           <KpiCard label="Avg Savings" value={formatMoney(stats.averageSavings)} />
           <KpiCard label="Avg Lead Score" value={`${formatNumber(stats.averageLeadScore)}/100`} />
@@ -439,47 +439,19 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
             </p>
 
             {filteredLeads.length ? (
-              <div className="mt-4 grid min-h-[28rem] gap-3 overflow-x-auto pb-2 lg:grid-cols-5">
-                {statusColumns.map((column) => {
-                  const columnLeads = filteredLeads.filter(
-                    (lead) => lead.status === column.id
-                  );
-
-                  return (
-                    <section
-                      key={column.id}
-                      className="min-w-[15rem] rounded-[1.2rem] border border-white/8 bg-slate-950/38 p-3"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <h2 className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">
-                          {column.label}
-                        </h2>
-                        <span className="rounded-full bg-white/[0.08] px-2 py-1 text-xs font-semibold text-slate-300">
-                          {columnLeads.length}
-                        </span>
-                      </div>
-                      <div className="mt-3 grid gap-2.5">
-                        {columnLeads.map((lead) => (
-                          <LeadPipelineCard
-                            key={lead.id}
-                            lead={lead}
-                            isSelected={selectedLead?.id === lead.id}
-                            isUpdating={updatingIds.has(lead.id)}
-                            onDownloadPdf={() => handlePdfDownload(lead)}
-                            onSelect={() => setSelectedLeadId(lead.id)}
-                            onStatusChange={(nextStatus) =>
-                              void handleStatusChange(lead, nextStatus)
-                            }
-                            pdfUnavailable={pdfUnavailableIds.has(lead.id)}
-                          />
-                        ))}
-                        {!columnLeads.length ? (
-                          <StageEmptyState />
-                        ) : null}
-                      </div>
-                    </section>
-                  );
-                })}
+              <div className="mt-4 grid gap-4">
+                <StageSummary leads={filteredLeads} />
+                <LeadTable
+                  leads={filteredLeads}
+                  onDownloadPdf={handlePdfDownload}
+                  onSelectLead={setSelectedLeadId}
+                  onStatusChange={(lead, nextStatus) =>
+                    void handleStatusChange(lead, nextStatus)
+                  }
+                  pdfUnavailableIds={pdfUnavailableIds}
+                  selectedLeadId={selectedLead?.id ?? ""}
+                  updatingIds={updatingIds}
+                />
               </div>
             ) : (
               <EmptyState
@@ -489,7 +461,7 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
             )}
           </div>
 
-          <aside className="space-y-4 lg:sticky lg:top-5 lg:self-start">
+          <aside className="space-y-4 lg:sticky lg:top-5 lg:max-h-[calc(100vh-2.5rem)] lg:self-start lg:overflow-y-auto lg:pr-1">
             {selectedLead ? (
               <LeadDetailPanel
                 followUps={followUpsForSelected}
@@ -522,6 +494,167 @@ function KpiCard({ label, value }: { label: string; value: string }) {
       </p>
       <p className="mt-2 text-2xl font-semibold tracking-tight text-white">{value}</p>
     </article>
+  );
+}
+
+function StageSummary({ leads }: { leads: DashboardCrmLead[] }) {
+  return (
+    <div className="grid gap-2 md:grid-cols-5">
+      {statusColumns.map((column) => {
+        const count = leads.filter((lead) => lead.status === column.id).length;
+
+        return (
+          <div
+            key={column.id}
+            className="rounded-[1rem] border border-white/8 bg-slate-950/42 px-3 py-3"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[0.58rem] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                {column.label}
+              </span>
+              <span className="rounded-full bg-white/[0.08] px-2 py-0.5 text-xs font-semibold text-white">
+                {count}
+              </span>
+            </div>
+            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/[0.06]">
+              <div
+                className="h-full rounded-full bg-cyan-300/70"
+                style={{
+                  width: `${leads.length ? Math.max(8, (count / leads.length) * 100) : 0}%`,
+                }}
+              />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function LeadTable({
+  leads,
+  onDownloadPdf,
+  onSelectLead,
+  onStatusChange,
+  pdfUnavailableIds,
+  selectedLeadId,
+  updatingIds,
+}: {
+  leads: DashboardCrmLead[];
+  onDownloadPdf: (lead: DashboardCrmLead) => void;
+  onSelectLead: (leadId: string) => void;
+  onStatusChange: (
+    lead: DashboardCrmLead,
+    status: DashboardLeadStatus
+  ) => void;
+  pdfUnavailableIds: Set<string>;
+  selectedLeadId: string;
+  updatingIds: Set<string>;
+}) {
+  return (
+    <div className="overflow-hidden rounded-[1.25rem] border border-white/10 bg-slate-950/42">
+      <div className="hidden grid-cols-[minmax(15rem,1.35fr)_0.7fr_0.65fr_0.6fr_0.8fr_0.85fr] gap-3 border-b border-white/8 px-4 py-3 text-[0.58rem] font-semibold uppercase tracking-[0.18em] text-slate-500 lg:grid">
+        <span>Lead</span>
+        <span>Savings</span>
+        <span>Score</span>
+        <span>Payback</span>
+        <span>Status</span>
+        <span className="text-right">Actions</span>
+      </div>
+
+      <div className="divide-y divide-white/8">
+        {leads.map((lead) => {
+          const selected = selectedLeadId === lead.id;
+          const pdfUnavailable = pdfUnavailableIds.has(lead.id);
+
+          return (
+            <article
+              key={lead.id}
+              className={`grid gap-3 px-4 py-4 transition lg:grid-cols-[minmax(15rem,1.35fr)_0.7fr_0.65fr_0.6fr_0.8fr_0.85fr] lg:items-center ${
+                selected
+                  ? "bg-cyan-300/[0.075] ring-1 ring-inset ring-cyan-200/25"
+                  : "hover:bg-white/[0.035]"
+              }`}
+            >
+              <button
+                type="button"
+                onClick={() => onSelectLead(lead.id)}
+                className="min-w-0 text-left"
+              >
+                <div className="flex items-start gap-3">
+                  <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-full border border-cyan-200/18 bg-cyan-300/10 text-sm font-bold text-cyan-100">
+                    {(formatName(lead.name) || "H").slice(0, 1)}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-semibold text-white">
+                      {formatName(lead.name) || "Homeowner"}
+                    </span>
+                    <span className="mt-1 block line-clamp-1 text-xs text-slate-400">
+                      {formatDisplayAddress(lead.address)}
+                    </span>
+                    <span className="mt-1 block truncate text-[0.68rem] font-semibold text-cyan-100/78">
+                      Panel: {formatPanelSelection(lead)}
+                    </span>
+                  </span>
+                </div>
+              </button>
+
+              <TableMetric label="Savings" value={formatMoney(lead.annualSavings)} />
+              <div className="flex items-center gap-2">
+                <LeadScoreBadge label={lead.leadScoreLabel} score={lead.leadScore} />
+                <span className="text-sm font-semibold text-white lg:hidden">
+                  {lead.leadScore}/100
+                </span>
+              </div>
+              <TableMetric
+                label="Payback"
+                value={`${formatDecimal(lead.estimatedRoiYears)} yrs`}
+              />
+              <StatusSelect
+                disabled={updatingIds.has(lead.id)}
+                value={lead.status}
+                onChange={(nextStatus) => onStatusChange(lead, nextStatus)}
+              />
+              <div className="flex items-center justify-start gap-2 lg:justify-end">
+                {pdfUnavailable ? (
+                  <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-semibold text-slate-500">
+                    PDF unavailable
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => onDownloadPdf(lead)}
+                    className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-2 text-xs font-semibold text-slate-950 transition hover:bg-cyan-100"
+                  >
+                    <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                    PDF
+                  </button>
+                )}
+                <a
+                  href={getEstimateReportPath(lead.address)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="rounded-full border border-white/10 bg-white/[0.055] px-3 py-2 text-xs font-semibold text-white/78 transition hover:bg-white/[0.1] hover:text-white"
+                >
+                  Open
+                </a>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function TableMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-[0.58rem] font-semibold uppercase tracking-[0.16em] text-slate-500 lg:hidden">
+        {label}
+      </p>
+      <p className="text-sm font-semibold text-white">{value}</p>
+    </div>
   );
 }
 
@@ -819,9 +952,11 @@ function MiniMetric({ label, value }: { label: string; value: string }) {
 
 function DetailRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between gap-4 border-b border-white/8 py-2 last:border-b-0">
+    <div className="grid gap-1 border-b border-white/8 py-2 last:border-b-0 sm:grid-cols-[0.78fr_1.22fr] sm:items-start">
       <span className="text-slate-500">{label}</span>
-      <span className="text-right font-semibold text-white">{value}</span>
+      <span className="break-words text-left font-semibold text-white sm:text-right">
+        {value}
+      </span>
     </div>
   );
 }
