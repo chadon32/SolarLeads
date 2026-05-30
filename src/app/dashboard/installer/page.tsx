@@ -13,6 +13,7 @@ import {
 import { buildReportPdfPath } from "@/lib/report-access";
 import { buildSolarReportFromSolarValues } from "@/lib/solar-report";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
+import { fmtAddr } from "@/lib/utils";
 
 export const metadata: Metadata = {
   title: {
@@ -312,8 +313,7 @@ function DashboardAccessGate({
 
 function getCityFromAddress(address: string) {
   return (
-    address
-      .replace(", USA", "")
+    fmtAddr(address)
       .split(",")
       .map((part) => part.trim())
       .filter(Boolean)[1] || "Unknown"

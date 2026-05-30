@@ -563,7 +563,7 @@ export function LeadCaptureForm({
                 }
               }}
               error={errors.monthlyBill}
-              placeholder="e.g. 180"
+              placeholder="$ 200"
               type="number"
               inputMode="decimal"
               prefix="$"

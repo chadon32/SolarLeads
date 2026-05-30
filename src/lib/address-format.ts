@@ -1,5 +1,5 @@
-import { fmtAddress } from "@/lib/utils";
+import { fmtAddr } from "@/lib/utils";
 
 export function formatDisplayAddress(address: string | null | undefined) {
-  return fmtAddress(address);
+  return fmtAddr(address);
 }
