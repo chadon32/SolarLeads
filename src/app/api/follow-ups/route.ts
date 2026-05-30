@@ -86,7 +86,18 @@ export async function POST(request: Request) {
       );
     }
 
+    const deliveredAt = new Date().toISOString();
     await markInitialFollowUpDelivered(lead.id);
+
+    await supabase
+      .from("leads")
+      .update({
+        follow_up_status: "Report sent",
+        last_contacted_at: deliveredAt,
+        next_follow_up_at:
+          steps.find((step) => step.stepOrder === 2)?.scheduledFor ?? null,
+      })
+      .eq("id", lead.id);
 
     return NextResponse.json({
       steps: (data ?? []).map((item) => ({
@@ -100,7 +111,7 @@ export async function POST(request: Request) {
         attempts: item.step_order === 1 ? (item.attempts ?? 1) : item.attempts ?? 0,
         processedAt:
           item.step_order === 1
-            ? new Date().toISOString()
+            ? deliveredAt
             : item.processed_at ?? null,
         deliveryMessage:
           item.step_order === 1

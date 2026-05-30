@@ -37,6 +37,10 @@ alter table public.leads add column if not exists pdf_generated boolean not null
 alter table public.leads add column if not exists pdf_downloaded boolean not null default false;
 alter table public.leads add column if not exists utility_bill_uploaded boolean not null default false;
 alter table public.leads add column if not exists notes text;
+alter table public.leads add column if not exists follow_up_status text not null default 'Not started';
+alter table public.leads add column if not exists last_contacted_at timestamptz;
+alter table public.leads add column if not exists next_follow_up_at timestamptz;
+alter table public.leads add column if not exists follow_up_notes text;
 
 alter table public.leads enable row level security;
 
@@ -50,5 +54,7 @@ drop policy if exists "Allow anon select on leads" on public.leads;
 create index if not exists leads_created_at_idx on public.leads (created_at desc);
 create index if not exists leads_status_idx on public.leads (status);
 create index if not exists leads_lead_score_idx on public.leads (lead_score desc);
+create index if not exists leads_follow_up_status_idx on public.leads (follow_up_status);
+create index if not exists leads_next_follow_up_at_idx on public.leads (next_follow_up_at);
 create unique index if not exists leads_dedupe_idx
 on public.leads (lower(email), lower(address), monthly_bill);

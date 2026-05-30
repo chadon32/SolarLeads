@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import {
+  CalendarClock,
   Download,
   Eye,
   FileDown,
@@ -29,6 +30,33 @@ export type InstallerLeadStatus =
   | "closed-won"
   | "closed-lost";
 
+export type InstallerFollowUpStatus =
+  | "Not started"
+  | "Report sent"
+  | "First follow-up due"
+  | "Contacted"
+  | "Quote requested"
+  | "Closed"
+  | "Lost";
+
+export type InstallerFollowUpStep = {
+  channel: string;
+  deliveryMessage: string | null;
+  processedAt: string | null;
+  scheduledFor: string;
+  status: string;
+  stepOrder: number;
+  title: string;
+};
+
+type FollowUpAction =
+  | "report-sent"
+  | "contacted"
+  | "first-follow-up-due"
+  | "quote-requested"
+  | "closed"
+  | "lost";
+
 export type InstallerLead = {
   address: string;
   annualSavings: number;
@@ -37,12 +65,16 @@ export type InstallerLead = {
   email: string;
   energyOffsetPct: number;
   followUpStatus: string;
+  followUpNotes: string;
+  followUpSteps: InstallerFollowUpStep[];
   id: string;
+  lastContactedAt: string | null;
   leadScore: number;
   leadScoreLabel: LeadScoreLabel;
   monthlyBill: number;
   name: string;
   notes: string;
+  nextFollowUpAt: string | null;
   panelCount: number;
   pdfDownloaded: boolean;
   pdfGenerated: boolean;
@@ -55,6 +87,7 @@ export type InstallerLead = {
 };
 
 type InstallerDashboardProps = {
+  automationConnected: boolean;
   leads: InstallerLead[];
   stats: {
     averageSavings: number;
@@ -102,7 +135,11 @@ const dateFilters = [
   { label: "Last 30 days", value: "30d" },
 ] as const;
 
-export function InstallerDashboard({ leads, stats }: InstallerDashboardProps) {
+export function InstallerDashboard({
+  automationConnected,
+  leads,
+  stats,
+}: InstallerDashboardProps) {
   const [leadItems, setLeadItems] = useState(leads);
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(
     leads[0]?.id ?? null
@@ -120,7 +157,12 @@ export function InstallerDashboard({ leads, stats }: InstallerDashboardProps) {
   const [savingNotesIds, setSavingNotesIds] = useState<Set<string>>(
     () => new Set()
   );
+  const [savingFollowUpIds, setSavingFollowUpIds] = useState<Set<string>>(
+    () => new Set()
+  );
   const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
+  const [followUpNoteDrafts, setFollowUpNoteDrafts] = useState<Record<string, string>>({});
+  const [followUpDateDrafts, setFollowUpDateDrafts] = useState<Record<string, string>>({});
   const deferredSearch = useDeferredValue(search);
 
   const cities = useMemo(
@@ -277,6 +319,98 @@ export function InstallerDashboard({ leads, stats }: InstallerDashboardProps) {
     }
   };
 
+  const updateFollowUp = async (
+    lead: InstallerLead,
+    action: FollowUpAction,
+    options: { nextFollowUpAt?: string | null } = {}
+  ) => {
+    const previousLead = lead;
+    const followUpNotes = followUpNoteDrafts[lead.id] ?? lead.followUpNotes;
+    let scheduledSteps: InstallerFollowUpStep[] | undefined;
+
+    setSavingFollowUpIds((current) => new Set(current).add(lead.id));
+
+    if (action === "first-follow-up-due") {
+      const sequenceResponse = await fetch("/api/follow-ups", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leadId: lead.id }),
+      }).catch(() => null);
+
+      if (sequenceResponse?.ok) {
+        const sequencePayload = (await sequenceResponse.json().catch(() => ({}))) as {
+          steps?: InstallerFollowUpStep[];
+        };
+        scheduledSteps = sequencePayload.steps;
+      }
+    }
+
+    try {
+      const response = await fetch("/api/leads/follow-up", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action,
+          followUpNotes,
+          leadId: lead.id,
+          nextFollowUpAt: options.nextFollowUpAt,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Follow-up update failed");
+      }
+
+      const payload = (await response.json().catch(() => ({}))) as {
+        lead?: {
+          followUpNotes?: string;
+          followUpStatus?: InstallerFollowUpStatus;
+          lastContactedAt?: string | null;
+          nextFollowUpAt?: string | null;
+          status?: string | null;
+        };
+      };
+      const nextStatus = normalizeInstallerStatus(payload.lead?.status);
+
+      setLeadItems((current) =>
+        current.map((item) =>
+          item.id === lead.id
+            ? {
+                ...item,
+                followUpNotes: payload.lead?.followUpNotes ?? followUpNotes,
+                followUpSteps:
+                  scheduledSteps ??
+                  getUpdatedFollowUpSteps(
+                    item.followUpSteps,
+                    action,
+                    payload.lead?.nextFollowUpAt ?? options.nextFollowUpAt
+                  ),
+                followUpStatus:
+                  payload.lead?.followUpStatus ?? getFollowUpActionLabel(action),
+                lastContactedAt:
+                  payload.lead?.lastContactedAt ?? getStampedContactDate(action, item),
+                nextFollowUpAt:
+                  payload.lead?.nextFollowUpAt ??
+                  options.nextFollowUpAt ??
+                  getDefaultNextFollowUp(action),
+                status: nextStatus ?? item.status,
+              }
+            : item
+        )
+      );
+    } catch {
+      setLeadItems((current) =>
+        current.map((item) => (item.id === lead.id ? previousLead : item))
+      );
+    } finally {
+      setSavingFollowUpIds((current) => {
+        const next = new Set(current);
+        next.delete(lead.id);
+        return next;
+      });
+    }
+  };
+
   const exportCsv = () => {
     const rows = [
       [
@@ -291,6 +425,10 @@ export function InstallerDashboard({ leads, stats }: InstallerDashboardProps) {
         "annual_savings",
         "system_size_kw",
         "status",
+        "follow_up_status",
+        "last_contacted_at",
+        "next_follow_up_at",
+        "follow_up_notes",
         "created_at",
       ],
       ...filteredLeads.map((lead) => [
@@ -305,6 +443,10 @@ export function InstallerDashboard({ leads, stats }: InstallerDashboardProps) {
         String(Math.round(lead.annualSavings)),
         String(lead.systemSizeKw),
         getStatusLabel(lead.status),
+        lead.followUpStatus,
+        lead.lastContactedAt ?? "",
+        lead.nextFollowUpAt ?? "",
+        lead.followUpNotes,
         lead.createdAt,
       ]),
     ];
@@ -337,6 +479,17 @@ export function InstallerDashboard({ leads, stats }: InstallerDashboardProps) {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
+            <span
+              className={`inline-flex items-center rounded-full border px-3 py-2 text-xs font-semibold ${
+                automationConnected
+                  ? "border-emerald-300/18 bg-emerald-300/10 text-emerald-100"
+                  : "border-amber-300/18 bg-amber-300/10 text-amber-100"
+              }`}
+            >
+              {automationConnected
+                ? "Automation connected"
+                : "Automation not connected yet"}
+            </span>
             <button
               type="button"
               onClick={exportCsv}
@@ -424,7 +577,7 @@ export function InstallerDashboard({ leads, stats }: InstallerDashboardProps) {
           </div>
 
           <div className="mt-3 overflow-x-auto rounded-[1.05rem] border border-white/8">
-            <table className="min-w-[82rem] w-full border-collapse text-left text-sm">
+            <table className="min-w-[98rem] w-full border-collapse text-left text-sm">
               <thead className="bg-slate-950/72 text-[0.64rem] font-semibold uppercase tracking-[0.18em] text-slate-400">
                 <tr>
                   {[
@@ -438,6 +591,8 @@ export function InstallerDashboard({ leads, stats }: InstallerDashboardProps) {
                     "Annual savings",
                     "System size",
                     "Status",
+                    "Follow-up",
+                    "Next follow-up",
                     "Date created",
                     "Actions",
                   ].map((header) => (
@@ -477,6 +632,12 @@ export function InstallerDashboard({ leads, stats }: InstallerDashboardProps) {
                     </td>
                     <td className="px-3 py-3">
                       <StatusBadge status={lead.status} />
+                    </td>
+                    <td className="px-3 py-3">
+                      <FollowUpStatusBadge status={lead.followUpStatus} />
+                    </td>
+                    <td className="px-3 py-3 text-slate-400">
+                      {formatOptionalDate(lead.nextFollowUpAt)}
                     </td>
                     <td className="px-3 py-3 text-slate-400">
                       {formatDate(lead.createdAt)}
@@ -545,16 +706,45 @@ export function InstallerDashboard({ leads, stats }: InstallerDashboardProps) {
 
       {selectedLead ? (
         <LeadDrawer
+          automationConnected={automationConnected}
+          followUpDateDraft={
+            followUpDateDrafts[selectedLead.id] ??
+            formatDateTimeInputValue(selectedLead.nextFollowUpAt)
+          }
+          followUpNoteDraft={
+            followUpNoteDrafts[selectedLead.id] ?? selectedLead.followUpNotes
+          }
           lead={selectedLead}
           noteDraft={noteDrafts[selectedLead.id] ?? selectedLead.notes}
           onClose={() => setSelectedLeadId(null)}
           onDownloadPdf={() => void handlePdfDownload(selectedLead)}
+          onFollowUpAction={(action) =>
+            void updateFollowUp(selectedLead, action, {
+              nextFollowUpAt:
+                action === "first-follow-up-due"
+                  ? followUpDateDrafts[selectedLead.id]
+                  : undefined,
+            })
+          }
+          onFollowUpDateChange={(value) =>
+            setFollowUpDateDrafts((current) => ({
+              ...current,
+              [selectedLead.id]: value,
+            }))
+          }
+          onFollowUpNoteChange={(notes) =>
+            setFollowUpNoteDrafts((current) => ({
+              ...current,
+              [selectedLead.id]: notes,
+            }))
+          }
           onNoteChange={(notes) =>
             setNoteDrafts((current) => ({ ...current, [selectedLead.id]: notes }))
           }
           onSaveNotes={() => void saveNotes(selectedLead)}
           onStatusChange={(status) => void updateStatus(selectedLead, status)}
           pdfUnavailable={pdfUnavailableIds.has(selectedLead.id)}
+          savingFollowUp={savingFollowUpIds.has(selectedLead.id)}
           savingNotes={savingNotesIds.has(selectedLead.id)}
         />
       ) : null}
@@ -563,24 +753,38 @@ export function InstallerDashboard({ leads, stats }: InstallerDashboardProps) {
 }
 
 function LeadDrawer({
+  automationConnected,
+  followUpDateDraft,
+  followUpNoteDraft,
   lead,
   noteDraft,
   onClose,
   onDownloadPdf,
+  onFollowUpAction,
+  onFollowUpDateChange,
+  onFollowUpNoteChange,
   onNoteChange,
   onSaveNotes,
   onStatusChange,
   pdfUnavailable,
+  savingFollowUp,
   savingNotes,
 }: {
+  automationConnected: boolean;
+  followUpDateDraft: string;
+  followUpNoteDraft: string;
   lead: InstallerLead;
   noteDraft: string;
   onClose: () => void;
   onDownloadPdf: () => void;
+  onFollowUpAction: (action: FollowUpAction) => void;
+  onFollowUpDateChange: (value: string) => void;
+  onFollowUpNoteChange: (notes: string) => void;
   onNoteChange: (notes: string) => void;
   onSaveNotes: () => void;
   onStatusChange: (status: InstallerLeadStatus) => void;
   pdfUnavailable: boolean;
+  savingFollowUp: boolean;
   savingNotes: boolean;
 }) {
   return (
@@ -638,7 +842,7 @@ function LeadDrawer({
                   Report
                 </p>
                 <p className="mt-1 text-sm text-slate-300">
-                  PDF {lead.pdfDownloaded ? "downloaded" : "ready"} · Follow-up {lead.followUpStatus}
+                  PDF {lead.pdfDownloaded ? "downloaded" : "ready"} - Follow-up {lead.followUpStatus}
                 </p>
               </div>
               {pdfUnavailable ? (
@@ -653,6 +857,130 @@ function LeadDrawer({
                   PDF
                 </button>
               )}
+            </div>
+          </section>
+
+          <section className="mt-4 rounded-[1.15rem] border border-white/10 bg-white/[0.04] p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">
+                  Follow-up tracking
+                </p>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <FollowUpStatusBadge status={lead.followUpStatus} />
+                  <span
+                    className={`inline-flex rounded-full border px-2.5 py-1 text-[0.58rem] font-bold uppercase tracking-[0.14em] ${
+                      automationConnected
+                        ? "border-emerald-300/20 bg-emerald-300/12 text-emerald-100"
+                        : "border-amber-300/20 bg-amber-300/12 text-amber-100"
+                    }`}
+                  >
+                    {automationConnected
+                      ? "Automation connected"
+                      : "Automation not connected yet"}
+                  </span>
+                </div>
+              </div>
+              <CalendarClock className="h-5 w-5 text-cyan-200" aria-hidden="true" />
+            </div>
+
+            <div className="mt-4 grid grid-cols-2 gap-3">
+              <DrawerMetric
+                label="Last contacted"
+                value={formatOptionalDate(lead.lastContactedAt)}
+              />
+              <DrawerMetric
+                label="Next follow-up"
+                value={formatOptionalDate(lead.nextFollowUpAt)}
+              />
+            </div>
+
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <FollowUpActionButton
+                disabled={savingFollowUp}
+                label="Mark report sent"
+                onClick={() => onFollowUpAction("report-sent")}
+              />
+              <FollowUpActionButton
+                disabled={savingFollowUp}
+                label="Mark contacted"
+                onClick={() => onFollowUpAction("contacted")}
+              />
+              <FollowUpActionButton
+                disabled={savingFollowUp}
+                label="Mark quote requested"
+                onClick={() => onFollowUpAction("quote-requested")}
+              />
+              <FollowUpActionButton
+                disabled={savingFollowUp}
+                label="Mark closed"
+                onClick={() => onFollowUpAction("closed")}
+              />
+              <FollowUpActionButton
+                disabled={savingFollowUp}
+                label="Mark lost"
+                onClick={() => onFollowUpAction("lost")}
+              />
+            </div>
+
+            <div className="mt-4 rounded-[1rem] border border-white/10 bg-slate-950/35 p-3">
+              <label className="text-[0.6rem] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                Schedule follow-up
+              </label>
+              <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_auto]">
+                <input
+                  type="datetime-local"
+                  value={followUpDateDraft}
+                  onChange={(event) => onFollowUpDateChange(event.target.value)}
+                  className="min-w-0 rounded-full border border-white/10 bg-slate-950/45 px-3 py-2 text-xs font-semibold text-white outline-none focus:border-cyan-300/35"
+                />
+                <button
+                  type="button"
+                  disabled={savingFollowUp}
+                  onClick={() => onFollowUpAction("first-follow-up-due")}
+                  className="rounded-full bg-cyan-300 px-3 py-2 text-xs font-bold text-slate-950 transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {savingFollowUp ? "Saving" : "Schedule"}
+                </button>
+              </div>
+            </div>
+
+            <label className="mt-4 block">
+              <span className="text-[0.6rem] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                Follow-up notes
+              </span>
+              <textarea
+                value={followUpNoteDraft}
+                onChange={(event) => onFollowUpNoteChange(event.target.value)}
+                placeholder="Add follow-up context, timing preference, objections, or call result..."
+                className="mt-2 min-h-24 w-full resize-y rounded-[1rem] border border-white/10 bg-slate-950/48 px-3 py-3 text-sm leading-6 text-white outline-none placeholder:text-slate-600 focus:border-cyan-300/35"
+              />
+            </label>
+
+            <div className="mt-4 rounded-[1rem] border border-cyan-300/12 bg-cyan-300/[0.055] p-3">
+              <p className="text-[0.6rem] font-semibold uppercase tracking-[0.18em] text-cyan-200">
+                Recommended sequence
+              </p>
+              <div className="mt-3 grid gap-2">
+                {getRecommendedSequence(lead).map((step) => (
+                  <div
+                    key={step.stepOrder}
+                    className="flex items-center justify-between gap-3 rounded-[0.85rem] border border-white/8 bg-slate-950/30 px-3 py-2"
+                  >
+                    <div>
+                      <p className="text-xs font-semibold text-white">
+                        {step.stepOrder}. {step.title}
+                      </p>
+                      <p className="mt-0.5 text-[0.68rem] text-slate-500">
+                        {step.timing}
+                      </p>
+                    </div>
+                    <span className="rounded-full bg-white/[0.08] px-2 py-1 text-[0.56rem] font-bold uppercase tracking-[0.12em] text-slate-300">
+                      {step.status}
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
           </section>
 
@@ -801,6 +1129,27 @@ function CompactStatusButton({
   );
 }
 
+function FollowUpActionButton({
+  disabled,
+  label,
+  onClick,
+}: {
+  disabled?: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className="rounded-full border border-white/10 bg-slate-950/38 px-3 py-2 text-xs font-semibold text-slate-300 transition hover:border-cyan-300/25 hover:bg-cyan-300/10 hover:text-cyan-100 disabled:cursor-not-allowed disabled:opacity-55"
+    >
+      {label}
+    </button>
+  );
+}
+
 function LeadScoreBadge({
   label,
   score,
@@ -820,7 +1169,7 @@ function LeadScoreBadge({
       className={`inline-flex whitespace-nowrap rounded-full border px-2.5 py-1 text-[0.58rem] font-bold uppercase tracking-[0.14em] ${color}`}
       title={`${score}/100`}
     >
-      {score} · {label}
+      {score} - {label}
     </span>
   );
 }
@@ -840,6 +1189,30 @@ function StatusBadge({ status }: { status: InstallerLeadStatus }) {
   return (
     <span className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-[0.58rem] font-bold uppercase tracking-[0.14em] ${color}`}>
       {getStatusLabel(status)}
+    </span>
+  );
+}
+
+function FollowUpStatusBadge({ status }: { status: string }) {
+  const normalized = normalizeFollowUpStatus(status);
+  const color =
+    normalized === "Closed"
+      ? "border-emerald-300/22 bg-emerald-300/14 text-emerald-100"
+      : normalized === "Lost"
+        ? "border-rose-300/22 bg-rose-300/14 text-rose-100"
+        : normalized === "Quote requested"
+          ? "border-amber-300/24 bg-amber-300/14 text-amber-100"
+          : normalized === "Contacted"
+            ? "border-sky-300/22 bg-sky-300/14 text-sky-100"
+            : normalized === "First follow-up due"
+              ? "border-cyan-300/22 bg-cyan-300/12 text-cyan-100"
+              : normalized === "Report sent"
+                ? "border-violet-300/22 bg-violet-300/12 text-violet-100"
+                : "border-white/10 bg-white/[0.07] text-slate-200";
+
+  return (
+    <span className={`inline-flex whitespace-nowrap rounded-full border px-2.5 py-1 text-[0.58rem] font-bold uppercase tracking-[0.14em] ${color}`}>
+      {normalized}
     </span>
   );
 }
@@ -924,6 +1297,34 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
+function formatOptionalDate(value?: string | null) {
+  if (!value) {
+    return "Not set";
+  }
+
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    return "Not set";
+  }
+
+  return new Intl.DateTimeFormat("en-US", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }).format(date);
+}
+
+function formatDateTimeInputValue(value?: string | null) {
+  const date = value ? new Date(value) : addHours(new Date(), 24);
+
+  if (!Number.isFinite(date.getTime())) {
+    return "";
+  }
+
+  const offsetMs = date.getTimezoneOffset() * 60 * 1000;
+  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
+}
+
 function formatMoney(value: number) {
   return new Intl.NumberFormat("en-US", {
     currency: "USD",
@@ -949,4 +1350,176 @@ function escapeCsvCell(value: string) {
   const needsEscaping = /[",\n]/.test(value);
   const escaped = value.replace(/"/g, '""');
   return needsEscaping ? `"${escaped}"` : escaped;
+}
+
+function normalizeInstallerStatus(value?: string | null): InstallerLeadStatus | null {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase().replace(/\s+/g, "-");
+  if (
+    normalized === "new" ||
+    normalized === "contacted" ||
+    normalized === "quoted" ||
+    normalized === "closed-won" ||
+    normalized === "closed-lost"
+  ) {
+    return normalized;
+  }
+
+  return null;
+}
+
+function normalizeFollowUpStatus(value?: string | null): InstallerFollowUpStatus {
+  const normalized = (value ?? "").trim().toLowerCase().replace(/\s+/g, "-");
+
+  if (normalized === "report-sent" || normalized === "sent") {
+    return "Report sent";
+  }
+
+  if (
+    normalized === "first-follow-up-due" ||
+    normalized === "follow-up-due" ||
+    normalized === "queued" ||
+    normalized === "scheduled"
+  ) {
+    return "First follow-up due";
+  }
+
+  if (normalized === "contacted") {
+    return "Contacted";
+  }
+
+  if (normalized === "quote-requested" || normalized === "quoted") {
+    return "Quote requested";
+  }
+
+  if (normalized === "closed" || normalized === "closed-won") {
+    return "Closed";
+  }
+
+  if (normalized === "lost" || normalized === "closed-lost") {
+    return "Lost";
+  }
+
+  return "Not started";
+}
+
+function getFollowUpActionLabel(action: FollowUpAction): InstallerFollowUpStatus {
+  const labels: Record<FollowUpAction, InstallerFollowUpStatus> = {
+    "first-follow-up-due": "First follow-up due",
+    "quote-requested": "Quote requested",
+    "report-sent": "Report sent",
+    closed: "Closed",
+    contacted: "Contacted",
+    lost: "Lost",
+  };
+
+  return labels[action];
+}
+
+function getDefaultNextFollowUp(action: FollowUpAction) {
+  if (action === "report-sent" || action === "first-follow-up-due") {
+    return addHours(new Date(), 24).toISOString();
+  }
+
+  if (action === "contacted") {
+    return addDays(new Date(), 3).toISOString();
+  }
+
+  return null;
+}
+
+function getStampedContactDate(action: FollowUpAction, lead: InstallerLead) {
+  return action === "report-sent" ||
+    action === "contacted" ||
+    action === "quote-requested" ||
+    action === "closed" ||
+    action === "lost"
+    ? new Date().toISOString()
+    : lead.lastContactedAt;
+}
+
+function getRecommendedSequence(lead: InstallerLead) {
+  const steps = [
+    { stepOrder: 1, timing: "Immediately", title: "Report ready email" },
+    { stepOrder: 2, timing: "24 hours after report", title: "24-hour follow-up" },
+    { stepOrder: 3, timing: "3 days after report", title: "3-day savings reminder" },
+    { stepOrder: 4, timing: "7 days after report", title: "7-day quote CTA" },
+  ];
+
+  return steps.map((step) => {
+    const stored = lead.followUpSteps.find(
+      (followUpStep) => followUpStep.stepOrder === step.stepOrder
+    );
+
+    return {
+      ...step,
+      status: getSequenceStatusLabel(stored?.status),
+    };
+  });
+}
+
+function getUpdatedFollowUpSteps(
+  steps: InstallerFollowUpStep[],
+  action: FollowUpAction,
+  nextFollowUpAt?: string | null
+) {
+  if (
+    action !== "report-sent" &&
+    action !== "first-follow-up-due" &&
+    action !== "contacted"
+  ) {
+    return steps;
+  }
+
+  const now = new Date().toISOString();
+  const stepOrder =
+    action === "report-sent" ? 1 : action === "contacted" ? 2 : 2;
+  const title =
+    stepOrder === 1
+      ? "Report ready email"
+      : action === "contacted"
+        ? "24-hour follow-up"
+        : "24-hour follow-up";
+  const status = action === "first-follow-up-due" ? "queued" : "sent";
+  const existing = steps.find((step) => step.stepOrder === stepOrder);
+  const updatedStep: InstallerFollowUpStep = {
+    channel: existing?.channel ?? (stepOrder === 2 ? "sms" : "email"),
+    deliveryMessage:
+      action === "first-follow-up-due"
+        ? existing?.deliveryMessage ?? null
+        : "Updated manually in installer dashboard.",
+    processedAt: action === "first-follow-up-due" ? existing?.processedAt ?? null : now,
+    scheduledFor:
+      nextFollowUpAt ??
+      existing?.scheduledFor ??
+      (stepOrder === 2 ? addHours(new Date(), 24).toISOString() : now),
+    status,
+    stepOrder,
+    title,
+  };
+
+  return [...steps.filter((step) => step.stepOrder !== stepOrder), updatedStep].sort(
+    (a, b) => a.stepOrder - b.stepOrder
+  );
+}
+
+function getSequenceStatusLabel(status?: string | null) {
+  const normalized = (status ?? "").trim().toLowerCase();
+  if (normalized === "sent") return "sent";
+  if (normalized === "failed") return "failed";
+  if (normalized === "skipped") return "skipped";
+  if (normalized === "scheduled") return "scheduled";
+  if (normalized === "queued") return "queued";
+  return "pending";
+}
+
+function addHours(base: Date, hours: number) {
+  return new Date(base.getTime() + hours * 60 * 60 * 1000);
+}
+
+function addDays(base: Date, days: number) {
+  return new Date(base.getTime() + days * 24 * 60 * 60 * 1000);
 }

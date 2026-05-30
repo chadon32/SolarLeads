@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import {
   InstallerDashboard,
+  type InstallerFollowUpStatus,
+  type InstallerFollowUpStep,
   type InstallerLead,
   type InstallerLeadStatus,
 } from "@/components/installer-dashboard";
@@ -40,11 +42,15 @@ type DashboardLead = {
   email: string;
   energy_offset_pct?: number | null;
   estimated_savings: number | null;
+  follow_up_notes?: string | null;
+  follow_up_status?: string | null;
   id: string;
+  last_contacted_at?: string | null;
   lead_score?: number | null;
   lead_score_label?: string | null;
   monthly_bill: number;
   name: string;
+  next_follow_up_at?: string | null;
   notes?: string | null;
   panel_count?: number | null;
   pdf_downloaded?: boolean | null;
@@ -64,8 +70,14 @@ type LeadsQueryResult = {
 };
 
 type FollowUpRow = {
+  channel?: string | null;
+  delivery_message?: string | null;
   lead_id: string;
+  processed_at?: string | null;
+  scheduled_for?: string | null;
   status?: string | null;
+  step_order?: number | null;
+  title?: string | null;
 };
 
 export default async function InstallerDashboardPage({
@@ -86,7 +98,7 @@ export default async function InstallerDashboardPage({
 
   const supabase = getSupabaseAdminClient();
   const scoredLeadSelect =
-    "id, name, email, phone, address, monthly_bill, estimated_savings, panel_count, system_size_kw, annual_savings, annual_energy_kwh, roi_years, energy_offset_pct, lead_score, lead_score_label, notes, pdf_downloaded, pdf_generated, solar_suitability_score, twenty_year_savings, utility_bill_uploaded, status, created_at";
+    "id, name, email, phone, address, monthly_bill, estimated_savings, panel_count, system_size_kw, annual_savings, annual_energy_kwh, roi_years, energy_offset_pct, lead_score, lead_score_label, notes, follow_up_status, follow_up_notes, last_contacted_at, next_follow_up_at, pdf_downloaded, pdf_generated, solar_suitability_score, twenty_year_savings, utility_bill_uploaded, status, created_at";
   const extendedLeadSelect =
     "id, name, email, phone, address, monthly_bill, estimated_savings, panel_count, system_size_kw, annual_savings, annual_energy_kwh, roi_years, status, created_at";
   const baseLeadSelect =
@@ -139,7 +151,7 @@ export default async function InstallerDashboardPage({
 
   const { data: followUps } = await supabase
     .from("lead_followups")
-    .select("lead_id, status")
+    .select("lead_id, step_order, channel, title, scheduled_for, status, processed_at, delivery_message")
     .limit(1000);
   const followUpsByLeadId = new Map<string, FollowUpRow[]>();
 
@@ -163,6 +175,7 @@ export default async function InstallerDashboardPage({
 
   return (
     <InstallerDashboard
+      automationConnected={isAutomationConnected()}
       leads={installerLeads}
       stats={{
         averageSavings,
@@ -230,12 +243,16 @@ function mapInstallerLead(
     createdAt: lead.created_at,
     email: lead.email,
     energyOffsetPct: Number(lead.energy_offset_pct ?? report.annualEnergyOffset),
-    followUpStatus: getFollowUpStatus(followUps),
+    followUpNotes: lead.follow_up_notes ?? "",
+    followUpStatus: getFollowUpStatus(lead.follow_up_status, followUps),
+    followUpSteps: mapFollowUpSteps(followUps),
     id: lead.id,
+    lastContactedAt: lead.last_contacted_at ?? getLastContactedFromFollowUps(followUps),
     leadScore,
     leadScoreLabel: normalizeLeadScoreLabel(lead.lead_score_label, leadScore),
     monthlyBill: Number(lead.monthly_bill ?? 0),
     name: lead.name,
+    nextFollowUpAt: lead.next_follow_up_at ?? getNextFollowUpFromSteps(followUps),
     notes: lead.notes ?? "",
     panelCount: report.panelCount,
     pdfDownloaded: Boolean(lead.pdf_downloaded),
@@ -300,20 +317,36 @@ function getCityFromAddress(address: string) {
   );
 }
 
-function getFollowUpStatus(followUps: FollowUpRow[]) {
-  if (!followUps.length) {
-    return "none";
+function getFollowUpStatus(
+  storedStatus: string | null | undefined,
+  followUps: FollowUpRow[]
+): InstallerFollowUpStatus {
+  const normalized = normalizeFollowUpStatus(storedStatus);
+  if (normalized !== "Not started") {
+    return normalized;
   }
 
-  if (followUps.some((followUp) => followUp.status === "sent")) {
-    return "sent";
+  if (!followUps.length) {
+    return "Not started";
   }
 
   if (followUps.some((followUp) => followUp.status === "failed")) {
-    return "needs review";
+    return "First follow-up due";
   }
 
-  return "queued";
+  if (followUps.some((followUp) => followUp.step_order === 1 && followUp.status === "sent")) {
+    return "Report sent";
+  }
+
+  if (
+    followUps.some(
+      (followUp) => followUp.status === "queued" || followUp.status === "scheduled"
+    )
+  ) {
+    return "First follow-up due";
+  }
+
+  return "Not started";
 }
 
 function getLeadStatusFromFollowUps(followUps: FollowUpRow[]): InstallerLeadStatus {
@@ -322,6 +355,92 @@ function getLeadStatusFromFollowUps(followUps: FollowUpRow[]): InstallerLeadStat
   )
     ? "contacted"
     : "new";
+}
+
+function mapFollowUpSteps(followUps: FollowUpRow[]): InstallerFollowUpStep[] {
+  return [...followUps]
+    .sort((a, b) => Number(a.step_order ?? 0) - Number(b.step_order ?? 0))
+    .map((followUp) => ({
+      channel: followUp.channel ?? "email",
+      deliveryMessage: followUp.delivery_message ?? null,
+      processedAt: followUp.processed_at ?? null,
+      scheduledFor: followUp.scheduled_for ?? "",
+      status: followUp.status ?? "queued",
+      stepOrder: Number(followUp.step_order ?? 0),
+      title: followUp.title ?? getDefaultFollowUpTitle(followUp.step_order),
+    }));
+}
+
+function getLastContactedFromFollowUps(followUps: FollowUpRow[]) {
+  const processedTimes = followUps
+    .map((followUp) => followUp.processed_at)
+    .filter((value): value is string => Boolean(value))
+    .sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
+
+  return processedTimes[0] ?? null;
+}
+
+function getNextFollowUpFromSteps(followUps: FollowUpRow[]) {
+  const now = Date.now();
+  const queuedTimes = followUps
+    .filter(
+      (followUp) =>
+        followUp.status === "queued" ||
+        followUp.status === "scheduled" ||
+        followUp.status === "failed"
+    )
+    .map((followUp) => followUp.scheduled_for)
+    .filter((value): value is string => Boolean(value))
+    .filter((value) => {
+      const timestamp = new Date(value).getTime();
+      return Number.isFinite(timestamp) && timestamp >= now - 24 * 60 * 60 * 1000;
+    })
+    .sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+
+  return queuedTimes[0] ?? null;
+}
+
+function normalizeFollowUpStatus(value?: string | null): InstallerFollowUpStatus {
+  const normalized = (value ?? "").trim().toLowerCase().replace(/\s+/g, "-");
+
+  if (normalized === "report-sent" || normalized === "sent") {
+    return "Report sent";
+  }
+
+  if (
+    normalized === "first-follow-up-due" ||
+    normalized === "follow-up-due" ||
+    normalized === "queued" ||
+    normalized === "scheduled"
+  ) {
+    return "First follow-up due";
+  }
+
+  if (normalized === "contacted") {
+    return "Contacted";
+  }
+
+  if (normalized === "quote-requested" || normalized === "quoted") {
+    return "Quote requested";
+  }
+
+  if (normalized === "closed" || normalized === "closed-won") {
+    return "Closed";
+  }
+
+  if (normalized === "lost" || normalized === "closed-lost") {
+    return "Lost";
+  }
+
+  return "Not started";
+}
+
+function getDefaultFollowUpTitle(stepOrder?: number | null) {
+  if (stepOrder === 1) return "Report ready email";
+  if (stepOrder === 2) return "24-hour follow-up";
+  if (stepOrder === 3) return "3-day savings reminder";
+  if (stepOrder === 4) return "7-day quote CTA";
+  return "Follow-up";
 }
 
 function normalizeLeadStatus(value?: string | null): InstallerLeadStatus | null {
@@ -376,6 +495,19 @@ function shouldRetryLegacySelect(message: string) {
     normalized.includes("schema cache") ||
     normalized.includes("could not find")
   );
+}
+
+function isAutomationConnected() {
+  const emailConnected = Boolean(
+    process.env.RESEND_API_KEY?.trim() && process.env.RESEND_FROM_EMAIL?.trim()
+  );
+  const smsConnected = Boolean(
+    process.env.TWILIO_ACCOUNT_SID?.trim() &&
+      process.env.TWILIO_AUTH_TOKEN?.trim() &&
+      process.env.TWILIO_FROM_NUMBER?.trim()
+  );
+
+  return emailConnected || smsConnected;
 }
 
 function clamp(value: number, min: number, max: number) {

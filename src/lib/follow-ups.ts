@@ -45,7 +45,7 @@ export function createFollowUpSequence({
     {
       stepOrder: 1,
       channel: "email",
-      title: "Instant report email",
+      title: "Report ready email",
       message: `Send the AI solar report to ${name} with the modeled savings summary for ${address}.`,
       scheduledFor: addHours(baseDate, 0).toISOString(),
       status: "queued",
@@ -53,7 +53,7 @@ export function createFollowUpSequence({
     {
       stepOrder: 2,
       channel: "sms",
-      title: "One-day SMS follow-up",
+      title: "24-hour follow-up",
       message: `Check in with a short reminder about the ${savingsCopy}.`,
       scheduledFor: addDays(baseDate, 1).toISOString(),
       status: "queued",
@@ -61,9 +61,17 @@ export function createFollowUpSequence({
     {
       stepOrder: 3,
       channel: "email",
-      title: "Three-day homeowner follow-up",
-      message: "Share a cleaner consultation CTA and keep the homeowner moving toward a call.",
+      title: "3-day savings reminder",
+      message: "Remind the homeowner of the modeled savings and answer any questions about the estimate.",
       scheduledFor: addDays(baseDate, 3).toISOString(),
+      status: "queued",
+    },
+    {
+      stepOrder: 4,
+      channel: "email",
+      title: "7-day quote CTA",
+      message: "Invite the homeowner to request a finalized quote and installer-confirmed design.",
+      scheduledFor: addDays(baseDate, 7).toISOString(),
       status: "queued",
     },
   ];
