@@ -150,6 +150,12 @@ export async function GET(request: Request) {
     if (!leadId) {
       return NextResponse.json({ message: "Missing leadId." }, { status: 400 });
     }
+
+    const raw = searchParams.get("raw") === "1" || searchParams.get("download") === "1";
+    if (!raw) {
+      return NextResponse.redirect(new URL(`/report/${encodeURIComponent(leadId)}`, request.url));
+    }
+
     void exp;
     void token;
 
@@ -223,10 +229,13 @@ export async function GET(request: Request) {
 
     const bytes = await pdf.save();
 
+    const disposition =
+      searchParams.get("download") === "1" ? "attachment" : "inline";
+
     return new Response(Buffer.from(bytes), {
       headers: {
         "Content-Type": "application/pdf",
-        "Content-Disposition": `inline; filename="arizona-solar-ai-report-${leadId}.pdf"`,
+        "Content-Disposition": `${disposition}; filename="arizona-solar-ai-report-${leadId}.pdf"`,
         "Cache-Control": "no-store",
       },
     });
