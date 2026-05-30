@@ -100,6 +100,34 @@ function getEstimateReportPath(address: string) {
   return `/estimate?address=${encodeURIComponent(address)}`;
 }
 
+function getDashboardTokenFromLocation() {
+  if (typeof window === "undefined") {
+    return "";
+  }
+
+  return new URLSearchParams(window.location.search).get("token")?.trim() ?? "";
+}
+
+function getUtilityBillDownloadPath(
+  leadId: string,
+  dashboardToken: string,
+  format?: "json"
+) {
+  const params = new URLSearchParams({
+    leadId,
+  });
+
+  if (dashboardToken) {
+    params.set("token", dashboardToken);
+  }
+
+  if (format) {
+    params.set("format", format);
+  }
+
+  return `/api/utility-bills/download?${params.toString()}`;
+}
+
 export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
   const [leadItems, setLeadItems] = useState(leads);
   const [followUpItems, setFollowUpItems] = useState(followUps);
@@ -110,6 +138,9 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
   const [pdfUnavailableIds, setPdfUnavailableIds] = useState<Set<string>>(
     () => new Set()
   );
+  const [utilityBillUnavailableIds, setUtilityBillUnavailableIds] = useState<
+    Set<string>
+  >(() => new Set());
   const [updatingIds, setUpdatingIds] = useState<Set<string>>(() => new Set());
   const deferredSearch = useDeferredValue(search);
 
@@ -199,6 +230,35 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
       });
     } catch {
       setPdfUnavailableIds((current) => new Set(current).add(lead.id));
+    }
+  };
+
+  const handleUtilityBillView = async (lead: DashboardCrmLead) => {
+    if (!lead.utilityBillUploaded || utilityBillUnavailableIds.has(lead.id)) {
+      return;
+    }
+
+    try {
+      const dashboardToken = getDashboardTokenFromLocation();
+      const response = await fetch(
+        getUtilityBillDownloadPath(lead.id, dashboardToken, "json"),
+        {
+          cache: "no-store",
+        }
+      );
+      const payload: { url?: string } = await response.json().catch(() => ({}));
+
+      if (!response.ok || !payload.url) {
+        throw new Error("Utility bill is unavailable.");
+      }
+
+      window.open(
+        getUtilityBillDownloadPath(lead.id, dashboardToken),
+        "_blank",
+        "noopener,noreferrer"
+      );
+    } catch {
+      setUtilityBillUnavailableIds((current) => new Set(current).add(lead.id));
     }
   };
 
@@ -480,8 +540,10 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
                 onStatusChange={(nextStatus) =>
                   void handleStatusChange(selectedLead, nextStatus)
                 }
+                onViewUtilityBill={() => void handleUtilityBillView(selectedLead)}
                 onSendFollowUpNow={(followUp) => void handleSendFollowUpNow(followUp)}
                 pdfUnavailable={pdfUnavailableIds.has(selectedLead.id)}
+                utilityBillUnavailable={utilityBillUnavailableIds.has(selectedLead.id)}
               />
             ) : (
               <EmptyState
@@ -747,14 +809,18 @@ function LeadDetailPanel({
   onDownloadPdf,
   onSendFollowUpNow,
   onStatusChange,
+  onViewUtilityBill,
   pdfUnavailable,
+  utilityBillUnavailable,
 }: {
   followUps: DashboardCrmFollowUp[];
   lead: DashboardCrmLead;
   onDownloadPdf: () => void;
   onSendFollowUpNow: (followUp: DashboardCrmFollowUp) => void;
   onStatusChange: (status: DashboardLeadStatus) => void;
+  onViewUtilityBill: () => void;
   pdfUnavailable: boolean;
+  utilityBillUnavailable: boolean;
 }) {
   return (
     <section className="rounded-[1.6rem] border border-white/10 bg-white/[0.045] p-5 shadow-[0_18px_70px_rgba(2,8,20,0.32)] backdrop-blur-xl">
@@ -858,6 +924,22 @@ function LeadDetailPanel({
             Download PDF
           </button>
         )}
+        {lead.utilityBillUploaded ? (
+          utilityBillUnavailable ? (
+            <div className="rounded-full border border-white/10 bg-slate-950/42 px-4 py-3 text-center text-sm font-semibold text-slate-500">
+              Utility bill unavailable
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={onViewUtilityBill}
+              className="inline-flex items-center justify-center gap-2 rounded-full border border-emerald-300/20 bg-emerald-300/10 px-4 py-3 text-sm font-semibold text-emerald-50 transition hover:bg-emerald-300/18"
+            >
+              <Download className="h-4 w-4" aria-hidden="true" />
+              View Utility Bill
+            </button>
+          )
+        ) : null}
         <a
           href={getEstimateReportPath(lead.address)}
           target="_blank"

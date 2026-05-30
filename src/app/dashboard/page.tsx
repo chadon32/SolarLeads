@@ -64,6 +64,7 @@ type DashboardLead = {
   quote_requested?: boolean | null;
   solar_suitability_score?: number | null;
   twenty_year_savings?: number | null;
+  utility_bill_file_path?: string | null;
   utility_bill_uploaded?: boolean | null;
   status?: string | null;
   created_at: string;
@@ -92,6 +93,8 @@ export default async function DashboardPage({
 
   const supabase = getSupabaseAdminClient();
   const scoredLeadSelect =
+    "id, name, email, phone, address, monthly_bill, estimated_savings, panel_count, system_size_kw, annual_savings, annual_energy_kwh, roi_years, selected_panel_brand, selected_panel_model, selected_panel_watts, roof_area_m2, system_cost_before_incentives, federal_tax_credit, net_system_cost, selected_inverter_type, energy_offset_pct, lead_score, lead_score_label, pdf_downloaded, pdf_generated, quote_requested, solar_suitability_score, twenty_year_savings, utility_bill_uploaded, utility_bill_file_path, status, created_at";
+  const scoredLeadSelectWithoutUtilityBillPath =
     "id, name, email, phone, address, monthly_bill, estimated_savings, panel_count, system_size_kw, annual_savings, annual_energy_kwh, roi_years, selected_panel_brand, selected_panel_model, selected_panel_watts, roof_area_m2, system_cost_before_incentives, federal_tax_credit, net_system_cost, selected_inverter_type, energy_offset_pct, lead_score, lead_score_label, pdf_downloaded, pdf_generated, quote_requested, solar_suitability_score, twenty_year_savings, utility_bill_uploaded, status, created_at";
   const extendedLeadSelect =
     "id, name, email, phone, address, monthly_bill, estimated_savings, panel_count, system_size_kw, annual_savings, annual_energy_kwh, roi_years, selected_panel_brand, selected_panel_model, selected_panel_watts, roof_area_m2, system_cost_before_incentives, federal_tax_credit, net_system_cost, selected_inverter_type, status, created_at";
@@ -104,10 +107,15 @@ export default async function DashboardPage({
     .order("created_at", { ascending: false })
     .limit(10) as unknown as LeadsQueryResult;
 
-  if (
-    leadsResult.error &&
-    shouldRetryLegacySelect(leadsResult.error.message)
-  ) {
+  if (leadsResult.error && isMissingColumn(leadsResult.error.message, "utility_bill_file_path")) {
+    leadsResult = await supabase
+      .from("leads")
+      .select(scoredLeadSelectWithoutUtilityBillPath)
+      .order("created_at", { ascending: false })
+      .limit(10) as unknown as LeadsQueryResult;
+  }
+
+  if (leadsResult.error && shouldRetryLegacySelect(leadsResult.error.message)) {
     leadsResult = await supabase
       .from("leads")
       .select(extendedLeadSelect)
@@ -339,6 +347,10 @@ function shouldRetryLegacySelect(message: string) {
     normalized.includes("schema cache") ||
     normalized.includes("could not find")
   );
+}
+
+function isMissingColumn(message: string, column: string) {
+  return message.toLowerCase().includes(column.toLowerCase());
 }
 
 function getLeadStatus(

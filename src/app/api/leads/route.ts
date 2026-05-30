@@ -246,6 +246,9 @@ export async function POST(request: Request) {
         ([key]) => key !== "utility_bill_file_path"
       )
     );
+    // TODO: Move confirmed bill files from pending/YYYY-MM-DD/uuid.ext to
+    // leads/{leadId}/utility-bill.ext after insert, then delete orphaned
+    // pending uploads older than 24 hours with a scheduled cleanup job.
     let insertResult = await supabase
       .from("leads")
       .insert(scoredInsert)
