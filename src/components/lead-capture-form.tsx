@@ -401,14 +401,14 @@ export function LeadCaptureForm({
           <div className="flex items-start justify-between gap-4">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.34em] text-cyan-300">
-                Quote request
+                Full report
               </p>
               <h3 className="mt-3 text-2xl font-semibold tracking-tight text-white">
-                Get 3 local solar quotes.
+                Send my full solar report.
               </h3>
               <p className="mt-3 max-w-xl text-sm leading-7 text-slate-300">
-                Enter your details and we will send your report while flagging this
-                home for local Arizona quote follow-up.
+                Enter your details and we will email the full PDF report for this
+                preliminary roof model.
               </p>
             </div>
             <div className="hidden rounded-full border border-cyan-300/15 bg-cyan-300/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.3em] text-cyan-200 sm:inline-flex">
@@ -514,10 +514,10 @@ export function LeadCaptureForm({
               {status === "submitting" ? (
                 <span className="inline-flex items-center gap-2">
                   <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-950/20 border-t-slate-950" />
-                  Sending quote request...
+                  Sending full report...
                 </span>
               ) : (
-                "Get 3 Local Quotes"
+                "Send My Full Report"
               )}
             </Button>
           </div>
@@ -549,9 +549,9 @@ export function LeadCaptureForm({
             </h4>
             <div className="mt-6 grid gap-3">
               {[
-                "Validate quote request details",
+                "Validate report details",
                 "Email your full solar report",
-                "Flag your lead as Quote Requested",
+                "Prepare your report for installer review",
               ].map((item, index) => (
                 <div
                   key={item}
@@ -579,13 +579,13 @@ export function LeadCaptureForm({
               </p>
               <p className="mt-3 text-lg font-semibold tracking-tight text-white">
                 {status === "submitting"
-                    ? "Sending quote request"
+                    ? "Sending full report"
                     : "Your AI solar report is being generated"}
               </p>
               <p className="mt-2 text-sm leading-6 text-slate-300">
                 {status === "submitting"
-                    ? "Saving your preferences, preparing the PDF email, and marking the lead for local quote follow-up."
-                    : "Submit when you are ready for local quote options based on this report."}
+                    ? "Saving your preferences, preparing the PDF email, and marking the report for follow-up."
+                    : "Submit when you are ready to receive the full homeowner PDF report."}
               </p>
               {status === "submitting" ? <StatusSkeleton /> : null}
             </div>

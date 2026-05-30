@@ -18,7 +18,7 @@ import {
   formatCompassDirection,
   STANDARD_PANEL_WATTS,
 } from "@/lib/solar-metrics";
-import type { SolarPanel } from "@/lib/solarPanels";
+import { getPanelFit, type SolarPanel } from "@/lib/solarPanels";
 
 type ResolvedProperty = {
   address: string;
@@ -222,11 +222,9 @@ export function SolarAnalysis({
   const [layerVisibility, setLayerVisibility] = useState<LayerVisibility>(
     defaultLayerVisibility
   );
-  const [internalPanelCount, setInternalPanelCount] = useState<number>(0);
-  const selectedPanelCount = activePanelCount ?? internalPanelCount;
+  const selectedPanelCount = activePanelCount ?? 0;
   const setSelectedPanelCount = useCallback(
     (nextPanelCount: number) => {
-      setInternalPanelCount(nextPanelCount);
       onActivePanelCountChange?.(nextPanelCount);
     },
     [onActivePanelCountChange]
@@ -440,18 +438,25 @@ export function SolarAnalysis({
       selectedPanelCount: livePanelCount,
     });
     const panelWatts = selectedPanel?.watts ?? STANDARD_PANEL_WATTS;
-    const estimatedNetCost = livePanelCount * panelWatts * 2.75;
-    const selectedAnnualKwh = Math.round(
-      sharedMetrics.annualKwh * (panelWatts / STANDARD_PANEL_WATTS)
+    const selectedPanelFit = selectedPanel
+      ? getPanelFit(selectedPanel, {
+          roofData,
+          monthlyBill,
+          selectedPanelCount: livePanelCount,
+        })
+      : null;
+    const estimatedNetCost =
+      selectedPanelFit?.netCost ?? livePanelCount * panelWatts * 2.75;
+    const selectedAnnualKwh = selectedPanelFit?.annualKwh ?? sharedMetrics.annualKwh;
+    const selectedAnnualSavingsUSD =
+      selectedPanelFit?.annualSavings ?? sharedMetrics.annualSavings;
+    const carbonFactorKgPerMwh =
+      roofData.carbonOffsetFactorKgPerMwh && roofData.carbonOffsetFactorKgPerMwh > 0
+        ? roofData.carbonOffsetFactorKgPerMwh
+        : 390;
+    const carbonOffsetLbs = Math.round(
+      (selectedAnnualKwh / 1000) * carbonFactorKgPerMwh * 2.205
     );
-    const annualBill =
-      monthlyBill && monthlyBill > 0 ? monthlyBill * 12 : null;
-    const selectedAnnualSavingsUSD = Math.round(
-      annualBill
-        ? Math.min(selectedAnnualKwh * ARIZONA_AVG_RATE_PER_KWH, annualBill)
-        : selectedAnnualKwh * ARIZONA_AVG_RATE_PER_KWH
-    );
-    const carbonOffsetLbs = sharedMetrics.co2OffsetLbs;
     const carbonOffsetTons = carbonOffsetLbs / 2000;
     const treesEquivalent = Math.max(1, Math.round(carbonOffsetLbs / 48));
     const recommendedSegment =
@@ -465,14 +470,17 @@ export function SolarAnalysis({
       averageRoofPitch: sharedMetrics.avgPitchDeg,
       annualSunlightHours: sharedMetrics.annualSunlightHours,
       selectedPanelCount: sharedMetrics.panelCount,
-      selectedSystemKw: Math.round(((livePanelCount * panelWatts) / 1000) * 10) / 10,
+      selectedSystemKw:
+        selectedPanelFit?.systemKw ??
+        Math.round(((livePanelCount * panelWatts) / 1000) * 10) / 10,
       selectedAnnualKwh,
       selectedAnnualSavingsUSD,
       monthlySavings: Math.round(selectedAnnualSavingsUSD / 12),
       roiYears:
-        selectedAnnualSavingsUSD > 0
+        selectedPanelFit?.paybackYears ??
+        (selectedAnnualSavingsUSD > 0
           ? Math.round((estimatedNetCost / selectedAnnualSavingsUSD) * 10) / 10
-          : 0,
+          : 0),
       carbonOffsetLbs,
       carbonOffsetTons,
       treesEquivalent,
@@ -486,9 +494,9 @@ export function SolarAnalysis({
     stage === "resolving"
       ? { label: "Resolving property coordinates...", pct: 14 }
       : stage === "fetching"
-        ? { label: "Analyzing roof with satellite data...", pct: 38 }
+        ? { label: "Analyzing roof with Google Solar data...", pct: 38 }
         : stage === "analyzing"
-          ? { label: "Analyzing roof with satellite data...", pct: 76 }
+          ? { label: "Analyzing roof with Google Solar data...", pct: 76 }
           : null;
 
   if (stage === "error") {
@@ -571,7 +579,7 @@ export function SolarAnalysis({
                     Processing
                   </p>
                   <p className="mt-3 text-base font-medium text-white">
-                    Analyzing roof with satellite data...
+                    Analyzing roof with Google Solar data...
                   </p>
                   <p className="mt-2 text-sm leading-6 text-slate-300">
                     Waiting for Google Solar API roof geometry, panel coordinates, and annual flux layers.
@@ -885,7 +893,7 @@ function ViewportCanvas({
         return;
       }
 
-      if (!mapRef.current || !mapInitializedRef.current) {
+      if (!mapRef.current && !mapInitializedRef.current) {
         mapElementRef.current.replaceChildren();
         mapInitializedRef.current = true;
         mapRef.current = new googleApi.maps.Map(mapElementRef.current, {
@@ -898,6 +906,10 @@ function ViewportCanvas({
           keyboardShortcuts: false,
           gestureHandling: "greedy",
         });
+      }
+
+      if (!mapRef.current) {
+        return;
       }
 
       mapRef.current.setCenter(center);

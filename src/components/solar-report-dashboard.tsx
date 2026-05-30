@@ -11,7 +11,7 @@ import {
   Zap,
   type LucideIcon,
 } from "lucide-react";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import type { RoofAnalysis } from "@/lib/roof-analysis";
 import {
   buildSolarAdvisorInputFromAnalysis,
@@ -232,7 +232,7 @@ export function SolarReportDashboard({
           onClick={openSendReport}
           className="inline-flex w-full items-center justify-center rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 shadow-[0_18px_55px_rgba(255,255,255,0.18)] transition hover:-translate-y-0.5 hover:bg-cyan-100"
         >
-          Get 3 Local Quotes
+          Send My Full Report
         </button>
 
         <DataProvenanceBlock />
@@ -343,23 +343,23 @@ function PanelsTab({
   selectedPanelId: string;
   values: DashboardValues;
 }) {
-  const [showComparison, setShowComparison] = useState(false);
+  const [showComparison, setShowComparison] = useState(true);
   const [sortKey, setSortKey] = useState<PanelSortKey>("paybackYears");
-  const [panelFitsById, setPanelFitsById] = useState<Record<string, PanelFit>>({});
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const selectedInverter = getInverterOption(selectedInverterType);
 
-  useEffect(() => {
-    const nextFits = SOLAR_PANELS.reduce<Record<string, PanelFit>>((fits, panel) => {
-      fits[panel.id] = getPanelFit(panel, {
-        roofData: analysis,
-        monthlyBill,
-        inverterCostAdderPerWatt: selectedInverter.costAdderPerWatt,
-      });
-      return fits;
-    }, {});
-
-    setPanelFitsById(nextFits);
-  }, [analysis, monthlyBill, selectedInverter.costAdderPerWatt]);
+  const panelFitsById = useMemo(
+    () =>
+      SOLAR_PANELS.reduce<Record<string, PanelFit>>((fits, panel) => {
+        fits[panel.id] = getPanelFit(panel, {
+          roofData: analysis,
+          monthlyBill,
+          inverterCostAdderPerWatt: selectedInverter.costAdderPerWatt,
+        });
+        return fits;
+      }, {}),
+    [analysis, monthlyBill, selectedInverter.costAdderPerWatt]
+  );
 
   const panelFits = useMemo(
     () =>
@@ -377,31 +377,36 @@ function PanelsTab({
   const federalCredit = selectedFit.taxCredit;
   const stateCredit = selectedFit.netCost > 0 ? 1000 : 0;
   const sortedFits = [...panelFits].sort((left, right) => {
+    const direction = sortDirection === "asc" ? 1 : -1;
+
     if (sortKey === "brand") {
-      return left.panel.brand.localeCompare(right.panel.brand);
+      return left.panel.brand.localeCompare(right.panel.brand) * direction;
     }
 
     if (sortKey === "model") {
-      return left.panel.model.localeCompare(right.panel.model);
+      return left.panel.model.localeCompare(right.panel.model) * direction;
     }
 
     if (sortKey === "paybackYears") {
-      return left.fit.paybackYears - right.fit.paybackYears;
+      return (left.fit.paybackYears - right.fit.paybackYears) * direction;
     }
 
     if (sortKey === "netCost") {
-      return left.fit.netCost - right.fit.netCost;
+      return (left.fit.netCost - right.fit.netCost) * direction;
     }
 
     if (sortKey === "azHeatLoss") {
-      return Number.parseFloat(left.fit.azHeatLoss) - Number.parseFloat(right.fit.azHeatLoss);
+      return (
+        Number.parseFloat(left.fit.azHeatLoss) -
+        Number.parseFloat(right.fit.azHeatLoss)
+      ) * direction;
     }
 
     const leftValue =
       sortKey in left.panel ? Number(left.panel[sortKey as keyof SolarPanel]) : 0;
     const rightValue =
       sortKey in right.panel ? Number(right.panel[sortKey as keyof SolarPanel]) : 0;
-    return rightValue - leftValue;
+    return (rightValue - leftValue) * direction;
   });
 
   const bestAlternatives = sortedFits
@@ -427,7 +432,7 @@ function PanelsTab({
       </div>
 
       {panelFits.length ? (
-        <div className="grid gap-3 lg:grid-cols-[1.1fr_0.9fr]">
+        <div className="grid items-stretch gap-3 lg:grid-cols-[1.1fr_0.9fr]">
           <PanelOptionCard
             fit={selectedFit}
             isSelected
@@ -470,7 +475,7 @@ function PanelsTab({
         </div>
       ) : (
         <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-          {Array.from({ length: 3 }).map((_, index) => (
+          {Array.from({ length: 6 }).map((_, index) => (
             <PanelOptionSkeleton key={index} />
           ))}
         </div>
@@ -497,7 +502,7 @@ function PanelsTab({
         >
           <span>
             <span className="block text-sm font-semibold text-white">
-              {showComparison ? "v" : ">"} Compare all panels
+              {showComparison ? "^ Hide comparison" : "v Compare all panels"}
             </span>
             <span className="mt-1 block text-xs text-white/48">
               Sorted by payback by default.
@@ -515,7 +520,16 @@ function PanelsTab({
           <div className="overflow-hidden">
             <PanelComparisonTable
               fits={sortedFits}
-              onSortKeyChange={setSortKey}
+              onSortKeyChange={(nextKey) => {
+                if (nextKey === sortKey) {
+                  setSortDirection((current) => (current === "asc" ? "desc" : "asc"));
+                } else {
+                  setSortKey(nextKey);
+                  setSortDirection("asc");
+                }
+              }}
+              selectedPanelId={selectedPanel.id}
+              sortDirection={sortDirection}
               sortKey={sortKey}
             />
           </div>
@@ -542,7 +556,7 @@ function PanelOptionCard({
 
   return (
     <article
-      className={`relative flex flex-col overflow-hidden rounded-[1.1rem] border p-4 transition ${
+      className={`relative flex h-full flex-col overflow-hidden rounded-[1.1rem] border p-4 transition ${
         isSelected
           ? "border-cyan-200/70 bg-cyan-200/[0.09] shadow-[0_0_0_1px_rgba(103,232,249,0.18),0_18px_50px_rgba(34,211,238,0.12)]"
           : "border-white/10 bg-black/18"
@@ -551,17 +565,17 @@ function PanelOptionCard({
       <div className="absolute right-3 top-3 z-10 flex flex-col items-end gap-1.5">
         {isSelected ? (
           <span className="rounded-full bg-cyan-200 px-2 py-1 text-[0.55rem] font-black uppercase tracking-[0.12em] text-slate-950">
-            Selected
+            ✓ Selected
           </span>
         ) : null}
         {fit.recommended ? (
           <span className="rounded-full bg-emerald-300 px-2 py-1 text-[0.55rem] font-black uppercase tracking-[0.12em] text-slate-950">
-            Recommended
+            ✓ Recommended
           </span>
         ) : null}
         {!fit.fits ? (
           <span className="rounded-full bg-slate-500/70 px-2 py-1 text-[0.55rem] font-black uppercase tracking-[0.12em] text-white">
-            Roof too small
+            ✗ Roof too small
           </span>
         ) : null}
       </div>
@@ -715,6 +729,8 @@ function InverterSelector({
             className={`rounded-[0.95rem] border p-3 text-left transition ${
               option.id === selectedInverterType
                 ? "border-cyan-200/42 bg-cyan-200/[0.075]"
+                : option.id === recommendation.inverterType
+                  ? "border-emerald-200/36 bg-emerald-200/[0.055]"
                 : "border-white/10 bg-black/20 hover:bg-white/[0.04]"
             }`}
           >
@@ -750,20 +766,20 @@ function getInverterRecommendation(annualSunlightHours: number): {
   if (annualSunlightHours > 1800) {
     return {
       inverterType: "string",
-      note: "Your roof has low shade — string inverter is fine.",
+      note: "Low shade detected - string inverter is ideal.",
     };
   }
 
   if (annualSunlightHours >= 1400) {
     return {
       inverterType: "optimizers",
-      note: "Moderate shade detected — optimizers recommended.",
+      note: "Moderate shade - optimizers will improve output.",
     };
   }
 
   return {
     inverterType: "microinverters",
-    note: "Significant shade detected — microinverters strongly recommended.",
+    note: "Significant shade - microinverters strongly recommended.",
   };
 }
 
@@ -847,10 +863,14 @@ function IncentiveCard({
 function PanelComparisonTable({
   fits,
   onSortKeyChange,
+  selectedPanelId,
+  sortDirection,
   sortKey,
 }: {
   fits: Array<{ panel: SolarPanel; fit: PanelFit }>;
   onSortKeyChange: (key: PanelSortKey) => void;
+  selectedPanelId: string;
+  sortDirection: "asc" | "desc";
   sortKey: PanelSortKey;
 }) {
   const headers: Array<{ key: PanelSortKey; label: string }> = [
@@ -880,6 +900,11 @@ function PanelComparisonTable({
                   }`}
                 >
                   {header.label}
+                  {sortKey === header.key
+                    ? sortDirection === "asc"
+                      ? " ↑"
+                      : " ↓"
+                    : ""}
                 </button>
               </th>
             ))}
@@ -890,7 +915,12 @@ function PanelComparisonTable({
         </thead>
         <tbody>
           {fits.map(({ fit, panel }) => (
-            <tr key={panel.id} className="border-t border-white/8 text-white/68">
+            <tr
+              key={panel.id}
+              className={`border-t border-white/8 text-white/68 ${
+                panel.id === selectedPanelId ? "bg-cyan-200/[0.08]" : ""
+              }`}
+            >
               <td className="px-3 py-2 font-semibold text-white">{panel.brand}</td>
               <td className="px-3 py-2">{panel.model}</td>
               <td className="px-3 py-2">{panel.watts}W</td>
@@ -962,7 +992,7 @@ function ReportOverviewTab({
           onClick={onSendReport}
           className="mt-4 inline-flex w-full items-center justify-center rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100"
         >
-          Get 3 Local Quotes
+          Send My Full Report
         </button>
       </div>
     </div>
@@ -1203,7 +1233,10 @@ function FinancingTab({
   const netMonthly = values.monthlySavings - monthlyLoanPayment;
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[0.95fr_1.05fr]">
+    <div
+      id="financing-calculator"
+      className="grid scroll-mt-24 gap-4 lg:grid-cols-[0.95fr_1.05fr]"
+    >
       <div className="rounded-[1rem] border border-white/10 bg-black/20 p-4">
         <div className="grid grid-cols-3 rounded-full border border-white/10 bg-black/24 p-1">
           {(["buy", "lease", "loan"] as const).map((mode) => (
@@ -1388,10 +1421,10 @@ function SendReportTab({
   sendReportContent?: ReactNode;
 }) {
   return (
-    <div id="contact" className="scroll-mt-24">
+    <div id="generate-report" className="scroll-mt-24">
       {sendReportContent ?? (
         <div className="rounded-[1rem] border border-white/10 bg-black/20 p-5">
-          <h3 className="text-xl font-semibold text-white">Get 3 Local Quotes</h3>
+          <h3 className="text-xl font-semibold text-white">Send My Full Report</h3>
           <p className="mt-2 text-sm leading-6 text-white/60">
             The quote request form is unavailable in this preview, but the report model is ready.
           </p>
@@ -1416,7 +1449,7 @@ function NextStepsTab() {
           href="#report-dashboard"
           className="inline-flex items-center justify-center rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100"
         >
-          Get 3 Local Quotes
+          Send My Full Report
         </a>
         <a
           href="#how-it-works"

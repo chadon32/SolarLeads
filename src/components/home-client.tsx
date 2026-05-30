@@ -75,6 +75,9 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
     useState<InverterType>("string");
   const [reportTab, setReportTab] = useState<DetailTab>("overview");
   const [shareStatus, setShareStatus] = useState("");
+  const [showProgressNav, setShowProgressNav] = useState(false);
+  const [activeProgressSection, setActiveProgressSection] =
+    useState("rooftop-analysis");
   const [selectedLocation, setSelectedLocation] = useState<{
     address: string;
     lat: number;
@@ -100,6 +103,67 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
     }
   }, [solarData?.annualSunlightHours, solarData?.validSite]);
 
+  useEffect(() => {
+    if (!solarData?.validSite || activePanelCount > 0) {
+      return;
+    }
+
+    const maxPanelCount = buildSolarMetrics(solarData).maxPanelCount;
+    if (maxPanelCount > 0) {
+      setActivePanelCount(maxPanelCount);
+    }
+  }, [activePanelCount, solarData]);
+
+  useEffect(() => {
+    if (!shareStatus) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => setShareStatus(""), 2000);
+    return () => window.clearTimeout(timer);
+  }, [shareStatus]);
+
+  useEffect(() => {
+    const sectionIds = [
+      "rooftop-analysis",
+      "panel-selection",
+      "financing-calculator",
+      "generate-report",
+    ];
+
+    const onScroll = () => {
+      setShowProgressNav(window.scrollY > 420);
+    };
+
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort((left, right) => right.intersectionRatio - left.intersectionRatio)[0];
+
+        if (visible?.target.id) {
+          setActiveProgressSection(visible.target.id);
+        }
+      },
+      { rootMargin: "-18% 0px -62% 0px", threshold: [0.1, 0.25, 0.5] }
+    );
+
+    sectionIds.forEach((id) => {
+      const element = document.getElementById(id);
+      if (element) {
+        observer.observe(element);
+      }
+    });
+
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      observer.disconnect();
+    };
+  }, [hasValidAnalysis, reportTab]);
+
   const reportMetrics = useMemo(() => {
     if (!solarData?.validSite) {
       return null;
@@ -109,16 +173,17 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
       monthlyBill,
       selectedPanelCount: activePanelCount || undefined,
     });
+    const livePanelCount = activePanelCount || baseMetrics.panelCount;
     const selectedFit = getPanelFit(selectedPanel, {
       roofData: solarData,
       monthlyBill,
-      selectedPanelCount: activePanelCount || baseMetrics.panelCount,
+      selectedPanelCount: livePanelCount,
       inverterCostAdderPerWatt: getInverterOption(selectedInverterType).costAdderPerWatt,
     });
 
     return {
       annualSavings: selectedFit.annualSavings || baseMetrics.annualSavings,
-      panelCount: selectedFit.maxPanelsFit || baseMetrics.panelCount,
+      panelCount: livePanelCount,
       score: solarData.rooftopConfidenceScore,
       systemKw: selectedFit.systemKw || baseMetrics.systemKw,
     };
@@ -129,6 +194,24 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
     window.requestAnimationFrame(() => {
       document
         .getElementById("report-dashboard")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  };
+
+  const handleProgressNavClick = (sectionId: string) => {
+    if (sectionId === "panel-selection") {
+      setReportTab("panels");
+    } else if (sectionId === "financing-calculator") {
+      setReportTab("financing");
+    } else if (sectionId === "generate-report") {
+      setReportTab("send");
+    } else {
+      setReportTab("overview");
+    }
+
+    window.requestAnimationFrame(() => {
+      document
+        .getElementById(sectionId)
         ?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
   };
@@ -144,6 +227,16 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
       <CinematicVideoBackground />
       <div className="pointer-events-none fixed inset-0 z-[1] bg-[radial-gradient(circle_at_22%_20%,rgba(103,232,249,0.16),transparent_34%),linear-gradient(90deg,rgba(0,0,0,0.78)_0%,rgba(0,0,0,0.34)_45%,rgba(0,0,0,0.72)_100%)]" />
       <div className="pointer-events-none fixed inset-x-0 bottom-0 z-[1] h-1/2 bg-gradient-to-t from-black via-black/58 to-transparent" />
+      <ProgressNav
+        activeSection={activeProgressSection}
+        show={showProgressNav && hasValidAnalysis}
+        onNavigate={handleProgressNavClick}
+      />
+      {shareStatus ? (
+        <div className="fixed right-5 top-20 z-[60] hidden rounded-full border border-emerald-200/20 bg-emerald-400/18 px-4 py-2 text-sm font-semibold text-emerald-50 shadow-[0_18px_45px_rgba(6,95,70,0.28)] backdrop-blur-xl md:block">
+          {shareStatus}
+        </div>
+      ) : null}
 
       <section
         className={`relative z-10 mx-auto flex w-full max-w-7xl flex-col px-5 pt-5 sm:px-7 md:px-10 lg:px-12 ${
@@ -173,7 +266,7 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
               Reviews
             </a>
             <a className="transition hover:text-white" href="#solar-workspace">
-              Report
+              Analysis
             </a>
           </div>
 
@@ -190,7 +283,7 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
                   Reviews
                 </a>
                 <a className="rounded-[0.8rem] px-3 py-2 hover:bg-white/[0.06]" href="#solar-workspace">
-                  Report
+                  Analysis
                 </a>
               </div>
             </details>
@@ -205,9 +298,9 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
               className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-3 text-sm font-semibold text-slate-950 shadow-[0_18px_55px_rgba(255,255,255,0.18)] transition hover:-translate-y-0.5 hover:bg-cyan-100 sm:px-5"
             >
               <span className="hidden sm:inline">
-                {hasValidAnalysis ? "Get 3 Local Quotes" : "Get My Free Estimate"}
+                {hasValidAnalysis ? "Send My Full Report" : "Get My Free Estimate"}
               </span>
-              <span className="sm:hidden">{hasValidAnalysis ? "Quotes" : "Estimate"}</span>
+              <span className="sm:hidden">{hasValidAnalysis ? "Send" : "Estimate"}</span>
             </a>
           </div>
         </nav>
@@ -224,8 +317,8 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
                     {formatDisplayAddress(selectedAddress)}
                   </h1>
                   <p className="mt-1 text-sm text-white/58">
-                    {hasValidAnalysis
-                      ? "Review the roof workspace below, then request local quote options."
+                  {hasValidAnalysis
+                      ? "Review the roof workspace below, then send the full PDF report."
                       : "Satellite imagery and Solar API roof data are loading."}
                   </p>
                   {reportMetrics ? (
@@ -243,7 +336,7 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
                     onClick={openSendReportTab}
                     className="inline-flex items-center justify-center rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:-translate-y-0.5 hover:bg-cyan-100"
                   >
-                    Get 3 Local Quotes
+                    Send My Full Report
                   </button>
                 ) : null}
               </div>
@@ -283,21 +376,22 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
               <AddressSearch
                 selectedAddress={selectedAddress}
                 onSelect={(property) => {
-                  setSelectedAddress(property.address);
+                  const displayAddress = formatDisplayAddress(property.address);
+                  setSelectedAddress(displayAddress);
                   setSolarData(null);
                   setActivePanelCount(0);
                   setShareStatus("");
-                  if (property.address) {
+                  if (displayAddress) {
                     trackEvent("address_selected", {
-                      address: formatDisplayAddress(property.address),
+                      address: displayAddress,
                     });
                   }
                   setSelectedLocation(
-                    property.address &&
+                    displayAddress &&
                       Number.isFinite(property.lat) &&
                       Number.isFinite(property.lng)
                       ? {
-                          address: property.address,
+                          address: displayAddress,
                           lat: Number(property.lat),
                           lng: Number(property.lng),
                         }
@@ -318,6 +412,7 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
                     onChange={(event) =>
                       setMonthlyBill(Math.max(1, Number(event.target.value) || 1))
                     }
+                    placeholder="$ 200"
                     className="min-w-0 flex-1 bg-transparent text-lg font-semibold text-white outline-none placeholder:text-white/35"
                     inputMode="decimal"
                   />
@@ -408,7 +503,7 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
 
                     void navigator.clipboard
                       ?.writeText(shareUrl)
-                      .then(() => setShareStatus("Link copied!"))
+                      .then(() => setShareStatus("Link copied to clipboard!"))
                       .catch(() => setShareStatus(shareUrl));
                   }}
                   className="inline-flex items-center justify-center rounded-full border border-white/12 bg-white/[0.06] px-5 py-3 text-sm font-semibold text-white transition hover:-translate-y-0.5 hover:bg-white/[0.1]"
@@ -420,14 +515,14 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
                   onClick={openSendReportTab}
                   className="inline-flex items-center justify-center rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:-translate-y-0.5 hover:bg-cyan-100"
                 >
-                  Get 3 Local Quotes
+                  Send My Full Report
                 </button>
               </div>
             ) : null}
           </div>
 
           <div className="grid gap-4 lg:grid-cols-12">
-            <div className={hasValidAnalysis ? "lg:col-span-7" : "lg:col-span-12"}>
+            <div id="rooftop-analysis" className={`${hasValidAnalysis ? "lg:col-span-7" : "lg:col-span-12"} scroll-mt-24`}>
               <div className="overflow-hidden rounded-[1.5rem] border border-cyan-200/12 bg-slate-950/72 p-2 shadow-[0_22px_75px_rgba(0,0,0,0.38)] backdrop-blur-xl">
                 <SolarAnalysis
                   key={selectedAddress}
@@ -601,6 +696,48 @@ function CinematicVideoBackground() {
         className="h-full w-full translate-y-[17%] object-cover"
         style={{ opacity: 0 }}
       />
+    </div>
+  );
+}
+
+function ProgressNav({
+  activeSection,
+  onNavigate,
+  show,
+}: {
+  activeSection: string;
+  onNavigate: (sectionId: string) => void;
+  show: boolean;
+}) {
+  const items = [
+    { id: "rooftop-analysis", label: "Roof Analysis" },
+    { id: "panel-selection", label: "Panel Selection" },
+    { id: "financing-calculator", label: "Financing" },
+    { id: "generate-report", label: "Get Report" },
+  ];
+
+  return (
+    <div
+      className={`fixed inset-x-0 top-0 z-50 hidden border-b border-white/10 bg-slate-950/88 px-5 py-2 shadow-[0_14px_42px_rgba(0,0,0,0.26)] backdrop-blur-xl transition-opacity duration-300 md:block ${
+        show ? "opacity-100" : "pointer-events-none opacity-0"
+      }`}
+    >
+      <div className="mx-auto flex max-w-7xl items-center justify-center gap-2">
+        {items.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            onClick={() => onNavigate(item.id)}
+            className={`rounded-full px-4 py-2 text-[0.68rem] font-semibold uppercase tracking-[0.18em] transition ${
+              activeSection === item.id
+                ? "bg-cyan-200 text-slate-950"
+                : "bg-white/[0.055] text-white/62 hover:bg-white/[0.1] hover:text-white"
+            }`}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
