@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { formatDisplayAddress } from "@/lib/address-format";
 import { trackEvent } from "@/lib/analytics";
+import { formatName } from "@/lib/name-format";
 import {
   getRoofAreaM2,
   getUsableAreaM2,
@@ -231,6 +232,7 @@ export function LeadCaptureForm({
     if (!validate()) return;
 
     const monthlyBill = Number(values.monthlyBill);
+    const formattedName = formatName(values.name);
     const baseMetrics = analysis?.validSite
       ? buildSolarMetrics(analysis, {
           monthlyBill,
@@ -284,7 +286,7 @@ export function LeadCaptureForm({
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          name: values.name.trim(),
+          name: formattedName,
           email: values.email.trim(),
           phone: values.phone.trim(),
           address: values.address.trim(),
@@ -373,7 +375,7 @@ export function LeadCaptureForm({
         JSON.stringify({
           address: formatDisplayAddress(payload.lead.address),
           annualSavings: metrics.annualSavings,
-          firstName: values.name.trim().split(/\s+/)[0] ?? "there",
+          firstName: formattedName.split(/\s+/)[0] ?? "there",
           panelCount: metrics.panelCount,
           paybackYears: metrics.paybackYears,
           preferredContactMethod: values.preferredContactMethod,

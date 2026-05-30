@@ -34,6 +34,26 @@ export function buildReportPdfPath(
   return `/api/report/pdf?leadId=${encodeURIComponent(leadId)}`;
 }
 
+export function buildRawReportPdfPath(
+  leadId: string,
+  options: { download?: boolean } = {}
+) {
+  const params = new URLSearchParams({
+    leadId,
+    raw: "1",
+  });
+
+  if (options.download) {
+    params.set("download", "1");
+  }
+
+  return `/api/report/pdf?${params.toString()}`;
+}
+
+export function buildReportViewerPath(leadId: string) {
+  return `/report/${encodeURIComponent(leadId)}`;
+}
+
 export function buildSignedReportPdfPath(
   leadId: string,
   options: { expiresInSeconds?: number } = {}

@@ -6,11 +6,17 @@ export type LeadScoreInput = {
   annualSavings?: number | null;
   email?: string | null;
   energyOffsetPct?: number | null;
+  monthlyBill?: number | null;
+  name?: string | null;
   panelCount?: number | null;
   pdfDownloaded?: boolean | null;
   pdfGenerated?: boolean | null;
   quoteRequested?: boolean | null;
   phone?: string | null;
+  roofAreaM2?: number | null;
+  selectedPanelBrand?: string | null;
+  selectedPanelModel?: string | null;
+  selectedPanelWatts?: number | null;
   solarSuitabilityScore?: number | null;
   systemSizeKw?: number | null;
   twentyYearSavings?: number | null;
@@ -28,26 +34,22 @@ export const LEAD_SCORE_EXPLANATION =
   "Lead score is based on solar potential, savings estimate, roof fit, and homeowner engagement.";
 
 export function calculateLeadScore(input: LeadScoreInput): LeadScoreResult {
-  const solarSuitabilityScore = finite(input.solarSuitabilityScore);
   const annualSavings = finite(input.annualSavings);
-  const twentyYearSavings = finite(input.twentyYearSavings);
   const panelCount = finite(input.panelCount);
-  const systemSizeKw = finite(input.systemSizeKw);
-  const energyOffsetPct = finite(input.energyOffsetPct);
+  const roofAreaM2 = finite(input.roofAreaM2);
+  const monthlyBill = finite(input.monthlyBill);
 
-  const score =
-    scoreFromScale(solarSuitabilityScore, 100, 22) +
-    scoreFromScale(annualSavings, 4_000, 20) +
-    scoreFromScale(twentyYearSavings, 80_000, 10) +
-    scoreFromScale(panelCount, 30, 12) +
-    scoreFromScale(systemSizeKw, 12, 10) +
-    scoreFromScale(energyOffsetPct, 100, 10) +
-    (hasText(input.email) ? 5 : 0) +
-    (hasText(input.phone) ? 6 : 0) +
-    (input.pdfGenerated ? 2 : 0) +
-    (input.pdfDownloaded ? 2 : 0) +
-    (input.quoteRequested ? 8 : 0) +
-    (input.utilityBillUploaded ? 1 : 0);
+  let score = 0;
+
+  if (hasText(input.name)) score += 20;
+  if (isValidEmail(input.email)) score += 20;
+  if (hasValidPhone(input.phone)) score += 15;
+  if (annualSavings !== null && annualSavings > 1_000) score += 15;
+  if (annualSavings !== null && annualSavings > 2_000) score += 10;
+  if (roofAreaM2 !== null && roofAreaM2 > 50) score += 10;
+  if (panelCount !== null && panelCount >= 10) score += 10;
+  if (monthlyBill !== null && monthlyBill >= 150) score += 5;
+  if (hasNonDefaultPanelSelection(input)) score += 5;
 
   const roundedScore = clamp(Math.round(score), 0, 100);
   const tier = getLeadScoreTier(roundedScore);
@@ -61,11 +63,11 @@ export function calculateLeadScore(input: LeadScoreInput): LeadScoreResult {
 }
 
 export function getLeadScoreTier(score: number): LeadScoreTier {
-  if (score >= 80) {
+  if (score >= 70) {
     return "hot";
   }
 
-  if (score >= 55) {
+  if (score >= 45) {
     return "warm";
   }
 
@@ -107,18 +109,6 @@ export function normalizeLeadScoreLabel(
   return getLeadScoreLabel(score);
 }
 
-function scoreFromScale(
-  value: number | null,
-  topValue: number,
-  maxPoints: number
-) {
-  if (value === null || topValue <= 0) {
-    return 0;
-  }
-
-  return clamp(value / topValue, 0, 1) * maxPoints;
-}
-
 function finite(value: unknown) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
@@ -126,6 +116,33 @@ function finite(value: unknown) {
 
 function hasText(value: unknown) {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function isValidEmail(value: unknown) {
+  return typeof value === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+}
+
+function hasValidPhone(value: unknown) {
+  return typeof value === "string" && value.replace(/\D/g, "").length >= 10;
+}
+
+function hasNonDefaultPanelSelection(input: LeadScoreInput) {
+  const brand = input.selectedPanelBrand?.trim().toLowerCase() ?? "";
+  const model = input.selectedPanelModel?.trim().toLowerCase() ?? "";
+  const watts = Number(input.selectedPanelWatts);
+  const hasSelection = Boolean(brand || model || (Number.isFinite(watts) && watts > 0));
+
+  if (!hasSelection) {
+    return false;
+  }
+
+  const selectedText = `${brand} ${model}`;
+  const isDefaultQcells =
+    selectedText.includes("qcells") ||
+    selectedText.includes("q.peak") ||
+    selectedText.includes("q peak");
+
+  return !isDefaultQcells;
 }
 
 function clamp(value: number, min: number, max: number) {

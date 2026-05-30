@@ -21,6 +21,7 @@ import {
   normalizeLeadScoreLabel,
   type LeadScoreLabel,
 } from "@/lib/lead-scoring";
+import { formatName } from "@/lib/name-format";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
 
@@ -54,6 +55,9 @@ type ReportLead = {
   roof_area_m2?: number | null;
   usable_area_m2?: number | null;
   roof_pitch_deg?: number | null;
+  selected_panel_brand?: string | null;
+  selected_panel_model?: string | null;
+  selected_panel_watts?: number | null;
   energy_offset_pct?: number | null;
   lead_score?: number | null;
   lead_score_label?: string | null;
@@ -161,9 +165,9 @@ export async function GET(request: Request) {
 
     const supabase = getSupabaseAdminClient();
     const scoredLeadSelect =
-      "id, name, email, phone, address, monthly_bill, estimated_savings, created_at, panel_count, system_size_kw, annual_savings, monthly_savings, annual_energy_kwh, roof_area_m2, usable_area_m2, roof_pitch_deg, energy_offset_pct, lead_score, lead_score_label, pdf_downloaded, pdf_generated, quote_requested, solar_suitability_score, twenty_year_savings, utility_bill_uploaded, lat, lng";
+      "id, name, email, phone, address, monthly_bill, estimated_savings, created_at, panel_count, system_size_kw, annual_savings, monthly_savings, annual_energy_kwh, roof_area_m2, usable_area_m2, roof_pitch_deg, selected_panel_brand, selected_panel_model, selected_panel_watts, energy_offset_pct, lead_score, lead_score_label, pdf_downloaded, pdf_generated, quote_requested, solar_suitability_score, twenty_year_savings, utility_bill_uploaded, lat, lng";
     const extendedLeadSelect =
-      "id, name, email, phone, address, monthly_bill, estimated_savings, created_at, panel_count, system_size_kw, annual_savings, monthly_savings, annual_energy_kwh, roof_area_m2, usable_area_m2, roof_pitch_deg, lat, lng";
+      "id, name, email, phone, address, monthly_bill, estimated_savings, created_at, panel_count, system_size_kw, annual_savings, monthly_savings, annual_energy_kwh, roof_area_m2, usable_area_m2, roof_pitch_deg, selected_panel_brand, selected_panel_model, selected_panel_watts, lat, lng";
     const baseLeadSelect =
       "id, name, email, phone, address, monthly_bill, estimated_savings, created_at";
 
@@ -235,7 +239,7 @@ export async function GET(request: Request) {
     return new Response(Buffer.from(bytes), {
       headers: {
         "Content-Type": "application/pdf",
-        "Content-Disposition": `${disposition}; filename="arizona-solar-ai-report-${leadId}.pdf"`,
+        "Content-Disposition": `${disposition}; filename="${buildPdfFilename(proposal)}"`,
         "Cache-Control": "no-store",
       },
     });
@@ -308,11 +312,17 @@ function buildProposalData(
     annualSavings,
     email: lead.email,
     energyOffsetPct,
+    monthlyBill,
+    name: lead.name,
     panelCount,
     pdfDownloaded: true,
     pdfGenerated: lead.pdf_generated ?? true,
     phone: lead.phone,
     quoteRequested: lead.quote_requested,
+    roofAreaM2: positiveNumber(lead.roof_area_m2),
+    selectedPanelBrand: lead.selected_panel_brand,
+    selectedPanelModel: lead.selected_panel_model,
+    selectedPanelWatts: lead.selected_panel_watts,
     solarSuitabilityScore: lead.solar_suitability_score ?? suitabilityScore,
     systemSizeKw: systemKw,
     twentyYearSavings: lead.twenty_year_savings ?? twentyYearSavings,
@@ -343,7 +353,7 @@ function buildProposalData(
   return {
     id: lead.id,
     reportUrl,
-    name: lead.name || "Homeowner",
+    name: formatName(lead.name) || "Homeowner",
     address: lead.address || "Address unavailable",
     email: lead.email || "Email unavailable",
     phone: lead.phone || "Phone unavailable",
@@ -1821,6 +1831,17 @@ async function loadQrImage(pdf: PDFDocument, url: string) {
   } catch {
     return null;
   }
+}
+
+function buildPdfFilename(proposal: ProposalData) {
+  const safeName =
+    proposal.name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "") || "homeowner";
+  const date = new Date().toISOString().slice(0, 10);
+
+  return `solar-report-${safeName}-${date}.pdf`;
 }
 
 function rotatePoint(x: number, y: number, cx: number, cy: number, angle: number) {

@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { Resend } from "resend";
 import { formatDisplayAddress } from "@/lib/address-format";
 import { calculateLeadScore } from "@/lib/lead-scoring";
+import { formatName } from "@/lib/name-format";
 import { buildReportPdfPath } from "@/lib/report-access";
 import { enforceRateLimit } from "@/lib/rate-limit";
 
@@ -79,7 +80,7 @@ export async function POST(request: Request) {
     }
 
     const body = (await request.json()) as LeadBody;
-    const name = body.name?.trim();
+    const name = formatName(body.name);
     const email = body.email?.trim().toLowerCase();
     const phone = body.phone?.trim();
     const address = body.address?.trim();
@@ -123,11 +124,17 @@ export async function POST(request: Request) {
       annualSavings: estimatedSavings,
       email,
       energyOffsetPct: body.energyOffsetPct,
+      monthlyBill,
+      name,
       panelCount,
       pdfDownloaded,
       pdfGenerated,
       phone,
       quoteRequested,
+      roofAreaM2: body.roofAreaSqm,
+      selectedPanelBrand: body.selectedPanelBrand,
+      selectedPanelModel: body.selectedPanelModel,
+      selectedPanelWatts: body.selectedPanelWatts,
       solarSuitabilityScore: body.solarSuitabilityScore,
       systemSizeKw: body.systemSizeKw,
       twentyYearSavings,

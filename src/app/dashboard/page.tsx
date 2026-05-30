@@ -10,6 +10,7 @@ import {
   calculateLeadScore,
   normalizeLeadScoreLabel,
 } from "@/lib/lead-scoring";
+import { formatName } from "@/lib/name-format";
 import { buildSolarReportFromSolarValues } from "@/lib/solar-report";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
 import { buildReportPdfPath } from "@/lib/report-access";
@@ -50,6 +51,7 @@ type DashboardLead = {
   selected_panel_brand?: string | null;
   selected_panel_model?: string | null;
   selected_panel_watts?: number | null;
+  roof_area_m2?: number | null;
   system_cost_before_incentives?: number | null;
   federal_tax_credit?: number | null;
   net_system_cost?: number | null;
@@ -90,9 +92,9 @@ export default async function DashboardPage({
 
   const supabase = getSupabaseAdminClient();
   const scoredLeadSelect =
-    "id, name, email, phone, address, monthly_bill, estimated_savings, panel_count, system_size_kw, annual_savings, annual_energy_kwh, roi_years, selected_panel_brand, selected_panel_model, selected_panel_watts, system_cost_before_incentives, federal_tax_credit, net_system_cost, selected_inverter_type, energy_offset_pct, lead_score, lead_score_label, pdf_downloaded, pdf_generated, quote_requested, solar_suitability_score, twenty_year_savings, utility_bill_uploaded, status, created_at";
+    "id, name, email, phone, address, monthly_bill, estimated_savings, panel_count, system_size_kw, annual_savings, annual_energy_kwh, roi_years, selected_panel_brand, selected_panel_model, selected_panel_watts, roof_area_m2, system_cost_before_incentives, federal_tax_credit, net_system_cost, selected_inverter_type, energy_offset_pct, lead_score, lead_score_label, pdf_downloaded, pdf_generated, quote_requested, solar_suitability_score, twenty_year_savings, utility_bill_uploaded, status, created_at";
   const extendedLeadSelect =
-    "id, name, email, phone, address, monthly_bill, estimated_savings, panel_count, system_size_kw, annual_savings, annual_energy_kwh, roi_years, selected_panel_brand, selected_panel_model, selected_panel_watts, system_cost_before_incentives, federal_tax_credit, net_system_cost, selected_inverter_type, status, created_at";
+    "id, name, email, phone, address, monthly_bill, estimated_savings, panel_count, system_size_kw, annual_savings, annual_energy_kwh, roi_years, selected_panel_brand, selected_panel_model, selected_panel_watts, roof_area_m2, system_cost_before_incentives, federal_tax_credit, net_system_cost, selected_inverter_type, status, created_at";
   const baseLeadSelect =
     "id, name, email, phone, address, monthly_bill, estimated_savings, created_at";
 
@@ -196,28 +198,28 @@ export default async function DashboardPage({
       annualSavings: report.annualSavings,
       email: lead.email,
       energyOffsetPct: lead.energy_offset_pct ?? report.annualEnergyOffset,
+      monthlyBill: Number(lead.monthly_bill ?? 0),
+      name: lead.name,
       panelCount: report.panelCount,
       pdfDownloaded: lead.pdf_downloaded,
       pdfGenerated: lead.pdf_generated ?? true,
       phone: lead.phone,
       quoteRequested: lead.quote_requested,
+      roofAreaM2: lead.roof_area_m2,
+      selectedPanelBrand: lead.selected_panel_brand,
+      selectedPanelModel: lead.selected_panel_model,
+      selectedPanelWatts: lead.selected_panel_watts,
       solarSuitabilityScore: lead.solar_suitability_score,
       systemSizeKw,
       twentyYearSavings:
         Number(lead.twenty_year_savings ?? 0) || report.annualSavings * 20,
       utilityBillUploaded: lead.utility_bill_uploaded,
     });
-    const storedScore =
-      lead.lead_score === null || lead.lead_score === undefined
-        ? null
-        : Number(lead.lead_score);
-    const leadScore = storedScore !== null && Number.isFinite(storedScore)
-      ? Math.round(storedScore)
-      : calculatedScore.score;
+    const leadScore = calculatedScore.score;
 
     return {
       id: lead.id,
-      name: lead.name,
+      name: formatName(lead.name),
       email: lead.email,
       phone: lead.phone,
       address: lead.address,
@@ -239,7 +241,7 @@ export default async function DashboardPage({
       systemSizeKw,
       leadScore,
       leadScoreExplanation: calculatedScore.explanation,
-      leadScoreLabel: normalizeLeadScoreLabel(lead.lead_score_label, leadScore),
+      leadScoreLabel: normalizeLeadScoreLabel(calculatedScore.label, leadScore),
       reportUrl: buildReportPdfPath(lead.id),
       status:
         normalizeLeadStatus(lead.status) ??
@@ -252,6 +254,12 @@ export default async function DashboardPage({
         crmLeads.reduce((sum, lead) => sum + lead.leadScore, 0) /
           crmLeads.length
       )
+    : 0;
+  const roiValues = crmLeads
+    .map((lead) => lead.estimatedRoiYears)
+    .filter((value) => Number.isFinite(value) && value > 0);
+  const averagePayback = roiValues.length
+    ? roiValues.reduce((sum, value) => sum + value, 0) / roiValues.length
     : 0;
 
   const crmFollowUps: DashboardCrmFollowUp[] = followUpList.map((item) => ({
@@ -278,6 +286,7 @@ export default async function DashboardPage({
         queuedFollowUps,
         pdfsGenerated: leadList.length,
         averageLeadScore,
+        averagePayback,
         conversionRate: null,
       }}
     />

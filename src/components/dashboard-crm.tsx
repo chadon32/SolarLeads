@@ -1,9 +1,10 @@
 "use client";
 
 import { startTransition, useDeferredValue, useEffect, useMemo, useState } from "react";
-import { ArrowDownToLine, Download, Search, SlidersHorizontal } from "lucide-react";
+import { ArrowDownToLine, Download, Search, Send, SlidersHorizontal, UserRound } from "lucide-react";
 import { formatDisplayAddress } from "@/lib/address-format";
 import { trackEvent } from "@/lib/analytics";
+import { formatName } from "@/lib/name-format";
 import {
   LEAD_SCORE_EXPLANATION,
   type LeadScoreLabel,
@@ -68,6 +69,7 @@ type DashboardCrmProps = {
     averageLeadScore: number;
     queuedFollowUps: number;
     pdfsGenerated: number;
+    averagePayback: number;
     conversionRate: number | null;
   };
 };
@@ -88,12 +90,17 @@ const sortOptions = [
 
 type SortValue = (typeof sortOptions)[number]["value"];
 
-function getReportViewerPath(leadId: string) {
-  return `/report/${encodeURIComponent(leadId)}`;
+function getReportDownloadPath(leadId: string) {
+  return `/api/report/pdf?leadId=${encodeURIComponent(leadId)}&raw=1&download=1`;
+}
+
+function getEstimateReportPath(address: string) {
+  return `/estimate?address=${encodeURIComponent(address)}`;
 }
 
 export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
   const [leadItems, setLeadItems] = useState(leads);
+  const [followUpItems, setFollowUpItems] = useState(followUps);
   const [selectedLeadId, setSelectedLeadId] = useState(leads[0]?.id ?? "");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<DashboardLeadStatus | "all">("all");
@@ -108,6 +115,10 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
     setLeadItems(leads);
     setSelectedLeadId((current) => current || leads[0]?.id || "");
   }, [leads]);
+
+  useEffect(() => {
+    setFollowUpItems(followUps);
+  }, [followUps]);
 
   const filteredLeads = useMemo(() => {
     const normalizedQuery = deferredSearch.trim().toLowerCase();
@@ -149,17 +160,96 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
     null;
 
   const followUpsForSelected = selectedLead
-    ? followUps.filter((followUp) => followUp.leadId === selectedLead.id)
+    ? followUpItems.filter((followUp) => followUp.leadId === selectedLead.id)
     : [];
 
-  const handlePdfDownload = (lead: DashboardCrmLead) => {
+  const handlePdfDownload = async (lead: DashboardCrmLead) => {
     if (pdfUnavailableIds.has(lead.id)) {
       return;
     }
 
-    trackEvent("pdf_downloaded", {
-      lead_id: lead.id,
-    });
+    try {
+      const response = await fetch(getReportDownloadPath(lead.id));
+      const contentType = response.headers.get("content-type") ?? "";
+
+      if (!response.ok || !contentType.includes("application/pdf")) {
+        throw new Error("PDF endpoint did not return a PDF.");
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = buildPdfFilename(lead);
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+
+      trackEvent("pdf_downloaded", {
+        lead_id: lead.id,
+      });
+    } catch {
+      setPdfUnavailableIds((current) => new Set(current).add(lead.id));
+    }
+  };
+
+  const handleSendFollowUpNow = async (followUp: DashboardCrmFollowUp) => {
+    const previousFollowUp = followUp;
+
+    setFollowUpItems((current) =>
+      current.map((item) =>
+        item.id === followUp.id
+          ? {
+              ...item,
+              attempts: item.attempts + 1,
+              deliveryMessage: "Sending now...",
+              processedAt: new Date().toISOString(),
+              status: "sent",
+            }
+          : item
+      )
+    );
+
+    try {
+      const response = await fetch("/api/follow-ups/send-now", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ followUpId: followUp.id }),
+      });
+      const payload: {
+        followUp?: {
+          attempts: number;
+          deliveryMessage: string | null;
+          processedAt: string | null;
+          status: DashboardCrmFollowUp["status"];
+        };
+      } = await response.json().catch(() => ({}));
+
+      if (!response.ok || !payload.followUp) {
+        throw new Error("Unable to send follow-up");
+      }
+
+      setFollowUpItems((current) =>
+        current.map((item) =>
+          item.id === followUp.id
+            ? {
+                ...item,
+                attempts: payload.followUp?.attempts ?? item.attempts,
+                deliveryMessage: payload.followUp?.deliveryMessage ?? item.deliveryMessage,
+                processedAt: payload.followUp?.processedAt ?? item.processedAt,
+                status: payload.followUp?.status ?? item.status,
+              }
+            : item
+        )
+      );
+    } catch {
+      setFollowUpItems((current) =>
+        current.map((item) => (item.id === followUp.id ? previousFollowUp : item))
+      );
+    }
   };
 
   const handleStatusChange = async (
@@ -298,10 +388,11 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
           </div>
         </header>
 
-        <section className="grid gap-3 md:grid-cols-5">
+        <section className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
           <KpiCard label="Total Leads" value={formatNumber(stats.totalLeads)} />
           <KpiCard label="Avg Savings" value={formatMoney(stats.averageSavings)} />
           <KpiCard label="Avg Lead Score" value={`${formatNumber(stats.averageLeadScore)}/100`} />
+          <KpiCard label="Avg Payback" value={`${formatDecimal(stats.averagePayback)} yrs`} />
           <KpiCard label="Queued Follow-ups" value={formatNumber(stats.queuedFollowUps)} />
           <KpiCard label="PDFs Generated" value={formatNumber(stats.pdfsGenerated)} />
         </section>
@@ -383,9 +474,7 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
                           />
                         ))}
                         {!columnLeads.length ? (
-                          <div className="rounded-[1rem] border border-dashed border-white/10 px-3 py-6 text-center text-xs text-slate-500">
-                            No leads in this stage.
-                          </div>
+                          <StageEmptyState />
                         ) : null}
                       </div>
                     </section>
@@ -409,6 +498,7 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
                 onStatusChange={(nextStatus) =>
                   void handleStatusChange(selectedLead, nextStatus)
                 }
+                onSendFollowUpNow={(followUp) => void handleSendFollowUpNow(followUp)}
                 pdfUnavailable={pdfUnavailableIds.has(selectedLead.id)}
               />
             ) : (
@@ -463,9 +553,14 @@ function LeadPipelineCard({
       <button type="button" onClick={onSelect} className="block w-full text-left">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <h3 className="truncate text-sm font-semibold text-white">{lead.name}</h3>
+            <h3 className="truncate text-sm font-semibold text-white">
+              {formatName(lead.name) || "Homeowner"}
+            </h3>
             <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-400">
               {formatDisplayAddress(lead.address)}
+            </p>
+            <p className="mt-1 truncate text-[0.68rem] font-semibold text-cyan-100/78">
+              Panel: {formatPanelSelection(lead)}
             </p>
           </div>
           <LeadScoreBadge label={lead.leadScoreLabel} score={lead.leadScore} />
@@ -484,14 +579,14 @@ function LeadPipelineCard({
         {pdfUnavailable ? (
           <span className="text-xs font-semibold text-slate-500">PDF unavailable</span>
         ) : (
-          <a
-            href={getReportViewerPath(lead.id)}
+          <button
+            type="button"
             onClick={onDownloadPdf}
             className="inline-flex items-center gap-1.5 rounded-full bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-cyan-100"
           >
             <Download className="h-3.5 w-3.5" aria-hidden="true" />
             PDF
-          </a>
+          </button>
         )}
       </div>
     </article>
@@ -502,12 +597,14 @@ function LeadDetailPanel({
   followUps,
   lead,
   onDownloadPdf,
+  onSendFollowUpNow,
   onStatusChange,
   pdfUnavailable,
 }: {
   followUps: DashboardCrmFollowUp[];
   lead: DashboardCrmLead;
   onDownloadPdf: () => void;
+  onSendFollowUpNow: (followUp: DashboardCrmFollowUp) => void;
   onStatusChange: (status: DashboardLeadStatus) => void;
   pdfUnavailable: boolean;
 }) {
@@ -519,7 +616,7 @@ function LeadDetailPanel({
             Lead detail
           </p>
           <h2 className="mt-2 truncate text-2xl font-semibold tracking-tight text-white">
-            {lead.name}
+            {formatName(lead.name) || "Homeowner"}
           </h2>
           <p className="mt-2 text-sm leading-6 text-slate-400">
             {formatDisplayAddress(lead.address)}
@@ -599,17 +696,19 @@ function LeadDetailPanel({
             PDF unavailable
           </div>
         ) : (
-          <a
-            href={getReportViewerPath(lead.id)}
+          <button
+            type="button"
             onClick={onDownloadPdf}
             className="inline-flex items-center justify-center gap-2 rounded-full bg-white px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100"
           >
             <Download className="h-4 w-4" aria-hidden="true" />
             Download PDF
-          </a>
+          </button>
         )}
         <a
-          href={getReportViewerPath(lead.id)}
+          href={getEstimateReportPath(lead.address)}
+          target="_blank"
+          rel="noreferrer"
           className="inline-flex items-center justify-center rounded-full border border-white/10 bg-white/[0.05] px-4 py-3 text-sm font-semibold text-white transition hover:bg-white/[0.09]"
         >
           Open Report
@@ -632,11 +731,28 @@ function LeadDetailPanel({
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-semibold text-white">{followUp.title}</span>
-                  <span className="rounded-full bg-white/[0.08] px-2 py-0.5 text-[0.58rem] uppercase tracking-[0.14em] text-slate-400">
-                    {followUp.status}
-                  </span>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    <span className="rounded-full bg-white/[0.08] px-2 py-0.5 text-[0.58rem] uppercase tracking-[0.14em] text-slate-400">
+                      {followUp.status}
+                    </span>
+                    {followUp.status === "queued" || followUp.status === "scheduled" ? (
+                      <button
+                        type="button"
+                        onClick={() => onSendFollowUpNow(followUp)}
+                        className="inline-flex items-center gap-1 rounded-full border border-cyan-200/20 bg-cyan-300/10 px-2 py-0.5 text-[0.58rem] font-bold uppercase tracking-[0.12em] text-cyan-100 transition hover:bg-cyan-300/18"
+                      >
+                        <Send className="h-3 w-3" aria-hidden="true" />
+                        Send now
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
                 <p className="mt-1 line-clamp-2 text-slate-500">{followUp.message}</p>
+                {followUp.deliveryMessage ? (
+                  <p className="mt-1 text-[0.65rem] text-slate-500">
+                    {followUp.deliveryMessage}
+                  </p>
+                ) : null}
               </div>
             ))}
           </div>
@@ -672,6 +788,20 @@ function EmptyState({
       </div>
       <h3 className="mt-3 text-sm font-semibold text-white">{title}</h3>
       <p className="mt-1 text-xs leading-5 text-slate-500">{description}</p>
+    </div>
+  );
+}
+
+function StageEmptyState() {
+  return (
+    <div className="rounded-[1rem] border border-dashed border-white/14 bg-white/[0.025] px-3 py-6 text-center">
+      <div className="mx-auto grid h-9 w-9 place-items-center rounded-full border border-white/10 bg-white/[0.04] text-slate-500">
+        <UserRound className="h-4 w-4" aria-hidden="true" />
+      </div>
+      <p className="mt-3 text-xs font-semibold text-slate-400">No leads in this stage.</p>
+      <p className="mt-1 text-[0.68rem] leading-4 text-slate-600">
+        Drag a lead here or use the dropdown.
+      </p>
     </div>
   );
 }
@@ -832,6 +962,29 @@ function formatInverterLabel(value: string | null) {
   }
 
   return "Not captured";
+}
+
+function formatPanelSelection(lead: DashboardCrmLead) {
+  if (lead.selectedPanelBrand && lead.selectedPanelWatts) {
+    return `${lead.selectedPanelBrand} ${lead.selectedPanelWatts}W`;
+  }
+
+  if (lead.selectedPanelBrand && lead.selectedPanelModel) {
+    return `${lead.selectedPanelBrand} ${lead.selectedPanelModel}`;
+  }
+
+  return "Not captured";
+}
+
+function buildPdfFilename(lead: DashboardCrmLead) {
+  const safeName =
+    formatName(lead.name)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "") || "homeowner";
+  const date = new Date().toISOString().slice(0, 10);
+
+  return `solar-report-${safeName}-${date}.pdf`;
 }
 
 function escapeCsvCell(value: string) {
