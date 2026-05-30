@@ -12,6 +12,7 @@ type ReportEmailBody = {
   address?: string;
   monthlyBill?: number;
   report?: SolarReport;
+  utilityBillUploaded?: boolean;
 };
 
 const resendApiKey = process.env.RESEND_API_KEY;
@@ -71,6 +72,7 @@ export async function POST(request: Request) {
       email: body.email,
       monthlyBill: body.monthlyBill,
       report,
+      utilityBillUploaded: Boolean(body.utilityBillUploaded),
     });
     const resend = new Resend(resendApiKey);
 
@@ -115,6 +117,7 @@ export async function POST(request: Request) {
               <div style="margin-top:6px; font-size:14px; color:#cbd5e1;">Sent to ${escapeHtml(body.email)}</div>
             </div>
             <div style="margin-top:16px; font-size:13px; line-height:1.6; color:#cbd5e1;">
+              ${body.utilityBillUploaded ? "Utility bill uploaded for quote review. " : ""}
               Your PDF copy is attached to this email.${reportUrl ? ` You can also download it here: <a href="${escapeHtml(reportUrl)}" style="color:#67e8f9;">View PDF report</a>.` : ""} This preliminary estimate is not a final installation quote.
             </div>
           </div>
@@ -128,6 +131,9 @@ export async function POST(request: Request) {
       `Estimated annual savings: ${money(report.annualSavings)}`,
       `Estimated ROI: ${report.estimatedRoiYears} years`,
       `Environmental impact: ${report.annualImpactLbs.toLocaleString()} lbs CO2`,
+      body.utilityBillUploaded
+        ? "Utility bill uploaded for quote review."
+        : "No utility bill was uploaded.",
       "Your PDF copy is attached to this email.",
       reportUrl ? `Download link: ${reportUrl}` : "",
       "",
@@ -180,11 +186,13 @@ async function buildReportPdfAttachment({
   email,
   monthlyBill,
   report,
+  utilityBillUploaded,
 }: {
   address: string;
   email: string;
   monthlyBill: number;
   report: SolarReport;
+  utilityBillUploaded: boolean;
 }) {
   const pdf = await PDFDocument.create();
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
@@ -291,6 +299,16 @@ async function buildReportPdfAttachment({
     color: colors.muted,
     maxWidth: 300,
   });
+  if (utilityBillUploaded) {
+    page.drawText("Utility bill uploaded for quote review.", {
+      x: 220,
+      y: 300,
+      size: 10,
+      font: bold,
+      color: colors.success,
+      maxWidth: 300,
+    });
+  }
 
   detail.drawRectangle({ x: 0, y: 0, width: 612, height: 792, color: colors.paper });
   detail.drawRectangle({ x: 0, y: 724, width: 612, height: 68, color: colors.accentSoft });
@@ -314,7 +332,9 @@ async function buildReportPdfAttachment({
     color: colors.ink,
   });
   detail.drawText(
-    "This report email was generated from the saved report record and submitted monthly bill. The estimate remains preliminary until installer confirmation.",
+    utilityBillUploaded
+      ? "This report email was generated from the saved report record, submitted monthly bill, and uploaded bill status. The estimate remains preliminary until installer confirmation."
+      : "This report email was generated from the saved report record and submitted monthly bill. The estimate remains preliminary until installer confirmation.",
     {
       x: 36,
       y: 432,

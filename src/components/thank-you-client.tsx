@@ -22,6 +22,7 @@ type ThankYouPayload = {
   quoteRequested?: boolean;
   reportUrl?: string;
   systemKw?: number;
+  utilityBillUploaded?: boolean;
 };
 
 const fallbackPayload: Required<Omit<ThankYouPayload, "reportUrl">> & {
@@ -35,6 +36,7 @@ const fallbackPayload: Required<Omit<ThankYouPayload, "reportUrl">> & {
   preferredContactMethod: "Phone",
   quoteRequested: false,
   systemKw: 0,
+  utilityBillUploaded: false,
 };
 
 export function ThankYouClient() {
@@ -67,6 +69,7 @@ export function ThankYouClient() {
       preferredContactMethod: source.preferredContactMethod || "Phone",
       quoteRequested: Boolean(source.quoteRequested),
       systemKw: safeNumber(source.systemKw),
+      utilityBillUploaded: Boolean(source.utilityBillUploaded),
     };
   }, [payload]);
 
@@ -95,6 +98,11 @@ export function ThankYouClient() {
                   ? "Your quote request was received. A solar specialist can follow up with your report details."
                   : "We emailed your personalized Arizona Solar AI proposal and saved the roof model summary for your next step."}
               </p>
+              {summary.utilityBillUploaded ? (
+                <p className="mt-4 inline-flex rounded-full border border-emerald-300/18 bg-emerald-300/10 px-4 py-2 text-sm font-semibold text-emerald-100">
+                  Your utility bill was received. We will use it to prepare a more accurate quote.
+                </p>
+              ) : null}
             </div>
             <Link
               href="/"

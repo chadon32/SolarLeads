@@ -265,6 +265,7 @@ function mapInstallerLead(
     solarScore,
     status: normalizeLeadStatus(lead.status) ?? getLeadStatusFromFollowUps(followUps),
     systemSizeKw,
+    utilityBillUploaded: Boolean(lead.utility_bill_uploaded),
   };
 }
 

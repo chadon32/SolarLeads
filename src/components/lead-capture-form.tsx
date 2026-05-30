@@ -1,7 +1,8 @@
 "use client";
 
-import type { FormEvent, InputHTMLAttributes } from "react";
+import type { ChangeEvent, FormEvent, InputHTMLAttributes } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { FileCheck2, UploadCloud } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatDisplayAddress } from "@/lib/address-format";
 import { trackEvent } from "@/lib/analytics";
@@ -52,6 +53,15 @@ type SavedLead = {
   estimatedSavings: number;
   quoteRequested?: boolean;
   reportUrl: string;
+  utilityBillUploaded?: boolean;
+};
+
+type UtilityBillState = {
+  error?: string;
+  fileName?: string;
+  filePath?: string;
+  message?: string;
+  status: "idle" | "uploading" | "uploaded" | "error" | "unavailable";
 };
 
 const emptyValues: FormValues = {
@@ -67,6 +77,8 @@ const emptyValues: FormValues = {
 
 const contactMethodOptions = ["Phone", "Text", "Email"] as const;
 const bestTimeOptions = ["Morning", "Afternoon", "Evening", "Weekend"] as const;
+const utilityBillMimeTypes = ["application/pdf", "image/jpeg", "image/png"];
+const utilityBillMaxBytes = 10 * 1024 * 1024;
 
 function normalizePhone(value: string) {
   return value.replace(/\D/g, "");
@@ -137,6 +149,9 @@ export function LeadCaptureForm({
   const [message, setMessage] = useState(
     "Your AI solar report is being generated"
   );
+  const [utilityBill, setUtilityBill] = useState<UtilityBillState>({
+    status: "idle",
+  });
   const lastSubmittedFingerprint = useRef<string>("");
 
   useEffect(() => {
@@ -225,6 +240,89 @@ export function LeadCaptureForm({
     setErrors((current) => ({ ...current, [field]: undefined }));
   };
 
+  const handleUtilityBillChange = async (
+    event: ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = event.target.files?.[0];
+
+    if (!file) {
+      setUtilityBill({ status: "idle" });
+      return;
+    }
+
+    if (!utilityBillMimeTypes.includes(file.type)) {
+      setUtilityBill({
+        error: "Upload a PDF, JPG, or PNG utility bill.",
+        fileName: file.name,
+        status: "error",
+      });
+      event.target.value = "";
+      return;
+    }
+
+    if (file.size > utilityBillMaxBytes) {
+      setUtilityBill({
+        error: "Utility bill uploads must be 10MB or smaller.",
+        fileName: file.name,
+        status: "error",
+      });
+      event.target.value = "";
+      return;
+    }
+
+    setUtilityBill({
+      fileName: file.name,
+      message: "Uploading securely...",
+      status: "uploading",
+    });
+
+    try {
+      const formData = new FormData();
+      formData.append("bill", file);
+
+      const response = await fetch("/api/utility-bills", {
+        method: "POST",
+        body: formData,
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        filePath?: string;
+        message?: string;
+        uploaded?: boolean;
+      };
+
+      if (response.status === 503 || !payload.uploaded) {
+        setUtilityBill({
+          fileName: file.name,
+          message:
+            payload.message ||
+            "Utility bill storage is not connected yet. You can still send the report without the upload.",
+          status: "unavailable",
+        });
+        return;
+      }
+
+      if (!response.ok || !payload.filePath) {
+        throw new Error(payload.message || "Utility bill upload failed.");
+      }
+
+      setUtilityBill({
+        fileName: file.name,
+        filePath: payload.filePath,
+        message: "Bill uploaded — estimate ready for review",
+        status: "uploaded",
+      });
+    } catch (error) {
+      setUtilityBill({
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unable to upload the utility bill. You can still send the report without it.",
+        fileName: file.name,
+        status: "error",
+      });
+    }
+  };
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
@@ -265,6 +363,12 @@ export function LeadCaptureForm({
     if (!analysis?.validSite || !metrics || !metrics.annualSavings) {
       setStatus("error");
       setMessage("Complete a valid Solar API roof analysis before generating the report.");
+      return;
+    }
+
+    if (utilityBill.status === "uploading") {
+      setStatus("error");
+      setMessage("Your utility bill is still uploading. Please wait a moment or submit without it.");
       return;
     }
 
@@ -309,7 +413,9 @@ export function LeadCaptureForm({
           lat,
           lng,
           pdfGenerated: true,
-          utilityBillUploaded: false,
+          utilityBillFilePath:
+            utilityBill.status === "uploaded" ? utilityBill.filePath : undefined,
+          utilityBillUploaded: utilityBill.status === "uploaded",
           selectedPanelBrand: selectedPanel?.brand,
           selectedPanelModel: selectedPanel?.model,
           selectedPanelWatts: selectedPanel?.watts,
@@ -366,6 +472,7 @@ export function LeadCaptureForm({
             address: payload.lead.address,
             monthlyBill,
             report,
+            utilityBillUploaded: utilityBill.status === "uploaded",
           }),
         }),
       ]);
@@ -382,6 +489,7 @@ export function LeadCaptureForm({
           quoteRequested: true,
           reportUrl: payload.lead.reportUrl,
           systemKw: metrics.systemKw,
+          utilityBillUploaded: utilityBill.status === "uploaded",
         })
       );
       window.location.assign("/thank-you");
@@ -498,6 +606,11 @@ export function LeadCaptureForm({
               />
             </div>
           </div>
+
+          <UtilityBillUploadCard
+            state={utilityBill}
+            onChange={handleUtilityBillChange}
+          />
 
           <p className="mt-6 text-center text-sm leading-6 text-slate-400">
             No spam. Your report details are used to help licensed Arizona solar specialists prepare relevant quotes.
@@ -712,6 +825,73 @@ function TextAreaField({
         className="min-h-28 w-full resize-y rounded-[1.2rem] border border-white/10 bg-slate-950/40 px-4 py-3 text-base leading-7 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/35 focus:bg-slate-950/65"
       />
     </label>
+  );
+}
+
+function UtilityBillUploadCard({
+  onChange,
+  state,
+}: {
+  onChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  state: UtilityBillState;
+}) {
+  const isUploaded = state.status === "uploaded";
+  const isUploading = state.status === "uploading";
+
+  return (
+    <section className="mt-5 rounded-[1.35rem] border border-cyan-300/14 bg-cyan-300/[0.055] p-4">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex gap-3">
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-cyan-200/18 bg-cyan-300/10 text-cyan-100">
+            {isUploaded ? (
+              <FileCheck2 className="h-5 w-5" aria-hidden="true" />
+            ) : (
+              <UploadCloud className="h-5 w-5" aria-hidden="true" />
+            )}
+          </span>
+          <div>
+            <p className="text-sm font-semibold text-white">
+              Make this estimate more accurate
+            </p>
+            <p className="mt-1 text-sm leading-6 text-slate-300">
+              Upload a recent utility bill so we can verify your usage and prepare a more accurate solar quote.
+            </p>
+            <p className="mt-2 text-xs leading-5 text-slate-400">
+              Optional. PDF, JPG, or PNG. Used only for your solar estimate.
+            </p>
+          </div>
+        </div>
+        <label className="inline-flex shrink-0 cursor-pointer items-center justify-center rounded-full border border-white/10 bg-white px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100">
+          {isUploading ? "Uploading..." : isUploaded ? "Replace bill" : "Upload bill"}
+          <input
+            type="file"
+            accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
+            className="sr-only"
+            disabled={isUploading}
+            onChange={onChange}
+          />
+        </label>
+      </div>
+      {state.fileName ? (
+        <p className="mt-3 text-xs text-slate-400">Selected file: {state.fileName}</p>
+      ) : null}
+      {state.message ? (
+        <p
+          className={`mt-3 inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
+            isUploaded
+              ? "bg-emerald-300/14 text-emerald-100"
+              : "bg-amber-300/12 text-amber-100"
+          }`}
+        >
+          {state.message}
+        </p>
+      ) : null}
+      {state.error ? (
+        <p className="mt-3 rounded-[0.9rem] border border-rose-300/18 bg-rose-300/10 px-3 py-2 text-sm text-rose-100">
+          {state.error}
+        </p>
+      ) : null}
+    </section>
   );
 }
 

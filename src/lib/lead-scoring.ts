@@ -31,7 +31,7 @@ export type LeadScoreResult = {
 };
 
 export const LEAD_SCORE_EXPLANATION =
-  "Lead score is based on solar potential, savings estimate, roof fit, and homeowner engagement.";
+  "Lead score is based on solar potential, savings estimate, roof fit, homeowner engagement, and bill verification.";
 
 export function calculateLeadScore(input: LeadScoreInput): LeadScoreResult {
   const annualSavings = finite(input.annualSavings);
@@ -50,6 +50,7 @@ export function calculateLeadScore(input: LeadScoreInput): LeadScoreResult {
   if (panelCount !== null && panelCount >= 10) score += 10;
   if (monthlyBill !== null && monthlyBill >= 150) score += 5;
   if (hasNonDefaultPanelSelection(input)) score += 5;
+  if (input.utilityBillUploaded) score += 10;
 
   const roundedScore = clamp(Math.round(score), 0, 100);
   const tier = getLeadScoreTier(roundedScore);

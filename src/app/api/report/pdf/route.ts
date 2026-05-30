@@ -108,6 +108,7 @@ type ProposalData = {
   leadScore: number;
   leadScoreLabel: LeadScoreLabel;
   quoteRequested: boolean;
+  utilityBillUploaded: boolean;
   roofAreaSqFt?: number;
   usableAreaSqFt?: number;
   usableRoofPct?: number;
@@ -378,6 +379,7 @@ function buildProposalData(
     leadScore,
     leadScoreLabel: normalizeLeadScoreLabel(lead.lead_score_label, leadScore),
     quoteRequested: Boolean(lead.quote_requested),
+    utilityBillUploaded: Boolean(lead.utility_bill_uploaded),
     roofAreaSqFt,
     usableAreaSqFt,
     usableRoofPct,
@@ -522,7 +524,9 @@ function drawExecutiveSummary(
   });
   drawTextBlock(
     page,
-    "This report combines available satellite imagery, Solar API roof data, and Arizona-specific modeled savings assumptions. It is a preliminary estimate; final design, pricing, incentives, and savings require installer verification.",
+    proposal.utilityBillUploaded
+      ? "This report combines available satellite imagery, Solar API roof data, Arizona-specific modeled savings assumptions, and a submitted utility bill for quote review. It is a preliminary estimate; final design, pricing, incentives, and savings require installer verification."
+      : "This report combines available satellite imagery, Solar API roof data, and Arizona-specific modeled savings assumptions. It is a preliminary estimate; final design, pricing, incentives, and savings require installer verification.",
     60,
     151,
     486,
@@ -534,6 +538,15 @@ function drawExecutiveSummary(
   drawSourceBadge(page, 60, 122, "Solar API", fonts, colors);
   drawSourceBadge(page, 132, 122, "Modeled", fonts, colors);
   drawSourceBadge(page, 196, 122, "User-adjusted", fonts, colors);
+  if (proposal.utilityBillUploaded) {
+    page.drawText("Utility bill uploaded for quote review.", {
+      x: 306,
+      y: 126,
+      size: 7.5,
+      font: fonts.bold,
+      color: colors.green,
+    });
+  }
 }
 
 async function markPdfDownloaded(
@@ -637,6 +650,19 @@ function drawRoofAnalysisPage(
     9.4,
     colors.muted
   );
+  if (proposal.utilityBillUploaded) {
+    drawTextBlock(
+      page,
+      "Utility bill uploaded for quote review.",
+      304,
+      88,
+      240,
+      fonts.bold,
+      7.4,
+      9.2,
+      colors.green
+    );
+  }
 }
 
 function drawSavingsPage(

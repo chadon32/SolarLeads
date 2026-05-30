@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  ArrowRight,
   FileText,
   ShieldCheck,
   Sparkles,
@@ -94,13 +93,17 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
     }
 
     const hours = solarData.annualSunlightHours;
-    if (hours > 1800) {
-      setSelectedInverterType("string");
-    } else if (hours >= 1400) {
-      setSelectedInverterType("optimizers");
-    } else {
-      setSelectedInverterType("microinverters");
-    }
+    const frame = window.requestAnimationFrame(() => {
+      if (hours > 1800) {
+        setSelectedInverterType("string");
+      } else if (hours >= 1400) {
+        setSelectedInverterType("optimizers");
+      } else {
+        setSelectedInverterType("microinverters");
+      }
+    });
+
+    return () => window.cancelAnimationFrame(frame);
   }, [solarData?.annualSunlightHours, solarData?.validSite]);
 
   useEffect(() => {
@@ -109,9 +112,13 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
     }
 
     const maxPanelCount = buildSolarMetrics(solarData).maxPanelCount;
-    if (maxPanelCount > 0) {
-      setActivePanelCount(maxPanelCount);
-    }
+    const frame = window.requestAnimationFrame(() => {
+      if (maxPanelCount > 0) {
+        setActivePanelCount(maxPanelCount);
+      }
+    });
+
+    return () => window.cancelAnimationFrame(frame);
   }, [activePanelCount, solarData]);
 
   useEffect(() => {
@@ -869,7 +876,7 @@ function ReviewCard({ name, quote }: { name: string; quote: string }) {
           />
         ))}
       </div>
-      <p className="mt-5 text-sm leading-7 text-white/72">"{quote}"</p>
+      <p className="mt-5 text-sm leading-7 text-white/72">&ldquo;{quote}&rdquo;</p>
       <p className="mt-5 text-sm font-semibold text-white">{name}</p>
       <p className="mt-2 text-[0.62rem] font-semibold uppercase tracking-[0.22em] text-cyan-100/66">
         Verified Arizona homeowner

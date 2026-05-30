@@ -26,6 +26,7 @@ type LeadBody = {
   pdfGenerated?: boolean;
   solarSuitabilityScore?: number;
   twentyYearSavings?: number;
+  utilityBillFilePath?: string;
   utilityBillUploaded?: boolean;
   roofAreaSqm?: number;
   usableAreaSqm?: number;
@@ -101,6 +102,9 @@ export async function POST(request: Request) {
     const pdfGenerated = body.pdfGenerated ?? true;
     const pdfDownloaded = false;
     const utilityBillUploaded = body.utilityBillUploaded ?? false;
+    const utilityBillFilePath = utilityBillUploaded
+      ? toNullableText(body.utilityBillFilePath)
+      : null;
     const estimatedSavings =
       Number.isFinite(annualSavingsOverride) && annualSavingsOverride > 0
         ? Math.round(annualSavingsOverride)
@@ -218,6 +222,7 @@ export async function POST(request: Request) {
       quote_requested_at: quoteRequested ? new Date().toISOString() : null,
       solar_suitability_score: toNullableInteger(body.solarSuitabilityScore),
       twenty_year_savings: twentyYearSavings,
+      utility_bill_file_path: utilityBillFilePath,
       utility_bill_uploaded: utilityBillUploaded,
     };
 
@@ -233,13 +238,30 @@ export async function POST(request: Request) {
       selectedPanel: [body.selectedPanelBrand, body.selectedPanelModel]
         .filter(Boolean)
         .join(" "),
+      utilityBillUploaded,
     });
 
+    const scoredInsertWithoutUtilityBillPath = Object.fromEntries(
+      Object.entries(scoredInsert).filter(
+        ([key]) => key !== "utility_bill_file_path"
+      )
+    );
     let insertResult = await supabase
       .from("leads")
       .insert(scoredInsert)
       .select("id, name, email, address, monthly_bill, estimated_savings")
       .single();
+
+    if (
+      insertResult.error &&
+      isMissingColumn(insertResult.error.message, "utility_bill_file_path")
+    ) {
+      insertResult = await supabase
+        .from("leads")
+        .insert(scoredInsertWithoutUtilityBillPath)
+        .select("id, name, email, address, monthly_bill, estimated_savings")
+        .single();
+    }
 
     if (insertResult.error && shouldRetryLegacyInsert(insertResult.error.message)) {
       insertResult = await supabase
@@ -289,6 +311,7 @@ export async function POST(request: Request) {
       selectedPanelModel: toNullableText(body.selectedPanelModel),
       selectedPanelWatts: toNullableInteger(body.selectedPanelWatts),
       systemSizeKw: toNullableNumber(body.systemSizeKw),
+      utilityBillUploaded,
       bestTimeToContact,
       preferredContactMethod,
       quoteNotes,
@@ -307,6 +330,7 @@ export async function POST(request: Request) {
         leadScoreLabel: leadScore.label,
         quoteRequested,
         reportUrl: buildReportPdfPath(data.id),
+        utilityBillUploaded,
       },
     });
   } catch (error) {
@@ -340,6 +364,7 @@ async function sendOwnerLeadEmail({
   selectedPanelModel,
   selectedPanelWatts,
   systemSizeKw,
+  utilityBillUploaded,
 }: {
   address: string;
   annualSavings: number;
@@ -360,6 +385,7 @@ async function sendOwnerLeadEmail({
   selectedPanelModel: string | null;
   selectedPanelWatts: number | null;
   systemSizeKw: number | null;
+  utilityBillUploaded: boolean;
 }) {
   if (!resendApiKey || !ownerEmail) {
     return;
@@ -388,6 +414,11 @@ async function sendOwnerLeadEmail({
           selectedPanelBrand && selectedPanelModel
             ? `${selectedPanelBrand} ${selectedPanelModel} ${selectedPanelWatts ?? ""}W`.trim()
             : "Unavailable"
+        }`,
+        `Utility bill: ${
+          utilityBillUploaded
+            ? "Uploaded for quote review"
+            : "Not uploaded"
         }`,
         `Inverter: ${selectedInverterType ?? "Unavailable"}`,
         `Quote notes: ${quoteNotes ?? "None"}`,
@@ -422,4 +453,8 @@ function shouldRetryLegacyInsert(message: string) {
     normalized.includes("schema cache") ||
     normalized.includes("could not find")
   );
+}
+
+function isMissingColumn(message: string, column: string) {
+  return message.toLowerCase().includes(column.toLowerCase());
 }

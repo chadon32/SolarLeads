@@ -36,6 +36,7 @@ alter table public.leads add column if not exists energy_offset_pct numeric(10, 
 alter table public.leads add column if not exists pdf_generated boolean not null default false;
 alter table public.leads add column if not exists pdf_downloaded boolean not null default false;
 alter table public.leads add column if not exists utility_bill_uploaded boolean not null default false;
+alter table public.leads add column if not exists utility_bill_file_path text;
 alter table public.leads add column if not exists notes text;
 alter table public.leads add column if not exists follow_up_status text not null default 'Not started';
 alter table public.leads add column if not exists last_contacted_at timestamptz;
@@ -59,8 +60,25 @@ drop policy if exists "Allow anon select on leads" on public.leads;
 create index if not exists leads_created_at_idx on public.leads (created_at desc);
 create index if not exists leads_status_idx on public.leads (status);
 create index if not exists leads_lead_score_idx on public.leads (lead_score desc);
+create index if not exists leads_utility_bill_uploaded_idx on public.leads (utility_bill_uploaded);
 create index if not exists leads_follow_up_status_idx on public.leads (follow_up_status);
 create index if not exists leads_next_follow_up_at_idx on public.leads (next_follow_up_at);
 create index if not exists leads_quote_requested_idx on public.leads (quote_requested, quote_requested_at desc);
 create unique index if not exists leads_dedupe_idx
 on public.leads (lower(email), lower(address), monthly_bill);
+
+-- Optional private utility bill storage bucket.
+-- The app uploads with the Supabase service-role key through /api/utility-bills.
+-- Do not add public read policies for this bucket; the dashboard only shows upload status.
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'utility-bills',
+  'utility-bills',
+  false,
+  10485760,
+  array['application/pdf', 'image/jpeg', 'image/png']
+)
+on conflict (id) do update set
+  public = false,
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;

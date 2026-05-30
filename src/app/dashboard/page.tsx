@@ -247,6 +247,7 @@ export default async function DashboardPage({
         normalizeLeadStatus(lead.status) ??
         getLeadStatus(followUpsByLeadId.get(lead.id) ?? []),
       pdfStatus: "ready",
+      utilityBillUploaded: Boolean(lead.utility_bill_uploaded),
     };
   });
   const averageLeadScore = crmLeads.length

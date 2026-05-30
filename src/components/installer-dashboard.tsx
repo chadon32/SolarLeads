@@ -84,6 +84,7 @@ export type InstallerLead = {
   solarScore: number;
   status: InstallerLeadStatus;
   systemSizeKw: number;
+  utilityBillUploaded: boolean;
 };
 
 type InstallerDashboardProps = {
@@ -406,6 +407,7 @@ export function InstallerDashboard({
         "email",
         "lead_score",
         "lead_score_label",
+        "utility_bill_uploaded",
         "solar_score",
         "annual_savings",
         "system_size_kw",
@@ -424,6 +426,7 @@ export function InstallerDashboard({
         lead.email,
         String(lead.leadScore),
         lead.leadScoreLabel,
+        lead.utilityBillUploaded ? "Yes" : "No",
         String(lead.solarScore),
         String(Math.round(lead.annualSavings)),
         String(lead.systemSizeKw),
@@ -605,6 +608,11 @@ export function InstallerDashboard({
                     </td>
                     <td className="px-3 py-3">
                       <LeadScoreBadge label={lead.leadScoreLabel} score={lead.leadScore} />
+                      {lead.utilityBillUploaded ? (
+                        <div className="mt-1">
+                          <BillVerifiedBadge />
+                        </div>
+                      ) : null}
                     </td>
                     <td className="px-3 py-3 font-semibold text-white">
                       {lead.solarScore}/100
@@ -805,6 +813,7 @@ function LeadDrawer({
           </div>
           <div className="mt-4 flex flex-wrap gap-2">
             <LeadScoreBadge label={lead.leadScoreLabel} score={lead.leadScore} />
+            {lead.utilityBillUploaded ? <BillVerifiedBadge /> : null}
             <StatusBadge status={lead.status} />
           </div>
         </div>
@@ -822,6 +831,10 @@ function LeadDrawer({
 
           <section className="mt-4 grid grid-cols-2 gap-3">
             <DrawerMetric label="Roof score" value={`${lead.solarScore}/100`} />
+            <DrawerMetric
+              label="Utility bill"
+              value={lead.utilityBillUploaded ? "Bill verified" : "Not uploaded"}
+            />
             <DrawerMetric label="Panels" value={formatNumber(lead.panelCount)} />
             <DrawerMetric label="Savings" value={formatMoney(lead.annualSavings)} />
             <DrawerMetric label="System" value={`${formatDecimal(lead.systemSizeKw)} kW`} />
@@ -1164,6 +1177,14 @@ function LeadScoreBadge({
       title={`${score}/100`}
     >
       {score} - {label}
+    </span>
+  );
+}
+
+function BillVerifiedBadge() {
+  return (
+    <span className="inline-flex whitespace-nowrap rounded-full border border-emerald-300/20 bg-emerald-300/10 px-2.5 py-1 text-[0.58rem] font-bold uppercase tracking-[0.14em] text-emerald-100">
+      Bill verified
     </span>
   );
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { startTransition, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { ArrowDownToLine, Download, Search, Send, SlidersHorizontal, UserRound } from "lucide-react";
 import { formatDisplayAddress } from "@/lib/address-format";
@@ -44,6 +45,7 @@ export type DashboardCrmLead = {
   reportUrl: string;
   status: DashboardLeadStatus;
   pdfStatus: "ready" | "pending";
+  utilityBillUploaded: boolean;
 };
 
 export type DashboardCrmFollowUp = {
@@ -112,12 +114,18 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
   const deferredSearch = useDeferredValue(search);
 
   useEffect(() => {
-    setLeadItems(leads);
-    setSelectedLeadId((current) => current || leads[0]?.id || "");
+    const frame = window.requestAnimationFrame(() => {
+      setLeadItems(leads);
+      setSelectedLeadId((current) => current || leads[0]?.id || "");
+    });
+
+    return () => window.cancelAnimationFrame(frame);
   }, [leads]);
 
   useEffect(() => {
-    setFollowUpItems(followUps);
+    const frame = window.requestAnimationFrame(() => setFollowUpItems(followUps));
+
+    return () => window.cancelAnimationFrame(frame);
   }, [followUps]);
 
   const filteredLeads = useMemo(() => {
@@ -312,6 +320,7 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
         "selected_panel_brand",
         "selected_panel_model",
         "selected_panel_watts",
+        "utility_bill_uploaded",
         "system_cost_before_incentives",
         "federal_tax_credit",
         "net_system_cost",
@@ -334,6 +343,7 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
         lead.selectedPanelBrand ?? "",
         lead.selectedPanelModel ?? "",
         lead.selectedPanelWatts ? String(lead.selectedPanelWatts) : "",
+        lead.utilityBillUploaded ? "Yes" : "No",
         lead.systemCostBeforeIncentives
           ? String(Math.round(lead.systemCostBeforeIncentives))
           : "",
@@ -379,12 +389,12 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
               <ArrowDownToLine className="h-4 w-4" aria-hidden="true" />
               Export CSV
             </button>
-            <a
+            <Link
               href="/"
               className="inline-flex items-center rounded-full bg-white px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100"
             >
               Back to site
-            </a>
+            </Link>
           </div>
         </header>
 
@@ -595,6 +605,11 @@ function LeadTable({
                     <span className="mt-1 block truncate text-[0.68rem] font-semibold text-cyan-100/78">
                       Panel: {formatPanelSelection(lead)}
                     </span>
+                    {lead.utilityBillUploaded ? (
+                      <span className="mt-2 inline-flex rounded-full border border-emerald-300/20 bg-emerald-300/10 px-2 py-0.5 text-[0.58rem] font-bold uppercase tracking-[0.12em] text-emerald-100">
+                        Bill verified
+                      </span>
+                    ) : null}
                   </span>
                 </div>
               </button>
@@ -758,6 +773,7 @@ function LeadDetailPanel({
         <div className="flex shrink-0 flex-col items-end gap-2">
           <LeadScoreBadge label={lead.leadScoreLabel} score={lead.leadScore} />
           <StatusBadge status={lead.status} />
+          {lead.utilityBillUploaded ? <BillVerifiedBadge /> : null}
         </div>
       </div>
 
@@ -782,6 +798,10 @@ function LeadDetailPanel({
         <DetailRow label="Email" value={lead.email} />
         <DetailRow label="Phone" value={lead.phone} />
         <DetailRow label="Monthly bill" value={formatMoney(lead.monthlyBill)} />
+        <DetailRow
+          label="Utility bill"
+          value={lead.utilityBillUploaded ? "Uploaded for review" : "Not uploaded"}
+        />
         <DetailRow label="Annual savings" value={formatMoney(lead.annualSavings)} />
         <DetailRow label="System size" value={`${formatDecimal(lead.systemSizeKw)} kW`} />
         <DetailRow label="Panel count" value={`${lead.panelCount} panels`} />
@@ -1000,6 +1020,14 @@ function LeadScoreBadge({
       title={`${score}/100`}
     >
       {label}
+    </span>
+  );
+}
+
+function BillVerifiedBadge() {
+  return (
+    <span className="shrink-0 rounded-full border border-emerald-300/20 bg-emerald-300/10 px-2.5 py-1 text-[0.58rem] font-bold uppercase tracking-[0.14em] text-emerald-100">
+      Bill verified
     </span>
   );
 }
