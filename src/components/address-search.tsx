@@ -455,8 +455,8 @@ export function AddressSearch({
         </div>
 
         <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-white/58">
-          <span>Search powered by Google Places.</span>
           <span>
+            Search powered by Google Places.{" "}
             {fallbackActive
               ? "Local fallback"
               : placesReady
