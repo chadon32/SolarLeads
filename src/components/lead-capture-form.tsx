@@ -158,7 +158,7 @@ export function LeadCaptureForm({
   const [utilityBill, setUtilityBill] = useState<UtilityBillState>({
     status: "idle",
   });
-  const [smsConsent, setSmsConsent] = useState(false);
+  const [smsConsent, setSmsConsent] = useState(true);
   const lastSubmittedFingerprint = useRef<string>("");
 
   useEffect(() => {
@@ -475,6 +475,10 @@ export function LeadCaptureForm({
       });
 
       setMessage("Emailing your PDF report...");
+      console.info("[lead-sms-request]", {
+        consent: smsConsent,
+        leadId: payload.lead.id,
+      });
 
       await Promise.allSettled([
         fetch("/api/follow-ups", {

@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  FileText,
+  ArrowRight,
   ShieldCheck,
   Sparkles,
   Star,
@@ -523,16 +523,16 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
               className="mt-6 max-w-5xl text-5xl leading-[0.88] tracking-[-0.05em] text-white drop-shadow-[0_14px_50px_rgba(0,0,0,0.48)] md:text-6xl lg:text-7xl"
               style={{ fontFamily: "'Instrument Serif', serif" }}
             >
-              See your home with solar -{" "}
+              Your Arizona roof could save{" "}
               <span className="block italic text-white/90">
-                before you commit to anything.
+                $1,400-$2,800/year with solar.
               </span>
             </h1>
 
             <p className="mx-auto mt-5 max-w-2xl text-base leading-7 text-white/68 sm:text-lg">
-              Type your address below to review rooftop imagery, estimated panel
-              placement, and a modeled savings profile for your property. No
-              obligation.
+              Enter your address to see real satellite roof imagery, panel
+              placement, and your personalized savings estimate. No obligation.
+              Takes 60 seconds.
             </p>
               </>
             )}
@@ -635,10 +635,14 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
                 href={reportCtaHref}
                 className="liquid-glass inline-flex w-full items-center justify-center gap-2 rounded-full px-6 py-4 text-sm font-semibold text-white shadow-[0_22px_70px_rgba(103,232,249,0.18)] transition hover:-translate-y-0.5 sm:w-auto"
               >
-                <FileText className="h-4 w-4" aria-hidden="true" />
-                Generate Free Report
+                Analyze My Roof
+                <ArrowRight className="h-4 w-4" aria-hidden="true" />
               </a>
             </div>
+
+            <p className="mt-3 text-center text-xs font-semibold text-amber-200/90 sm:text-sm">
+              Federal 30% solar tax credit - check your savings
+            </p>
 
             <div className="mt-5 flex flex-wrap justify-center gap-2 text-[0.68rem] font-semibold uppercase tracking-[0.28em] text-white/70">
               {["No obligation", "Estimated ranges", "Arizona only"].map((pill) => (
@@ -1018,49 +1022,120 @@ function OptionalTrustSections() {
   return (
     <section className="relative z-10 mx-auto w-full max-w-7xl px-5 pb-8 sm:px-7 md:px-10 lg:px-12">
       <div className="liquid-glass rounded-[1.5rem] p-3 shadow-[0_18px_60px_rgba(0,0,0,0.3)] sm:p-4">
-        <details id="how-it-works" className="group border-b border-white/10 pb-3" open>
-          <summary className="flex cursor-pointer list-none items-center justify-between gap-4 rounded-[1rem] px-3 py-3 text-left transition hover:bg-white/[0.04]">
-            <span>
-              <span className="block text-xs font-semibold uppercase tracking-[0.28em] text-cyan-100/82">
-                Why it works
-              </span>
-              <span className="mt-1 block text-lg font-semibold text-white">
-                Roof, layout, and estimate without the pressure
-              </span>
+        <div id="how-it-works" className="border-b border-white/10 pb-3">
+          <div className="rounded-[1rem] px-3 py-3 text-left">
+            <span className="block text-xs font-semibold uppercase tracking-[0.28em] text-cyan-100/82">
+              Why it works
             </span>
-            <span className="text-sm font-semibold text-white/50 group-open:rotate-45">
-              +
+            <span className="mt-1 block text-lg font-semibold text-white">
+              Roof, layout, and estimate without the pressure
             </span>
-          </summary>
+          </div>
           <div className="grid gap-3 px-3 pb-3 pt-2 lg:grid-cols-3">
             {featureCards.map((card) => (
               <FeatureCard key={card.title} title={card.title} copy={card.copy} />
             ))}
           </div>
-        </details>
+        </div>
 
-        <details id="reviews" className="group pt-3" open>
-          <summary className="flex cursor-pointer list-none items-center justify-between gap-4 rounded-[1rem] px-3 py-3 text-left transition hover:bg-white/[0.04]">
-            <span>
-              <span className="block text-xs font-semibold uppercase tracking-[0.28em] text-cyan-100/82">
-                Homeowner reviews
-              </span>
-              <span className="mt-1 block text-lg font-semibold text-white">
-                What Arizona homeowners are saying
-              </span>
+        <div id="reviews" className="pt-3">
+          <div className="rounded-[1rem] px-3 py-3 text-left">
+            <span className="block text-xs font-semibold uppercase tracking-[0.28em] text-cyan-100/82">
+              Homeowner reviews
             </span>
-            <span className="text-sm font-semibold text-white/50 group-open:rotate-45">
-              +
+            <span className="mt-1 block text-lg font-semibold text-white">
+              What Arizona homeowners are saying
             </span>
-          </summary>
+          </div>
           <div className="grid snap-x snap-mandatory gap-3 overflow-x-auto px-3 pb-3 pt-2 lg:grid-cols-3 lg:overflow-visible">
             {testimonials.map((item) => (
               <ReviewCard key={item.name} name={item.name} quote={item.quote} />
             ))}
           </div>
-        </details>
+        </div>
+
+        <TrustIndicatorRow />
+
+        <FaqSection />
       </div>
     </section>
+  );
+}
+
+const faqItems = [
+  {
+    question: "Will this damage my roof?",
+    answer:
+      "No. Solar panels are mounted above your existing roof surface with non-invasive racking. Most installations take 1-2 days and include a roof inspection beforehand.",
+  },
+  {
+    question: "What if I sell my house?",
+    answer:
+      "Solar can add value. Homes with solar often attract buyers looking for lower utility costs, but final value depends on ownership structure, system age, and local market conditions.",
+  },
+  {
+    question: "Is this a sales call?",
+    answer:
+      "No. Your estimate is generated automatically. You only hear from a solar advisor if you request it by sending your full report.",
+  },
+  {
+    question: "How accurate is the estimate?",
+    answer:
+      "Roof geometry, panel placement, and sunlight data come from Google Solar API using satellite imagery. Savings are modeled from your monthly bill and Arizona utility assumptions. Final pricing requires installer confirmation.",
+  },
+  {
+    question: "Do I need good credit?",
+    answer:
+      "Many Arizona homeowners qualify for $0-down solar loans. Cash and lease options may also be available. Your report compares common options.",
+  },
+  {
+    question: "How long does installation take?",
+    answer:
+      "Installation commonly takes 1-2 days, plus additional time for permits, utility approval, and final inspection.",
+  },
+] as const;
+
+function TrustIndicatorRow() {
+  return (
+    <div className="mx-3 mt-4 flex flex-wrap items-center justify-center gap-3 rounded-[1rem] border border-white/8 bg-white/[0.035] px-4 py-3 text-xs font-semibold text-white/48">
+      <span>Powered by</span>
+      <span className="rounded-full border border-cyan-200/18 bg-cyan-300/10 px-3 py-1 text-cyan-100">
+        Google Solar API
+      </span>
+      <span className="hidden text-white/25 sm:inline">•</span>
+      <span>SSL secured</span>
+      <span className="hidden text-white/25 sm:inline">•</span>
+      <span>No spam, ever</span>
+      <span className="hidden text-white/25 sm:inline">•</span>
+      <span>Arizona licensed installers</span>
+    </div>
+  );
+}
+
+function FaqSection() {
+  return (
+    <div className="mx-3 mt-4 rounded-[1.15rem] border border-white/8 bg-slate-950/34 p-3">
+      <div className="px-2 py-2">
+        <p className="text-xs font-semibold uppercase tracking-[0.28em] text-cyan-100/82">
+          Common questions
+        </p>
+      </div>
+      <div className="grid gap-2">
+        {faqItems.map((item) => (
+          <details
+            key={item.question}
+            className="group rounded-[0.95rem] border border-white/8 bg-white/[0.035] px-4 py-3"
+          >
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-white">
+              {item.question}
+              <span className="text-cyan-100 group-open:hidden">+</span>
+              <span className="hidden text-cyan-100 group-open:inline">-</span>
+            </summary>
+            <p className="mt-3 text-sm leading-6 text-white/58">{item.answer}</p>
+          </details>
+        ))}
+      </div>
+    </div>
   );
 }
 

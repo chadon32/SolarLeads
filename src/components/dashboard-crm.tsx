@@ -782,6 +782,11 @@ function LeadTable({
                         Bill verified
                       </span>
                     ) : null}
+                    {shouldWarnSmsNotSent(lead) ? (
+                      <span className="ml-1 mt-2 inline-flex rounded-full border border-amber-300/25 bg-amber-300/12 px-2 py-0.5 text-[0.58rem] font-bold uppercase tracking-[0.12em] text-amber-100">
+                        No SMS
+                      </span>
+                    ) : null}
                   </span>
                 </div>
               </button>
@@ -825,6 +830,22 @@ function LeadTable({
                 >
                   Open
                 </a>
+                {lead.phone ? (
+                  <a
+                    href={`sms:${lead.phone.replace(/\D/g, "")}`}
+                    className="rounded-full border border-cyan-300/18 bg-cyan-300/10 px-3 py-2 text-xs font-semibold text-cyan-50 transition hover:bg-cyan-300/18"
+                  >
+                    Text
+                  </a>
+                ) : null}
+                {lead.email ? (
+                  <a
+                    href={`mailto:${lead.email}`}
+                    className="rounded-full border border-white/10 bg-white/[0.055] px-3 py-2 text-xs font-semibold text-white/78 transition hover:bg-white/[0.1] hover:text-white"
+                  >
+                    Email
+                  </a>
+                ) : null}
               </div>
             </article>
           );
@@ -885,12 +906,17 @@ function LeadPipelineCard({
           </div>
           <LeadScoreBadge label={lead.leadScoreLabel} score={lead.leadScore} />
         </div>
+        {shouldWarnSmsNotSent(lead) ? (
+          <span className="mt-2 inline-flex rounded-full border border-amber-300/25 bg-amber-300/12 px-2 py-0.5 text-[0.58rem] font-bold uppercase tracking-[0.12em] text-amber-100">
+            No SMS
+          </span>
+        ) : null}
         <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
           <MiniMetric label="Savings" value={formatMoney(lead.annualSavings)} />
           <MiniMetric label="Lead score" value={`${lead.leadScore}/100`} />
         </div>
       </button>
-      <div className="mt-3 flex items-center justify-between gap-2 border-t border-white/8 pt-3">
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-white/8 pt-3">
         <StatusSelect
           disabled={isUpdating}
           value={lead.status}
@@ -908,6 +934,22 @@ function LeadPipelineCard({
             PDF
           </button>
         )}
+        {lead.phone ? (
+          <a
+            href={`sms:${lead.phone.replace(/\D/g, "")}`}
+            className="rounded-full border border-cyan-300/18 bg-cyan-300/10 px-2.5 py-1.5 text-xs font-semibold text-cyan-50 transition hover:bg-cyan-300/18"
+          >
+            Text
+          </a>
+        ) : null}
+        {lead.email ? (
+          <a
+            href={`mailto:${lead.email}`}
+            className="rounded-full border border-white/10 bg-white/[0.055] px-2.5 py-1.5 text-xs font-semibold text-white/78 transition hover:bg-white/[0.1] hover:text-white"
+          >
+            Email
+          </a>
+        ) : null}
       </div>
     </article>
   );
@@ -1068,6 +1110,11 @@ function LeadDetailPanel({
               ? `SMS sent ${formatDateTime(lead.smsSentAt)}`
               : "No SMS sent yet"}
           </p>
+          {shouldWarnSmsNotSent(lead) ? (
+            <p className="mt-2 inline-flex rounded-full border border-amber-300/25 bg-amber-300/12 px-2 py-1 text-[0.62rem] font-bold uppercase tracking-[0.14em] text-amber-100">
+              SMS not sent - follow up manually
+            </p>
+          ) : null}
         </div>
         <StatusSelect value={lead.status} onChange={onStatusChange} />
         {pdfUnavailable ? (
@@ -1414,6 +1461,10 @@ function formatPanelSelection(lead: DashboardCrmLead) {
   }
 
   return "Not captured";
+}
+
+function shouldWarnSmsNotSent(lead: DashboardCrmLead) {
+  return lead.leadScore >= 70 && !lead.smsSentAt;
 }
 
 function buildPdfFilename(lead: DashboardCrmLead) {

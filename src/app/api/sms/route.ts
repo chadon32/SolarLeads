@@ -97,6 +97,7 @@ export async function POST(req: NextRequest) {
     !process.env.TWILIO_AUTH_TOKEN ||
     !process.env.TWILIO_PHONE_NUMBER
   ) {
+    console.warn("Twilio not configured - SMS skipped");
     return NextResponse.json({ skipped: true });
   }
 

@@ -866,6 +866,7 @@ function ViewportCanvas({
   selectedPanel?: SolarPanel | null;
 }) {
   const mapElementRef = useRef<HTMLDivElement | null>(null);
+  const initializedRef = useRef(false);
   const mapRef = useRef<GoogleMapInstance | null>(null);
   const overlayRefs = useRef<GoogleMapOverlayInstance[]>([]);
   const overlayRunRef = useRef(0);
@@ -895,7 +896,7 @@ function ViewportCanvas({
         return;
       }
 
-      if (!mapRef.current) {
+      if (!initializedRef.current) {
         mapElementRef.current.replaceChildren();
         mapRef.current = new googleApi.maps.Map(mapElementRef.current, {
           center,
@@ -907,6 +908,7 @@ function ViewportCanvas({
           keyboardShortcuts: false,
           gestureHandling: "greedy",
         });
+        initializedRef.current = true;
       }
 
       if (!mapRef.current) {
@@ -951,6 +953,7 @@ function ViewportCanvas({
       clearGoogleOverlays(overlayRefs.current);
       overlayRefs.current = [];
       mapRef.current = null;
+      initializedRef.current = false;
       mapElementRef.current?.replaceChildren();
     };
   }, []);

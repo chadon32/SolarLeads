@@ -19,11 +19,11 @@ export const metadata: Metadata = {
     process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"
   ),
   title: {
-    default: "See your home with solar",
+    default: "Arizona Solar Savings Estimate",
     template: "%s | Arizona Solar AI",
   },
   description:
-    "See your home with solar before you commit. Arizona homeowners can enter an address and get a roof analysis, panel placement, and a savings estimate.",
+    "Enter your Arizona address to see satellite roof imagery, panel placement, and a personalized solar savings estimate.",
   alternates: {
     canonical: "https://solar-leads-psi.vercel.app/",
   },
@@ -39,24 +39,24 @@ export const metadata: Metadata = {
   publisher: "Arizona Solar AI",
   openGraph: {
     type: "website",
-    title: "See your home with solar",
+    title: "Arizona Solar AI - Free roof solar estimate",
     description:
-      "See your home with solar before you commit. Arizona homeowners can preview roof placement and modeled savings in under a minute.",
+      "Enter your Arizona address to preview roof placement and modeled solar savings in under a minute.",
     siteName: "Arizona Solar AI",
     images: [
       {
         url: "/opengraph-image",
         width: 1200,
         height: 630,
-        alt: "Arizona Solar AI roof preview",
+        alt: "Arizona Solar AI - Free roof solar estimate",
       },
     ],
   },
   twitter: {
     card: "summary_large_image",
-    title: "See your home with solar",
+    title: "Arizona Solar AI - Free roof solar estimate",
     description:
-      "See your home with solar before you commit. Arizona homeowners can preview roof placement and modeled savings in under a minute.",
+      "Enter your Arizona address to preview roof placement and modeled solar savings in under a minute.",
     images: ["/opengraph-image"],
   },
   robots: {

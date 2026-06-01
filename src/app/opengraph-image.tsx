@@ -13,93 +13,60 @@ export default function OpenGraphImage() {
       <div
         style={{
           alignItems: "center",
-          background:
-            "radial-gradient(circle at 20% 15%, rgba(34,211,238,0.28), transparent 28%), linear-gradient(135deg, #020617 0%, #0f172a 48%, #111827 100%)",
-          color: "#ffffff",
+          background: "linear-gradient(135deg, #0a0a0a 0%, #0f1f0f 100%)",
           display: "flex",
           flexDirection: "column",
           height: "100%",
           justifyContent: "center",
-          padding: "64px",
+          fontFamily: "sans-serif",
+          padding: "60px",
           width: "100%",
         }}
       >
         <div
           style={{
-            alignItems: "center",
-            display: "flex",
-            gap: "26px",
+            color: "#22d3ee",
+            fontSize: 28,
+            letterSpacing: 4,
+            marginBottom: 24,
+            textTransform: "uppercase",
           }}
         >
-          <div
-            style={{
-              alignItems: "center",
-              background: "#fbbf24",
-              borderRadius: "999px",
-              boxShadow: "0 0 80px rgba(251,191,36,0.45)",
-              display: "flex",
-              height: "112px",
-              justifyContent: "center",
-              width: "112px",
-            }}
-          >
-            <div
-              style={{
-                background: "#020617",
-                borderRadius: "999px",
-                height: "42px",
-                opacity: 0.18,
-                width: "42px",
-              }}
-            />
-          </div>
-          <div style={{ display: "flex", flexDirection: "column" }}>
-            <div
-              style={{
-                color: "#67e8f9",
-                fontSize: 30,
-                fontWeight: 800,
-                letterSpacing: "0.28em",
-                textTransform: "uppercase",
-              }}
-            >
-              Arizona Solar AI
-            </div>
-            <div
-              style={{
-                fontSize: 76,
-                fontWeight: 800,
-                letterSpacing: "-0.055em",
-                lineHeight: 0.95,
-                marginTop: 20,
-                maxWidth: 860,
-              }}
-            >
-              See your roof with solar.
-            </div>
-          </div>
+          Arizona Solar AI
         </div>
         <div
           style={{
-            color: "#cbd5e1",
-            fontSize: 34,
-            marginTop: 40,
+            color: "#ffffff",
+            fontSize: 64,
+            fontWeight: 800,
+            lineHeight: 1.1,
+            marginBottom: 32,
+            textAlign: "center",
           }}
         >
-          Free Arizona rooftop analysis and savings estimate
+          See your roof with solar
         </div>
         <div
           style={{
-            border: "1px solid rgba(103,232,249,0.28)",
-            borderRadius: "999px",
-            color: "#67e8f9",
+            color: "#9ca3af",
+            fontSize: 28,
+            textAlign: "center",
+          }}
+        >
+          Free estimate for Arizona homeowners
+        </div>
+        <div
+          style={{
+            background: "#22d3ee",
+            borderRadius: 50,
+            color: "#000000",
             fontSize: 24,
             fontWeight: 700,
-            marginTop: 34,
-            padding: "14px 28px",
+            marginTop: 48,
+            padding: "16px 40px",
           }}
         >
-          solar-leads-psi.vercel.app
+          Get My Free Estimate →
         </div>
       </div>
     ),
