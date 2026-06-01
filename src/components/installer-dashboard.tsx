@@ -137,7 +137,35 @@ const dateFilters = [
 ] as const;
 
 function getReportViewerPath(leadId: string) {
-  return `/report/${encodeURIComponent(leadId)}`;
+  const token =
+    typeof window === "undefined"
+      ? ""
+      : new URLSearchParams(window.location.search).get("token")?.trim() ?? "";
+  const params = new URLSearchParams();
+
+  if (token) {
+    params.set("token", token);
+  }
+
+  const query = params.toString();
+  return `/report/${encodeURIComponent(leadId)}${query ? `?${query}` : ""}`;
+}
+
+function getDashboardAuthHeaders(
+  headers: Record<string, string> = {}
+): Record<string, string> {
+  if (typeof window === "undefined") {
+    return headers;
+  }
+
+  const token = new URLSearchParams(window.location.search).get("token")?.trim();
+
+  return token
+    ? {
+        ...headers,
+        Authorization: `Bearer ${token}`,
+      }
+    : headers;
 }
 
 export function InstallerDashboard({
@@ -260,8 +288,9 @@ export function InstallerDashboard({
 
     try {
       const response = await fetch("/api/leads/status", {
+        credentials: "same-origin",
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: getDashboardAuthHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ leadId: lead.id, status }),
       });
 
@@ -284,8 +313,9 @@ export function InstallerDashboard({
 
     try {
       const response = await fetch("/api/leads/notes", {
+        credentials: "same-origin",
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: getDashboardAuthHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ leadId: lead.id, notes }),
       });
 
@@ -318,6 +348,7 @@ export function InstallerDashboard({
 
     if (action === "first-follow-up-due") {
       const sequenceResponse = await fetch("/api/follow-ups", {
+        credentials: "same-origin",
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ leadId: lead.id }),
@@ -333,8 +364,9 @@ export function InstallerDashboard({
 
     try {
       const response = await fetch("/api/leads/follow-up", {
+        credentials: "same-origin",
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: getDashboardAuthHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           action,
           followUpNotes,

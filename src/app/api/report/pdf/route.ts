@@ -21,8 +21,13 @@ import {
   normalizeLeadScoreLabel,
   type LeadScoreLabel,
 } from "@/lib/lead-scoring";
+import { verifyDashboardRequest } from "@/lib/dashboard-auth";
 import { formatName } from "@/lib/name-format";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import {
+  buildReportViewerPath,
+  verifyReportSignature,
+} from "@/lib/report-access";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
 
 export const runtime = "nodejs";
@@ -157,12 +162,27 @@ export async function GET(request: Request) {
     }
 
     const raw = searchParams.get("raw") === "1" || searchParams.get("download") === "1";
-    if (!raw) {
-      return NextResponse.redirect(new URL(`/report/${encodeURIComponent(leadId)}`, request.url));
+    const reportAccess = verifyReportAccess(request, leadId, exp, token);
+
+    if (!reportAccess.ok) {
+      return reportAccess.response;
     }
 
-    void exp;
-    void token;
+    if (!raw) {
+      const viewerPath =
+        reportAccess.dashboardToken &&
+        reportAccess.dashboardToken !== "dashboard-session"
+          ? `/report/${encodeURIComponent(leadId)}?token=${encodeURIComponent(
+              reportAccess.dashboardToken
+            )}`
+          : reportAccess.dashboardToken === "dashboard-session"
+            ? `/report/${encodeURIComponent(leadId)}`
+            : buildReportViewerPath(leadId, {
+                expiresAt: Number(exp),
+              });
+
+      return NextResponse.redirect(new URL(viewerPath, request.url));
+    }
 
     const supabase = getSupabaseAdminClient();
     const scoredLeadSelect =
@@ -255,6 +275,44 @@ export async function GET(request: Request) {
       { status: 500 }
     );
   }
+}
+
+function verifyReportAccess(
+  request: Request,
+  leadId: string,
+  exp: string | null,
+  token: string | null
+):
+  | { ok: true; dashboardToken?: string }
+  | { ok: false; response: NextResponse } {
+  const dashboardAuth = verifyDashboardRequest(request);
+
+  if (dashboardAuth.ok) {
+    return { ok: true, dashboardToken: dashboardAuth.token };
+  }
+
+  const signature = verifyReportSignature(leadId, exp, token);
+
+  if (signature.ok) {
+    return { ok: true };
+  }
+
+  const message = signature.missingSecret
+    ? "Report links are not configured. Please contact Arizona Solar AI for a fresh report link."
+    : signature.expired
+      ? "This report link has expired. Please request a fresh report link."
+      : "This report link is invalid or missing a signature.";
+
+  return {
+    ok: false,
+    response: NextResponse.json(
+      { message },
+      {
+        status: signature.expired ? 410 : 403,
+        headers: { "Cache-Control": "no-store" },
+      }
+    ),
+  };
 }
 
 function buildProposalData(

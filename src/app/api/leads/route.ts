@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { Resend } from "resend";
 import { formatDisplayAddress } from "@/lib/address-format";
 import { calculateLeadScore } from "@/lib/lead-scoring";
 import { formatName } from "@/lib/name-format";
 import { buildReportPdfPath } from "@/lib/report-access";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { verifyUtilityBillUploadClaim } from "@/lib/utility-bill-claims";
 
 type LeadBody = {
   name?: string;
@@ -26,7 +27,7 @@ type LeadBody = {
   pdfGenerated?: boolean;
   solarSuitabilityScore?: number;
   twentyYearSavings?: number;
-  utilityBillFilePath?: string;
+  utilityBillUploadClaim?: string;
   utilityBillUploaded?: boolean;
   roofAreaSqm?: number;
   usableAreaSqm?: number;
@@ -44,6 +45,7 @@ type LeadBody = {
   selectedPanelBrand?: string;
   selectedPanelModel?: string;
   selectedPanelWatts?: number;
+  smsConsent?: boolean;
   systemCostBeforeIncentives?: number;
 };
 
@@ -106,12 +108,17 @@ export async function POST(request: Request) {
         : null);
     const pdfGenerated = body.pdfGenerated ?? true;
     const pdfDownloaded = false;
-    const utilityBillUploaded = body.utilityBillUploaded ?? false;
+    const verifiedUtilityBillPath = resolveUtilityBillUploadPath(
+      body.utilityBillUploadClaim
+    );
+    const utilityBillUploaded = Boolean(
+      body.utilityBillUploaded && verifiedUtilityBillPath
+    );
     const batteryAdded = Boolean(body.batteryAdded);
     const referralCode = createReferralCode();
     const referredBy = toNullableText(body.referredBy)?.toUpperCase() ?? null;
     const utilityBillFilePath = utilityBillUploaded
-      ? toNullableText(body.utilityBillFilePath)
+      ? verifiedUtilityBillPath
       : null;
     const estimatedSavings =
       Number.isFinite(annualSavingsOverride) && annualSavingsOverride > 0
@@ -234,9 +241,10 @@ export async function POST(request: Request) {
       quote_requested_at: quoteRequested ? new Date().toISOString() : null,
       referral_code: referralCode,
       referred_by: referredBy,
+      sms_consent: Boolean(body.smsConsent),
       solar_suitability_score: toNullableInteger(body.solarSuitabilityScore),
       twenty_year_savings: twentyYearSavings,
-      utility_bill_file_path: utilityBillFilePath,
+      utility_bill_file_path: null,
       utility_bill_uploaded: utilityBillUploaded,
     };
 
@@ -267,13 +275,11 @@ export async function POST(request: Request) {
             "battery_model",
             "referral_code",
             "referred_by",
+            "sms_consent",
             "utility_bill_file_path",
           ].includes(key)
       )
     );
-    // TODO: Move confirmed bill files from pending/YYYY-MM-DD/uuid.ext to
-    // leads/{leadId}/utility-bill.ext after insert, then delete orphaned
-    // pending uploads older than 24 hours with a scheduled cleanup job.
     let insertResult = await supabase
       .from("leads")
       .insert(scoredInsert)
@@ -323,6 +329,16 @@ export async function POST(request: Request) {
       );
     }
 
+    const finalizedUtilityBillPath =
+      utilityBillUploaded && utilityBillFilePath
+        ? await finalizeUtilityBillUpload(
+            supabase,
+            data.id,
+            utilityBillFilePath
+          )
+        : null;
+    const utilityBillStored = Boolean(finalizedUtilityBillPath);
+
     await sendOwnerLeadEmail({
       address,
       annualSavings: estimatedSavings,
@@ -343,7 +359,7 @@ export async function POST(request: Request) {
       batteryCost: batteryAdded ? toNullableInteger(body.batteryCost) : null,
       batteryModel: batteryAdded ? toNullableText(body.batteryModel) : null,
       systemSizeKw: toNullableNumber(body.systemSizeKw),
-      utilityBillUploaded,
+      utilityBillUploaded: utilityBillStored,
       bestTimeToContact,
       preferredContactMethod,
       quoteNotes,
@@ -363,7 +379,7 @@ export async function POST(request: Request) {
         quoteRequested,
         referralCode,
         reportUrl: buildReportPdfPath(data.id),
-        utilityBillUploaded,
+        utilityBillUploaded: utilityBillStored,
       },
     });
   } catch (error) {
@@ -375,6 +391,92 @@ export async function POST(request: Request) {
       { status: 500 }
     );
   }
+}
+
+async function finalizeUtilityBillUpload(
+  supabase: SupabaseClient,
+  leadId: string,
+  sourcePath: string
+) {
+  const bucketName = "utility-bills";
+  const normalizedSourcePath = sourcePath.trim();
+
+  if (!normalizedSourcePath.startsWith("pending/")) {
+    return normalizedSourcePath;
+  }
+
+  const extension =
+    normalizedSourcePath.toLowerCase().match(/\.(pdf|jpg|jpeg|png)$/)?.[0] ??
+    ".pdf";
+  const finalPath = `leads/${leadId}/utility-bill${
+    extension === ".jpeg" ? ".jpg" : extension
+  }`;
+  const storage = supabase.storage.from(bucketName);
+
+  try {
+    const moved = await storage.move(normalizedSourcePath, finalPath);
+
+    if (moved.error) {
+      const copied = await storage.copy(normalizedSourcePath, finalPath);
+
+      if (copied.error) {
+        console.error("[utility-bill-finalize-copy]", copied.error.message);
+        await markUtilityBillUnavailable(supabase, leadId);
+        return null;
+      }
+
+      await storage.remove([normalizedSourcePath]);
+    }
+
+    const { error } = await supabase
+      .from("leads")
+      .update({
+        utility_bill_file_path: finalPath,
+        utility_bill_uploaded: true,
+      })
+      .eq("id", leadId);
+
+    if (error) {
+      console.error("[utility-bill-finalize-update]", error.message);
+    }
+
+    return finalPath;
+  } catch (error) {
+    console.error("[utility-bill-finalize]", error);
+    await markUtilityBillUnavailable(supabase, leadId);
+    return null;
+  }
+}
+
+async function markUtilityBillUnavailable(
+  supabase: SupabaseClient,
+  leadId: string
+) {
+  const { error } = await supabase
+    .from("leads")
+    .update({
+      utility_bill_file_path: null,
+      utility_bill_uploaded: false,
+    })
+    .eq("id", leadId);
+
+  if (error) {
+    console.error("[utility-bill-finalize-reset]", error.message);
+  }
+}
+
+function resolveUtilityBillUploadPath(uploadClaim?: string) {
+  const claim = verifyUtilityBillUploadClaim(uploadClaim);
+
+  if (claim.ok) {
+    return claim.path;
+  }
+
+  if (uploadClaim) {
+    console.warn("[utility-bill-claim]", claim.reason);
+  }
+
+  return null;
 }
 
 async function sendOwnerLeadEmail({

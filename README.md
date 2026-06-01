@@ -33,6 +33,7 @@ NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=your_google_maps_browser_key_here
 NEXT_PUBLIC_GOOGLE_SOLAR_API_KEY=your_google_solar_api_key_here
 NEXT_PUBLIC_SITE_URL=https://your-domain.com
 REPORT_SIGNING_SECRET=your_report_link_signing_secret_here
+UTILITY_BILL_UPLOAD_SECRET=your_utility_bill_claim_secret_here
 RATE_LIMIT_SECRET=your_rate_limit_secret_here
 FOLLOW_UP_PROCESS_SECRET=your_follow_up_process_secret_here
 SUPABASE_URL=https://your-project.supabase.co
@@ -52,9 +53,15 @@ For Vercel, add the same values in the project environment settings. Keep `GOOGL
 
 Production report links fail closed unless `REPORT_SIGNING_SECRET` is configured. The dashboard also fails closed in production unless `DASHBOARD_ACCESS_TOKEN` is configured, because it can expose homeowner lead data.
 
+Report PDF URLs are signed with `exp` and `token` query parameters when `REPORT_SIGNING_SECRET` is present. In production, `/api/report/pdf` and `/report/[leadId]` reject unsigned, expired, invalid, or misconfigured public report links. Dashboard admins can still view/download reports by using the protected dashboard URL with `DASHBOARD_ACCESS_TOKEN`.
+
+Dashboard unlock forms create a signed HttpOnly `azsa_dashboard_session` cookie so day-to-day admin access does not keep the token in the URL. Dashboard APIs also accept the token via `Authorization: Bearer <DASHBOARD_ACCESS_TOKEN>`, `x-dashboard-token`, or a `token` query parameter for automation/backward compatibility. This protects lead status changes, manual follow-up sends, dashboard SMS resends, utility bill viewing, and dashboard PDF downloads.
+
 The rooftop analysis pipeline now uses Google Geocoding plus the Google Maps Platform Solar API by default. The analysis is live per address, so every selected rooftop pulls real Solar API values for panel count, roof area, pitch, and energy estimates.
 
 Run the SQL files in `supabase/` to create the `leads`, `lead_followups`, `request_events`, and `roof_analysis_cache` tables before testing the dashboard, rooftop analysis cache, or follow-up flow.
+
+Utility bill uploads are stored in the private `utility-bills` bucket. The browser receives only a short-lived signed upload claim, never the raw Supabase object path. New uploads land under `pending/YYYY-MM-DD/` and are moved to `leads/{leadId}/utility-bill.ext` after a lead is saved. Keep the bucket private. Do not create public storage policies or expose storage object paths in emails, CSVs, dashboard markup, or homeowner pages. A dashboard-protected cleanup route is available at `POST /api/utility-bills/cleanup` to remove pending uploads older than 24 hours; schedule it daily with the dashboard token.
 
 The follow-up processor route is ready for a scheduler call. If you use Vercel Cron or another job runner, send `FOLLOW_UP_PROCESS_SECRET` as a bearer token or `x-process-secret` header when calling `POST /api/follow-ups/process`.
 
@@ -71,6 +78,6 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
-Before deploying, make sure `GOOGLE_PLACES_API_KEY`, `GOOGLE_MAPS_API_KEY`, `GOOGLE_SOLAR_API_KEY`, `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`, `SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `REPORT_SIGNING_SECRET`, `RATE_LIMIT_SECRET`, `FOLLOW_UP_PROCESS_SECRET`, `TWILIO_*`, and any Resend variables are set in Vercel.
+Before deploying, make sure `GOOGLE_PLACES_API_KEY`, `GOOGLE_MAPS_API_KEY`, `GOOGLE_SOLAR_API_KEY`, `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`, `SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `REPORT_SIGNING_SECRET`, `DASHBOARD_ACCESS_TOKEN`, `RATE_LIMIT_SECRET`, `FOLLOW_UP_PROCESS_SECRET`, `TWILIO_*`, and any Resend variables are set in Vercel. `UTILITY_BILL_UPLOAD_SECRET` is recommended; if omitted, utility bill upload claims fall back to existing server-only secrets.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.

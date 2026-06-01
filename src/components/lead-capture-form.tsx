@@ -63,9 +63,9 @@ type SavedLead = {
 type UtilityBillState = {
   error?: string;
   fileName?: string;
-  filePath?: string;
   message?: string;
   status: "idle" | "uploading" | "uploaded" | "error" | "unavailable";
+  uploadClaim?: string;
 };
 
 const emptyValues: FormValues = {
@@ -158,6 +158,7 @@ export function LeadCaptureForm({
   const [utilityBill, setUtilityBill] = useState<UtilityBillState>({
     status: "idle",
   });
+  const [smsConsent, setSmsConsent] = useState(false);
   const lastSubmittedFingerprint = useRef<string>("");
 
   useEffect(() => {
@@ -291,8 +292,8 @@ export function LeadCaptureForm({
         body: formData,
       });
       const payload = (await response.json().catch(() => ({}))) as {
-        filePath?: string;
         message?: string;
+        uploadClaim?: string;
         uploaded?: boolean;
       };
 
@@ -307,15 +308,15 @@ export function LeadCaptureForm({
         return;
       }
 
-      if (!response.ok || !payload.filePath) {
+      if (!response.ok || !payload.uploadClaim) {
         throw new Error(payload.message || "Utility bill upload failed.");
       }
 
       setUtilityBill({
         fileName: file.name,
-        filePath: payload.filePath,
-        message: "Bill uploaded — estimate ready for review",
+        message: "Bill uploaded - estimate ready for review",
         status: "uploaded",
+        uploadClaim: payload.uploadClaim,
       });
     } catch (error) {
       setUtilityBill({
@@ -427,8 +428,8 @@ export function LeadCaptureForm({
           lat,
           lng,
           pdfGenerated: true,
-          utilityBillFilePath:
-            utilityBill.status === "uploaded" ? utilityBill.filePath : undefined,
+          utilityBillUploadClaim:
+            utilityBill.status === "uploaded" ? utilityBill.uploadClaim : undefined,
           utilityBillUploaded: utilityBill.status === "uploaded",
           batteryAdded: addBattery,
           batteryBrand: selectedBattery?.brand,
@@ -441,6 +442,7 @@ export function LeadCaptureForm({
           selectedPanelBrand: selectedPanel?.brand,
           selectedPanelModel: selectedPanel?.model,
           selectedPanelWatts: selectedPanel?.watts,
+          smsConsent,
           systemCostBeforeIncentives: totalSystemCost || panelFit?.systemCost,
           federalTaxCredit: totalFederalTaxCredit || panelFit?.taxCredit,
           netSystemCost: totalNetSystemCost || panelFit?.netCost,
@@ -474,11 +476,6 @@ export function LeadCaptureForm({
 
       setMessage("Emailing your PDF report...");
 
-      const reportUrl =
-        `${window.location.origin}/estimate?address=${encodeURIComponent(
-          payload.lead.address
-        )}`;
-
       await Promise.allSettled([
         fetch("/api/follow-ups", {
           method: "POST",
@@ -499,7 +496,7 @@ export function LeadCaptureForm({
             address: payload.lead.address,
             monthlyBill,
             report,
-            utilityBillUploaded: utilityBill.status === "uploaded",
+            utilityBillUploaded: Boolean(payload.lead.utilityBillUploaded),
           }),
         }),
         fetch("/api/sms", {
@@ -508,12 +505,9 @@ export function LeadCaptureForm({
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            address: formatDisplayAddress(payload.lead.address),
-            annualSavings: metrics.annualSavings,
-            firstName: formattedName.split(/\s+/)[0] ?? "there",
             leadId: payload.lead.id,
             phone: values.phone.trim(),
-            reportUrl,
+            phoneConsent: smsConsent,
           }),
         }),
       ]);
@@ -536,7 +530,7 @@ export function LeadCaptureForm({
           referralCode: payload.lead.referralCode,
           reportUrl: payload.lead.reportUrl,
           systemKw: metrics.systemKw,
-          utilityBillUploaded: utilityBill.status === "uploaded",
+          utilityBillUploaded: Boolean(payload.lead.utilityBillUploaded),
       };
 
       sessionStorage.setItem("arizonaSolarThankYou", JSON.stringify(thankYouPayload));
@@ -631,6 +625,19 @@ export function LeadCaptureForm({
               />
             </div>
           </div>
+
+          <label className="mt-4 flex items-start gap-3 rounded-[1rem] border border-white/8 bg-slate-950/30 px-4 py-3 text-sm leading-6 text-slate-300">
+            <input
+              type="checkbox"
+              checked={smsConsent}
+              onChange={(event) => setSmsConsent(event.target.checked)}
+              className="mt-1 h-4 w-4 rounded border-white/20 bg-slate-950 accent-cyan-300"
+            />
+            <span>
+              By providing your phone number, you agree to receive your solar
+              report and follow-up by text. Reply STOP to opt out.
+            </span>
+          </label>
 
           <div className="mt-4 grid gap-4 sm:grid-cols-2">
             <SelectField

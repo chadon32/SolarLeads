@@ -101,8 +101,16 @@ const sortOptions = [
 
 type SortValue = (typeof sortOptions)[number]["value"];
 
-function getReportDownloadPath(leadId: string) {
-  return `/api/report/pdf?leadId=${encodeURIComponent(leadId)}&raw=1&download=1`;
+function getReportDownloadPath(lead: DashboardCrmLead) {
+  try {
+    const url = new URL(lead.reportUrl, window.location.origin);
+    url.searchParams.set("raw", "1");
+    url.searchParams.set("download", "1");
+
+    return `${url.pathname}?${url.searchParams.toString()}`;
+  } catch {
+    return "";
+  }
 }
 
 function getEstimateReportPath(address: string) {
@@ -136,6 +144,21 @@ function getDashboardTokenFromLocation() {
   }
 
   return new URLSearchParams(window.location.search).get("token")?.trim() ?? "";
+}
+
+function getDashboardAuthHeaders(
+  headers: Record<string, string> = {}
+): Record<string, string> {
+  const token = getDashboardTokenFromLocation();
+
+  if (!token) {
+    return headers;
+  }
+
+  return {
+    ...headers,
+    Authorization: `Bearer ${token}`,
+  };
 }
 
 function getUtilityBillDownloadPath(
@@ -238,7 +261,16 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
     }
 
     try {
-      const response = await fetch(getReportDownloadPath(lead.id));
+      const downloadPath = getReportDownloadPath(lead);
+
+      if (!downloadPath) {
+        throw new Error("Signed PDF link is unavailable.");
+      }
+
+      const response = await fetch(downloadPath, {
+        credentials: "same-origin",
+        headers: getDashboardAuthHeaders(),
+      });
       const contentType = response.headers.get("content-type") ?? "";
 
       if (!response.ok || !contentType.includes("application/pdf")) {
@@ -274,6 +306,8 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
         getUtilityBillDownloadPath(lead.id, dashboardToken, "json"),
         {
           cache: "no-store",
+          credentials: "same-origin",
+          headers: getDashboardAuthHeaders(),
         }
       );
       const payload: { url?: string } = await response.json().catch(() => ({}));
@@ -311,10 +345,11 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
 
     try {
       const response = await fetch("/api/follow-ups/send-now", {
+        credentials: "same-origin",
         method: "POST",
-        headers: {
+        headers: getDashboardAuthHeaders({
           "Content-Type": "application/json",
-        },
+        }),
         body: JSON.stringify({ followUpId: followUp.id }),
       });
       const payload: {
@@ -353,17 +388,14 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
   const handleResendSms = async (lead: DashboardCrmLead) => {
     try {
       const response = await fetch("/api/sms", {
+        credentials: "same-origin",
         method: "POST",
-        headers: {
+        headers: getDashboardAuthHeaders({
           "Content-Type": "application/json",
-        },
+        }),
         body: JSON.stringify({
-          address: formatDisplayAddress(lead.address),
-          annualSavings: lead.annualSavings,
-          firstName: formatName(lead.name).split(/\s+/)[0] ?? "there",
+          dashboardResend: true,
           leadId: lead.id,
-          phone: lead.phone,
-          reportUrl: `${window.location.origin}${getEstimateReportPath(lead.address)}`,
         }),
       });
       const payload: { smsSentAt?: string; success?: boolean } = await response
@@ -397,10 +429,11 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
 
     try {
       const response = await fetch("/api/leads/status", {
+        credentials: "same-origin",
         method: "PATCH",
-        headers: {
+        headers: getDashboardAuthHeaders({
           "Content-Type": "application/json",
-        },
+        }),
         body: JSON.stringify({
           leadId: lead.id,
           status: nextStatus,

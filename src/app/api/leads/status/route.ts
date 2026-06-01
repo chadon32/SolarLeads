@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { requireDashboardAuth } from "@/lib/dashboard-auth";
 import { enforceRateLimit } from "@/lib/rate-limit";
 
 const supabaseUrl = process.env.SUPABASE_URL;
@@ -17,6 +18,12 @@ type LeadStatus = keyof typeof statusLabels;
 
 export async function PATCH(request: Request) {
   try {
+    const authError = requireDashboardAuth(request);
+
+    if (authError) {
+      return authError;
+    }
+
     const rateLimit = await enforceRateLimit({
       request,
       route: "api:leads:status",

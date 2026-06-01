@@ -1,5 +1,5 @@
-import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
+import { verifyDashboardRequest } from "@/lib/dashboard-auth";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
 
 export const runtime = "nodejs";
@@ -17,9 +17,9 @@ type UtilityBillLead = {
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
-  const token = getRequestToken(request, url);
+  const auth = verifyDashboardRequest(request);
 
-  if (!isDashboardTokenValid(token)) {
+  if (!auth.ok) {
     return NextResponse.json(
       { message: "Utility bill access is restricted to dashboard admins." },
       { status: 403 }
@@ -87,32 +87,6 @@ export async function GET(request: Request) {
   const response = NextResponse.redirect(signedUrl.data.signedUrl, 302);
   response.headers.set("Cache-Control", "no-store");
   return response;
-}
-
-function getRequestToken(request: Request, url: URL) {
-  const authHeader = request.headers.get("authorization")?.trim();
-
-  if (authHeader?.toLowerCase().startsWith("bearer ")) {
-    return authHeader.slice(7).trim();
-  }
-
-  return url.searchParams.get("token")?.trim() ?? "";
-}
-
-function isDashboardTokenValid(token: string) {
-  const expected = process.env.DASHBOARD_ACCESS_TOKEN?.trim();
-
-  if (!expected || !token) {
-    return false;
-  }
-
-  const tokenBuffer = Buffer.from(token);
-  const expectedBuffer = Buffer.from(expected);
-
-  return (
-    tokenBuffer.length === expectedBuffer.length &&
-    timingSafeEqual(tokenBuffer, expectedBuffer)
-  );
 }
 
 function billNotFound() {

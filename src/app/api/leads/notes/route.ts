@@ -1,9 +1,16 @@
 import { NextResponse } from "next/server";
+import { requireDashboardAuth } from "@/lib/dashboard-auth";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
 
 export async function PATCH(request: Request) {
   try {
+    const authError = requireDashboardAuth(request);
+
+    if (authError) {
+      return authError;
+    }
+
     const rateLimit = await enforceRateLimit({
       request,
       route: "api:leads:notes",

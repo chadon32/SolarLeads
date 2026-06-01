@@ -151,7 +151,8 @@ export function AddressSearch({
   const [predictions, setPredictions] = useState<Prediction[]>([]);
   const [open, setOpen] = useState(false);
   const [placesReady, setPlacesReady] = useState(false);
-  const [status, setStatus] = useState("Search powered by Google Places.");
+  const [fallbackActive, setFallbackActive] = useState(false);
+  const [status, setStatus] = useState("Address lookup ready.");
   const [activeIndex, setActiveIndex] = useState(-1);
   const [searching, setSearching] = useState(false);
   const [addressError, setAddressError] = useState<string | null>(null);
@@ -177,6 +178,7 @@ export function AddressSearch({
         }
 
         setStatus(`Selected: ${address}`);
+        setFallbackActive(false);
         setAddressError(null);
         onSelect({ address });
         return;
@@ -215,9 +217,11 @@ export function AddressSearch({
           lng: payload.lng,
         });
         setAddressError(null);
+        setFallbackActive(false);
         setStatus(`Selected: ${formattedAddress}`);
       } catch {
         setAddressError(lookupUnavailableMessage);
+        setFallbackActive(true);
         onSelect({ address: "" });
       }
     },
@@ -242,13 +246,15 @@ export function AddressSearch({
       if (!trimmed) {
         setPredictions([]);
         setActiveIndex(-1);
-        setStatus("Start typing to search real addresses.");
+        setStatus("Start typing to search Google Places.");
         setAddressError(null);
+        setFallbackActive(false);
         setSearching(false);
         return;
       }
 
       setStatus("Searching Google Places...");
+      setFallbackActive(false);
       setSearching(true);
       setAddressError(null);
 
@@ -270,7 +276,11 @@ export function AddressSearch({
           setPredictions(fallback);
           setActiveIndex(fallback.length ? 0 : -1);
           setPlacesReady(false);
-          setStatus(payload.message ?? "Google Places search is unavailable.");
+          setFallbackActive(true);
+          setStatus(
+            payload.message ??
+              "Local fallback active - Google Places search is unavailable."
+          );
           setAddressError(lookupUnavailableMessage);
           setSearching(false);
           return;
@@ -295,6 +305,7 @@ export function AddressSearch({
         setPredictions(nextPredictions);
         setActiveIndex(nextPredictions.length ? 0 : -1);
         setPlacesReady(true);
+        setFallbackActive(false);
         setStatus(
           nextPredictions.length
             ? "Choose the matching address to start the roof scan."
@@ -315,7 +326,8 @@ export function AddressSearch({
         setPredictions(fallback);
         setActiveIndex(fallback.length ? 0 : -1);
         setPlacesReady(false);
-        setStatus("Google Places search is unavailable.");
+        setFallbackActive(true);
+        setStatus("Local fallback active - Google Places search is unavailable.");
         setAddressError(lookupUnavailableMessage);
         setSearching(false);
       }
@@ -379,6 +391,7 @@ export function AddressSearch({
               setQuery(event.target.value);
               setOpen(true);
               setActiveIndex(-1);
+              setFallbackActive(false);
               setAddressError(null);
             }}
             onFocus={() => setOpen(true)}
@@ -443,9 +456,15 @@ export function AddressSearch({
 
         <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-white/58">
           <span>Search powered by Google Places.</span>
-          <span>{placesReady ? "Google Places active" : "Local fallback"}</span>
+          <span>
+            {fallbackActive
+              ? "Local fallback"
+              : placesReady
+                ? "Google Places active"
+                : "Address lookup ready"}
+          </span>
         </div>
-        {status !== "Search powered by Google Places." ? (
+        {status !== "Address lookup ready." ? (
           <p className="mt-2 text-xs leading-5 text-white/45">{status}</p>
         ) : null}
 

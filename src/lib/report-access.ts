@@ -4,6 +4,15 @@ const REPORT_SECRET = process.env.REPORT_SIGNING_SECRET?.trim();
 const SITE_URL =
   process.env.NEXT_PUBLIC_SITE_URL?.trim() ?? "http://localhost:3000";
 const REQUIRE_SIGNED_REPORTS = process.env.NODE_ENV === "production";
+const REPORT_LINK_TTL_SECONDS = 60 * 60 * 24 * 7;
+
+type ReportAccessOptions = {
+  absolute?: boolean;
+  download?: boolean;
+  expiresAt?: number;
+  expiresInSeconds?: number;
+  raw?: boolean;
+};
 
 function signValue(leadId: string, expiresAt: number) {
   if (!REPORT_SECRET) {
@@ -28,50 +37,71 @@ function constantTimeEquals(left: string, right: string) {
 
 export function buildReportPdfPath(
   leadId: string,
-  options: { expiresInSeconds?: number } = {}
+  options: ReportAccessOptions = {}
 ) {
-  void options;
-  return `/api/report/pdf?leadId=${encodeURIComponent(leadId)}`;
+  const params = new URLSearchParams({ leadId });
+
+  if (options.raw) {
+    params.set("raw", "1");
+  }
+
+  if (options.download) {
+    params.set("download", "1");
+  }
+
+  appendReportSignature(params, leadId, options);
+
+  return `/api/report/pdf?${params.toString()}`;
 }
 
 export function buildRawReportPdfPath(
   leadId: string,
   options: { download?: boolean } = {}
 ) {
-  const params = new URLSearchParams({
-    leadId,
-    raw: "1",
+  return buildReportPdfPath(leadId, {
+    download: options.download,
+    raw: true,
   });
-
-  if (options.download) {
-    params.set("download", "1");
-  }
-
-  return `/api/report/pdf?${params.toString()}`;
 }
 
-export function buildReportViewerPath(leadId: string) {
-  return `/report/${encodeURIComponent(leadId)}`;
+export function buildReportViewerPath(
+  leadId: string,
+  options: ReportAccessOptions = {}
+) {
+  const params = new URLSearchParams();
+  appendReportSignature(params, leadId, options);
+  const query = params.toString();
+
+  return `/report/${encodeURIComponent(leadId)}${query ? `?${query}` : ""}`;
 }
 
 export function buildSignedReportPdfPath(
   leadId: string,
-  options: { expiresInSeconds?: number } = {}
+  options: ReportAccessOptions = {}
 ) {
-  void options;
-  return buildReportPdfPath(leadId);
+  assertReportSigningConfigured();
+  return buildReportPdfPath(leadId, options);
 }
 
-export function buildReportAccessPath(leadId: string) {
-  return `/api/report/access?leadId=${encodeURIComponent(leadId)}`;
+export function buildReportAccessPath(
+  leadId: string,
+  options: ReportAccessOptions = {}
+) {
+  const params = new URLSearchParams({ leadId });
+  appendReportSignature(params, leadId, options);
+
+  return `/api/report/access?${params.toString()}`;
 }
 
 export function buildReportPdfUrl(
   leadId: string,
-  options: { expiresInSeconds?: number; absolute?: boolean } = {}
+  options: ReportAccessOptions = {}
 ) {
   const path = buildReportPdfPath(leadId, {
+    download: options.download,
+    expiresAt: options.expiresAt,
     expiresInSeconds: options.expiresInSeconds,
+    raw: options.raw,
   });
 
   if (!options.absolute) {
@@ -83,15 +113,38 @@ export function buildReportPdfUrl(
 
 export function buildReportAccessUrl(
   leadId: string,
-  options: { absolute?: boolean } = {}
+  options: ReportAccessOptions = {}
 ) {
-  const path = buildReportAccessPath(leadId);
+  const path = buildReportAccessPath(leadId, options);
 
   if (!options.absolute) {
     return path;
   }
 
   return new URL(path, SITE_URL).toString();
+}
+
+function appendReportSignature(
+  params: URLSearchParams,
+  leadId: string,
+  options: ReportAccessOptions = {}
+) {
+  if (!REPORT_SECRET) {
+    throw new Error("REPORT_SIGNING_SECRET is required to generate report links.");
+  }
+
+  const expiresAt =
+    options.expiresAt ??
+    Date.now() + (options.expiresInSeconds ?? REPORT_LINK_TTL_SECONDS) * 1000;
+
+  params.set("exp", String(Math.floor(expiresAt)));
+  params.set("token", signValue(leadId, Math.floor(expiresAt)));
+}
+
+function assertReportSigningConfigured() {
+  if (!REPORT_SECRET) {
+    throw new Error("REPORT_SIGNING_SECRET is required to generate signed report links.");
+  }
 }
 
 export function verifyReportSignature(

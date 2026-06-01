@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { Resend } from "resend";
+import { requireDashboardAuth } from "@/lib/dashboard-auth";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
 
@@ -28,6 +29,12 @@ const resendFromEmail =
 
 export async function POST(request: Request) {
   try {
+    const authError = requireDashboardAuth(request);
+
+    if (authError) {
+      return authError;
+    }
+
     const rateLimit = await enforceRateLimit({
       request,
       route: "api:follow-ups:send-now",

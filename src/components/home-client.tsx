@@ -582,10 +582,13 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
               ) : null}
               {neighborhoodData ? (
                 <div className="mt-3 rounded-[1.15rem] border border-emerald-300/12 bg-emerald-300/[0.055] px-4 py-3 text-sm text-emerald-50">
+                  <span className="mr-2 rounded-full border border-emerald-200/20 bg-emerald-200/10 px-2 py-0.5 text-[0.58rem] font-bold uppercase tracking-[0.16em] text-emerald-100">
+                    Estimated
+                  </span>
                   <span className="font-semibold">
-                    <AnimatedCount value={neighborhoodData.solarHomes} /> homes
+                    <AnimatedCount value={neighborhoodData.solarHomes} /> nearby homes
                   </span>{" "}
-                  within 1 mile have already gone solar.
+                  may already have solar based on local adoption data.
                 </div>
               ) : null}
               <label className="mt-4 block rounded-[1.35rem] border border-white/10 bg-black/18 px-4 py-3 text-left">

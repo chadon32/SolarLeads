@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { cookies } from "next/headers";
 import {
   InstallerDashboard,
   type InstallerFollowUpStatus,
@@ -10,6 +11,12 @@ import {
   calculateLeadScore,
   normalizeLeadScoreLabel,
 } from "@/lib/lead-scoring";
+import {
+  DASHBOARD_SESSION_COOKIE,
+  getDashboardAccessToken,
+  verifyDashboardSessionCookie,
+  verifyDashboardToken,
+} from "@/lib/dashboard-auth";
 import { buildReportPdfPath } from "@/lib/report-access";
 import { buildSolarReportFromSolarValues } from "@/lib/solar-report";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
@@ -88,13 +95,18 @@ export default async function InstallerDashboardPage({
   searchParams?: Promise<{ token?: string }>;
 }) {
   const token = (await searchParams)?.token?.trim();
-  const accessToken = process.env.DASHBOARD_ACCESS_TOKEN?.trim();
+  const cookieStore = await cookies();
+  const sessionAuth = verifyDashboardSessionCookie(
+    cookieStore.get(DASHBOARD_SESSION_COOKIE)?.value
+  );
+  const tokenAuth = verifyDashboardToken(token);
+  const accessToken = getDashboardAccessToken();
 
   if (process.env.NODE_ENV === "production" && !accessToken) {
     return <DashboardAccessGate configurationMissing />;
   }
 
-  if (accessToken && token !== accessToken) {
+  if (accessToken && !tokenAuth.ok && !sessionAuth.ok) {
     return <DashboardAccessGate />;
   }
 
@@ -291,7 +303,12 @@ function DashboardAccessGate({
         </p>
 
         {configurationMissing ? null : (
-          <form method="get" className="mt-6 flex flex-col gap-3 sm:flex-row">
+          <form
+            action="/api/dashboard/session"
+            method="post"
+            className="mt-6 flex flex-col gap-3 sm:flex-row"
+          >
+            <input type="hidden" name="next" value="/dashboard/installer" />
             <input
               name="token"
               type="password"
@@ -302,7 +319,7 @@ function DashboardAccessGate({
               type="submit"
               className="rounded-[1.1rem] bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100"
             >
-              Unlock dashboard
+              Start secure session
             </button>
           </form>
         )}

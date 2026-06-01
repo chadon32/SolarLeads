@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { createUtilityBillUploadClaim } from "@/lib/utility-bill-claims";
 
 export const runtime = "nodejs";
 
@@ -111,9 +112,24 @@ export async function POST(request: Request) {
       );
     }
 
+    const uploadClaim = createUtilityBillUploadClaim(upload.data.path);
+
+    if (!uploadClaim) {
+      await supabase.storage.from(bucketName).remove([upload.data.path]);
+
+      return NextResponse.json(
+        {
+          message:
+            "Utility bill upload security is not configured. You can still submit the report without the upload.",
+          uploaded: false,
+        },
+        { status: 503 }
+      );
+    }
+
     return NextResponse.json({
-      filePath: upload.data.path,
-      message: "Bill uploaded — estimate ready for review",
+      message: "Bill uploaded - estimate ready for review",
+      uploadClaim,
       uploaded: true,
     });
   } catch (error) {

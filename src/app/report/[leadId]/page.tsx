@@ -1,11 +1,25 @@
 import Link from "next/link";
+import { cookies } from "next/headers";
 import { formatDisplayAddress } from "@/lib/address-format";
+import {
+  DASHBOARD_SESSION_COOKIE,
+  verifyDashboardSessionCookie,
+  verifyDashboardToken,
+} from "@/lib/dashboard-auth";
+import {
+  buildRawReportPdfPath,
+  verifyReportSignature,
+} from "@/lib/report-access";
 import { buildSolarReportFromSolarValues } from "@/lib/solar-report";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
 
 type ReportViewerPageProps = {
   params: Promise<{
     leadId: string;
+  }>;
+  searchParams?: Promise<{
+    exp?: string;
+    token?: string;
   }>;
 };
 
@@ -32,11 +46,37 @@ export const metadata = {
   description: "View and download a homeowner solar report.",
 };
 
-export default async function ReportViewerPage({ params }: ReportViewerPageProps) {
+export default async function ReportViewerPage({
+  params,
+  searchParams,
+}: ReportViewerPageProps) {
   const { leadId } = await params;
+  const query = await searchParams;
+  const cookieStore = await cookies();
+  const access = verifyReportPageAccess(
+    leadId,
+    query,
+    cookieStore.get(DASHBOARD_SESSION_COOKIE)?.value
+  );
+
+  if (!access.ok) {
+    return (
+      <ReportShell>
+        <ReportUnavailable
+          body={access.body}
+          title={access.title}
+        />
+      </ReportShell>
+    );
+  }
+
   const lead = await getLead(leadId);
-  const rawPdfPath = `/api/report/pdf?leadId=${encodeURIComponent(leadId)}&raw=1`;
-  const downloadPdfPath = `${rawPdfPath}&download=1`;
+  const rawPdfPath = access.dashboardAccess
+    ? buildDashboardPdfPath(leadId, access.dashboardToken)
+    : buildRawReportPdfPath(leadId);
+  const downloadPdfPath = access.dashboardAccess
+    ? buildDashboardPdfPath(leadId, access.dashboardToken, true)
+    : buildRawReportPdfPath(leadId, { download: true });
 
   if (!lead) {
     return (
@@ -166,6 +206,109 @@ export default async function ReportViewerPage({ params }: ReportViewerPageProps
         </article>
       </section>
     </ReportShell>
+  );
+}
+
+function verifyReportPageAccess(
+  leadId: string,
+  query?: {
+    exp?: string;
+    token?: string;
+  },
+  dashboardSessionCookie?: string
+):
+  | { ok: true; dashboardAccess?: boolean; dashboardToken?: string }
+  | { ok: false; title: string; body: string } {
+  const dashboardToken = query?.token?.trim() ?? "";
+  const dashboardAuth = verifyDashboardToken(dashboardToken);
+
+  if (dashboardAuth.ok) {
+    return { ok: true, dashboardAccess: true, dashboardToken: dashboardAuth.token };
+  }
+
+  const dashboardSessionAuth = verifyDashboardSessionCookie(dashboardSessionCookie);
+
+  if (dashboardSessionAuth.ok) {
+    return { ok: true, dashboardAccess: true };
+  }
+
+  const signature = verifyReportSignature(
+    leadId,
+    query?.exp ?? null,
+    query?.token ?? null
+  );
+
+  if (signature.ok) {
+    return { ok: true };
+  }
+
+  if (signature.missingSecret) {
+    return {
+      ok: false,
+      title: "Report links are not configured.",
+      body: "Please contact Arizona Solar AI for a fresh report link.",
+    };
+  }
+
+  if (signature.expired) {
+    return {
+      ok: false,
+      title: "This report link has expired.",
+      body: "For homeowner privacy, report links expire. Please request a fresh report link.",
+    };
+  }
+
+  return {
+    ok: false,
+    title: "This report link is invalid.",
+    body: "For homeowner privacy, reports require a signed link or dashboard access.",
+  };
+}
+
+function buildDashboardPdfPath(
+  leadId: string,
+  token?: string,
+  download = false
+) {
+  const params = new URLSearchParams({
+    leadId,
+    raw: "1",
+  });
+
+  if (token) {
+    params.set("token", token);
+  }
+
+  if (download) {
+    params.set("download", "1");
+  }
+
+  return `/api/report/pdf?${params.toString()}`;
+}
+
+function ReportUnavailable({
+  body,
+  title,
+}: {
+  body: string;
+  title: string;
+}) {
+  return (
+    <section className="rounded-[1.4rem] border border-white/10 bg-white/[0.055] p-6 text-center shadow-[0_18px_70px_rgba(2,8,20,0.32)] backdrop-blur-xl">
+      <p className="text-xs font-semibold uppercase tracking-[0.32em] text-cyan-300">
+        Report unavailable
+      </p>
+      <h1 className="mt-3 text-3xl font-semibold tracking-tight">{title}</h1>
+      <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-slate-400">
+        {body}
+      </p>
+      <Link
+        href="/"
+        className="mt-6 inline-flex rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100"
+      >
+        Back to Arizona Solar AI
+      </Link>
+    </section>
   );
 }
 
