@@ -18,7 +18,7 @@ import {
   formatCompassDirection,
   STANDARD_PANEL_WATTS,
 } from "@/lib/solar-metrics";
-import { getPanelFit, type SolarPanel } from "@/lib/solarPanels";
+import { getPanelFit, getShortPanelName, type SolarPanel } from "@/lib/solarPanels";
 
 type ResolvedProperty = {
   address: string;
@@ -867,7 +867,6 @@ function ViewportCanvas({
 }) {
   const mapElementRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<GoogleMapInstance | null>(null);
-  const mapInitializedRef = useRef(false);
   const overlayRefs = useRef<GoogleMapOverlayInstance[]>([]);
   const overlayRunRef = useRef(0);
   const cameraFitTimeoutRef = useRef<number | null>(null);
@@ -896,9 +895,8 @@ function ViewportCanvas({
         return;
       }
 
-      if (!mapRef.current && !mapInitializedRef.current) {
+      if (!mapRef.current) {
         mapElementRef.current.replaceChildren();
-        mapInitializedRef.current = true;
         mapRef.current = new googleApi.maps.Map(mapElementRef.current, {
           center,
           zoom: 20,
@@ -953,7 +951,6 @@ function ViewportCanvas({
       clearGoogleOverlays(overlayRefs.current);
       overlayRefs.current = [];
       mapRef.current = null;
-      mapInitializedRef.current = false;
       mapElementRef.current?.replaceChildren();
     };
   }, []);
@@ -1180,9 +1177,7 @@ function ViewportCanvas({
               ) / 10
             }
             panelLabel={
-              selectedPanel
-                ? `Panel: ${selectedPanel.brand} ${selectedPanel.model} ${selectedPanel.watts}W`
-                : null
+              selectedPanel ? `Panel: ${getShortPanelName(selectedPanel)}` : null
             }
           />
         </>

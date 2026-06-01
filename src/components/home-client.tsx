@@ -25,6 +25,7 @@ import {
   getInverterOption,
   getPanelById,
   getPanelFit,
+  getShortPanelName,
   type InverterType,
 } from "@/lib/solarPanels";
 
@@ -576,15 +577,15 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
                   <span className="font-semibold">
                     {formatNumber(totalEstimateCount)}
                   </span>{" "}
-                  Arizona homeowners who have started a solar estimate.
+                  Arizona homeowners who have gotten their free estimate.
                 </div>
               ) : null}
               {neighborhoodData ? (
                 <div className="mt-3 rounded-[1.15rem] border border-emerald-300/12 bg-emerald-300/[0.055] px-4 py-3 text-sm text-emerald-50">
                   <span className="font-semibold">
-                    {formatNumber(neighborhoodData.solarHomes)} homes
+                    <AnimatedCount value={neighborhoodData.solarHomes} /> homes
                   </span>{" "}
-                  within 1 mile of this address are estimated to have already gone solar.
+                  within 1 mile have already gone solar.
                 </div>
               ) : null}
               <label className="mt-4 block rounded-[1.35rem] border border-white/10 bg-black/18 px-4 py-3 text-left">
@@ -672,7 +673,7 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
               </p>
               {hasValidAnalysis ? (
                 <p className="mt-1 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-100/70">
-                  Panel: {selectedPanel.brand} {selectedPanel.model} {selectedPanel.watts}W
+                  Panel: {getShortPanelName(selectedPanel)}
                 </p>
               ) : null}
             </div>
@@ -1014,7 +1015,7 @@ function OptionalTrustSections() {
   return (
     <section className="relative z-10 mx-auto w-full max-w-7xl px-5 pb-8 sm:px-7 md:px-10 lg:px-12">
       <div className="liquid-glass rounded-[1.5rem] p-3 shadow-[0_18px_60px_rgba(0,0,0,0.3)] sm:p-4">
-        <details id="how-it-works" className="group border-b border-white/10 pb-3" open={false}>
+        <details id="how-it-works" className="group border-b border-white/10 pb-3" open>
           <summary className="flex cursor-pointer list-none items-center justify-between gap-4 rounded-[1rem] px-3 py-3 text-left transition hover:bg-white/[0.04]">
             <span>
               <span className="block text-xs font-semibold uppercase tracking-[0.28em] text-cyan-100/82">
@@ -1035,7 +1036,7 @@ function OptionalTrustSections() {
           </div>
         </details>
 
-        <details id="reviews" className="group pt-3">
+        <details id="reviews" className="group pt-3" open>
           <summary className="flex cursor-pointer list-none items-center justify-between gap-4 rounded-[1rem] px-3 py-3 text-left transition hover:bg-white/[0.04]">
             <span>
               <span className="block text-xs font-semibold uppercase tracking-[0.28em] text-cyan-100/82">
@@ -1077,6 +1078,31 @@ function formatMoney(value: number) {
     maximumFractionDigits: 0,
     style: "currency",
   }).format(value);
+}
+
+function AnimatedCount({ value }: { value: number }) {
+  const [displayValue, setDisplayValue] = useState(0);
+
+  useEffect(() => {
+    const durationMs = 1000;
+    const startedAt = window.performance.now();
+    let frameId = 0;
+
+    const tick = (time: number) => {
+      const progress = Math.min((time - startedAt) / durationMs, 1);
+      setDisplayValue(Math.round(value * progress));
+
+      if (progress < 1) {
+        frameId = window.requestAnimationFrame(tick);
+      }
+    };
+
+    frameId = window.requestAnimationFrame(tick);
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [value]);
+
+  return <>{formatNumber(displayValue)}</>;
 }
 
 function formatNumber(value: number) {

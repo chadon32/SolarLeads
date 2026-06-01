@@ -5,20 +5,20 @@ export type BatteryOption = {
   capacityKwh: number;
   powerKw: number;
   cost: number;
-  warranty_years: number;
+  warrantyYears: number;
   backupHours: number;
   bestFor: string;
 };
 
 export const BATTERY_OPTIONS: BatteryOption[] = [
   {
-    id: "powerwall",
+    id: "powerwall3",
     brand: "Tesla",
     model: "Powerwall 3",
     capacityKwh: 13.5,
     powerKw: 11.5,
     cost: 11500,
-    warranty_years: 10,
+    warrantyYears: 10,
     backupHours: 12,
     bestFor: "Whole home backup",
   },
@@ -29,24 +29,24 @@ export const BATTERY_OPTIONS: BatteryOption[] = [
     capacityKwh: 18,
     powerKw: 6.7,
     cost: 9800,
-    warranty_years: 10,
+    warrantyYears: 10,
     backupHours: 16,
     bestFor: "Longest backup time",
   },
   {
-    id: "encharge10",
+    id: "enphase10t",
     brand: "Enphase",
     model: "IQ Battery 10T",
     capacityKwh: 10.5,
     powerKw: 3.84,
     cost: 8500,
-    warranty_years: 15,
+    warrantyYears: 15,
     backupHours: 9,
-    bestFor: "Enphase microinverter systems",
+    bestFor: "Best with Enphase microinverters",
   },
 ];
 
-export const DEFAULT_BATTERY_OPTION_ID = "powerwall";
+export const DEFAULT_BATTERY_OPTION_ID = "powerwall3";
 
 export function getBatteryById(batteryId?: string | null) {
   return (

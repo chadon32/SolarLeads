@@ -108,12 +108,12 @@ export function ThankYouClient() {
       : "";
   const whatsappUrl = referralUrl
     ? `https://wa.me/?text=${encodeURIComponent(
-        `I just got my free Arizona solar estimate. Get yours here: ${referralUrl}`
+        `I just got my free solar estimate - my roof could save $${summary.annualSavings}/yr. Get yours: ${referralUrl}`
       )}`
     : "";
   const smsUrl = referralUrl
     ? `sms:?body=${encodeURIComponent(
-        `Check out this free Arizona solar estimate tool: ${referralUrl}`
+        `Free Arizona solar estimate tool: ${referralUrl}`
       )}`
     : "";
 
@@ -270,10 +270,11 @@ export function ThankYouClient() {
                   Referral program
                 </p>
                 <h2 className="mt-3 text-2xl font-semibold text-white">
-                  Give $200, get $200
+                  Know a neighbor thinking about solar?
                 </h2>
                 <p className="mt-2 text-sm leading-6 text-slate-300">
-                  Share your link with friends or neighbors. Referral credit applies after the referred homeowner completes installation.
+                  Share your link. When they submit their estimate, you both get
+                  recognized in our referral program.
                 </p>
                 <div className="mt-4 rounded-[1rem] border border-white/10 bg-slate-950/45 p-3">
                   <p className="break-all text-sm font-semibold text-white">
@@ -286,7 +287,7 @@ export function ThankYouClient() {
                     }}
                     className="mt-3 w-full rounded-full bg-white px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100"
                   >
-                    Copy referral link
+                    Copy link
                   </button>
                 </div>
                 <div className="mt-3 grid gap-2 sm:grid-cols-2">

@@ -10,6 +10,7 @@ import {
   LEAD_SCORE_EXPLANATION,
   type LeadScoreLabel,
 } from "@/lib/lead-scoring";
+import { getShortPanelBrand } from "@/lib/solarPanels";
 
 export type DashboardLeadStatus =
   | "new"
@@ -1019,6 +1020,22 @@ function LeadDetailPanel({
       </div>
 
       <div className="mt-5 grid gap-2">
+        <div
+          className={`rounded-[1rem] border px-4 py-3 text-sm ${
+            lead.smsSentAt
+              ? "border-emerald-300/20 bg-emerald-300/10 text-emerald-50"
+              : "border-white/10 bg-slate-950/42 text-slate-400"
+          }`}
+        >
+          <p className="text-[0.58rem] font-bold uppercase tracking-[0.2em]">
+            SMS status
+          </p>
+          <p className="mt-1 font-semibold">
+            {lead.smsSentAt
+              ? `SMS sent ${formatDateTime(lead.smsSentAt)}`
+              : "No SMS sent yet"}
+          </p>
+        </div>
         <StatusSelect value={lead.status} onChange={onStatusChange} />
         {pdfUnavailable ? (
           <div className="rounded-full border border-white/10 bg-slate-950/42 px-4 py-3 text-center text-sm font-semibold text-slate-500">
@@ -1356,7 +1373,7 @@ function formatInverterLabel(value: string | null) {
 
 function formatPanelSelection(lead: DashboardCrmLead) {
   if (lead.selectedPanelBrand && lead.selectedPanelWatts) {
-    return `${lead.selectedPanelBrand} ${lead.selectedPanelWatts}W`;
+    return `${getShortPanelBrand(lead.selectedPanelBrand)} ${lead.selectedPanelWatts}W`;
   }
 
   if (lead.selectedPanelBrand && lead.selectedPanelModel) {

@@ -843,7 +843,8 @@ function BatteryStorageSection({
             Add battery storage?
           </h4>
           <p className="mt-2 text-xs leading-5 text-white/50">
-            Backup power during outages. Batteries can qualify for the 30% federal tax credit.
+            Power your home during outages. Arizona averages 1.3 outages per year.
+            Batteries can qualify for the 30% federal tax credit.
           </p>
         </div>
         <button
@@ -914,7 +915,7 @@ function BatteryCard({
         <PanelFinancialRow label="Backup" value={`~${battery.backupHours} hrs`} />
         <PanelFinancialRow label="Cost" value={formatMoney(battery.cost)} />
         <PanelFinancialRow label="After credit" value={formatMoney(afterCredit)} />
-        <PanelFinancialRow label="Warranty" value={`${battery.warranty_years} yrs`} />
+        <PanelFinancialRow label="Warranty" value={`${battery.warrantyYears} yrs`} />
         <PanelFinancialRow label="Power" value={`${battery.powerKw} kW`} />
       </div>
     </button>

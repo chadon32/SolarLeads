@@ -185,6 +185,36 @@ export function getPanelById(panelId?: string | null) {
   );
 }
 
+export function getShortPanelBrand(brand?: string | null) {
+  const normalized = brand?.trim() ?? "";
+
+  if (!normalized) {
+    return "Default";
+  }
+
+  if (/qcells/i.test(normalized)) {
+    return "Qcells";
+  }
+
+  if (/canadian/i.test(normalized)) {
+    return "Canadian";
+  }
+
+  if (/jinko/i.test(normalized)) {
+    return "Jinko";
+  }
+
+  return normalized;
+}
+
+export function getShortPanelName(panel?: Pick<SolarPanel, "brand" | "watts"> | null) {
+  if (!panel) {
+    return "Default";
+  }
+
+  return `${getShortPanelBrand(panel.brand)} ${panel.watts}W`;
+}
+
 export function getInverterOption(inverterType?: InverterType | string | null) {
   return (
     INVERTER_OPTIONS.find((option) => option.id === inverterType) ??

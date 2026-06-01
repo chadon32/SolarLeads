@@ -45,7 +45,7 @@ export const metadata: Metadata = {
     siteName: "Arizona Solar AI",
     images: [
       {
-        url: "/og-image.jpg",
+        url: "/opengraph-image",
         width: 1200,
         height: 630,
         alt: "Arizona Solar AI roof preview",
@@ -57,7 +57,7 @@ export const metadata: Metadata = {
     title: "See your home with solar",
     description:
       "See your home with solar before you commit. Arizona homeowners can preview roof placement and modeled savings in under a minute.",
-    images: ["/og-image.jpg"],
+    images: ["/opengraph-image"],
   },
   robots: {
     index: true,
