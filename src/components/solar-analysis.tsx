@@ -195,6 +195,9 @@ const DISPLAY_PANEL_WIDTH_METERS = 1.0;
 const PANEL_MODULE_GAP_METERS = 0.2032;
 const PANEL_COLLISION_EPSILON_METERS = 0.01;
 const PANEL_VISUAL_INSET_METERS = -0.04;
+const MIN_PANEL_PIXEL_WIDTH = 14;
+const MIN_PANEL_PIXEL_HEIGHT = 8;
+const PANEL_PIXEL_PADDING = 2;
 
 export function SolarAnalysis({
   address,
@@ -1798,26 +1801,152 @@ function createSolarPanelOverlays({
   roofData: RoofAnalysis;
   selectedPanelCount: number;
 }) {
-  return buildProfessionalPanelLayout({
+  const placements = buildProfessionalPanelLayout({
     roofData,
     selectedPanelCount,
-  }).map((placement) => {
-    const path = placement.displayPath.map(
-      (point) => new googleApi.maps.LatLng(point.lat, point.lng)
-    );
-
-    return new googleApi.maps.Polygon({
-      clickable: false,
-      fillColor: "#3b82f6",
-      fillOpacity: 0.75,
-      map,
-      paths: path,
-      strokeColor: "#ffffff",
-      strokeOpacity: 0.92,
-      strokeWeight: 1,
-      zIndex: 30,
-    });
   });
+
+  if (!placements.length) {
+    return [];
+  }
+
+  const overlay = createSolarPanelVisualOverlay({
+    googleApi,
+    map,
+    placements,
+  });
+
+  return overlay ? [overlay] : [];
+}
+
+function createSolarPanelVisualOverlay({
+  googleApi,
+  map,
+  placements,
+}: {
+  googleApi: GoogleMapsApi;
+  map: GoogleMapInstance;
+  placements: PanelLayoutPlacement[];
+}) {
+  const container = document.createElement("div");
+  container.style.position = "absolute";
+  container.style.inset = "0";
+  container.style.pointerEvents = "none";
+  container.style.zIndex = "34";
+
+  const overlay = new googleApi.maps.OverlayView();
+
+  overlay.onAdd = function onAdd() {
+    this.getPanes()?.overlayLayer?.appendChild(container);
+  };
+
+  overlay.draw = function draw() {
+    const projection = this.getProjection();
+    container.replaceChildren();
+
+    placements.forEach((placement, index) => {
+      const centerPixel = projection.fromLatLngToDivPixel(
+        new googleApi.maps.LatLng(
+          placement.panel.center.lat,
+          placement.panel.center.lng
+        )
+      );
+      const projectedPath = placement.displayPath
+        .map((point) =>
+          projection.fromLatLngToDivPixel(
+            new googleApi.maps.LatLng(point.lat, point.lng)
+          )
+        )
+        .filter((point): point is { x: number; y: number } => Boolean(point));
+
+      if (!centerPixel || projectedPath.length < 4) {
+        return;
+      }
+
+      const relativePoints = projectedPath.map((point) => ({
+        x: point.x - centerPixel.x,
+        y: point.y - centerPixel.y,
+      }));
+      const bounds = getPixelBounds(relativePoints);
+      const width = Math.max(bounds.maxX - bounds.minX, 1);
+      const height = Math.max(bounds.maxY - bounds.minY, 1);
+      const scale = Math.max(
+        1,
+        MIN_PANEL_PIXEL_WIDTH / width,
+        MIN_PANEL_PIXEL_HEIGHT / height
+      );
+      const scaledPoints = relativePoints.map((point) => ({
+        x: centerPixel.x + point.x * scale,
+        y: centerPixel.y + point.y * scale,
+      }));
+      const scaledBounds = getPixelBounds(scaledPoints);
+      const left = scaledBounds.minX - PANEL_PIXEL_PADDING;
+      const top = scaledBounds.minY - PANEL_PIXEL_PADDING;
+      const svgWidth =
+        scaledBounds.maxX - scaledBounds.minX + PANEL_PIXEL_PADDING * 2;
+      const svgHeight =
+        scaledBounds.maxY - scaledBounds.minY + PANEL_PIXEL_PADDING * 2;
+      const svgPoints = scaledPoints
+        .map(
+          (point) =>
+            `${roundTo(point.x - left, 2)},${roundTo(point.y - top, 2)}`
+        )
+        .join(" ");
+
+      const panelNode = document.createElement("div");
+      panelNode.style.position = "absolute";
+      panelNode.style.left = `${left}px`;
+      panelNode.style.top = `${top}px`;
+      panelNode.style.width = `${svgWidth}px`;
+      panelNode.style.height = `${svgHeight}px`;
+      panelNode.style.filter = "drop-shadow(0 2px 5px rgba(2,8,20,0.42))";
+      panelNode.innerHTML = `
+        <svg width="${svgWidth}" height="${svgHeight}" viewBox="0 0 ${svgWidth} ${svgHeight}" aria-hidden="true">
+          <polygon
+            points="${svgPoints}"
+            fill="rgba(59,130,246,0.82)"
+            stroke="rgba(255,255,255,0.96)"
+            stroke-width="1.35"
+            vector-effect="non-scaling-stroke"
+          />
+          <polyline
+            points="${svgPoints.split(" ").slice(0, 2).join(" ")}"
+            fill="none"
+            stroke="rgba(191,219,254,0.72)"
+            stroke-width="1"
+            vector-effect="non-scaling-stroke"
+          />
+        </svg>
+      `;
+      panelNode.dataset.panelIndex = String(index);
+      container.appendChild(panelNode);
+    });
+  };
+
+  overlay.onRemove = function onRemove() {
+    container.remove();
+  };
+
+  overlay.setMap(map);
+
+  return overlay;
+}
+
+function getPixelBounds(points: Array<{ x: number; y: number }>) {
+  return points.reduce(
+    (bounds, point) => ({
+      maxX: Math.max(bounds.maxX, point.x),
+      maxY: Math.max(bounds.maxY, point.y),
+      minX: Math.min(bounds.minX, point.x),
+      minY: Math.min(bounds.minY, point.y),
+    }),
+    {
+      maxX: Number.NEGATIVE_INFINITY,
+      maxY: Number.NEGATIVE_INFINITY,
+      minX: Number.POSITIVE_INFINITY,
+      minY: Number.POSITIVE_INFINITY,
+    }
+  );
 }
 
 function createDsmPlaneOverlays({
@@ -3613,6 +3742,11 @@ async function resolveProperty(
 
 function formatAzimuth(value: number) {
   return formatCompassDirection(value);
+}
+
+function roundTo(value: number, precision: number) {
+  const factor = 10 ** precision;
+  return Math.round(value * factor) / factor;
 }
 
 function clampNumber(value: number, min: number, max: number) {
