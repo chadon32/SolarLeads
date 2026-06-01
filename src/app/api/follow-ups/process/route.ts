@@ -1,24 +1,42 @@
 import { NextResponse } from "next/server";
+import { timingSafeEqual } from "node:crypto";
 import { processDueFollowUps } from "@/lib/follow-up-processing";
 
 function isAuthorized(request: Request) {
   const configuredSecret = process.env.FOLLOW_UP_PROCESS_SECRET?.trim();
+
   if (!configuredSecret) {
-    return true;
+    return process.env.NODE_ENV !== "production";
   }
 
   const { searchParams } = new URL(request.url);
-  const querySecret = searchParams.get("secret");
-  const headerSecret = request.headers.get("x-process-secret");
+  const querySecret = searchParams.get("secret")?.trim();
+  const headerSecret = request.headers.get("x-process-secret")?.trim();
   const bearer = request.headers
     .get("authorization")
     ?.replace(/^Bearer\s+/i, "")
     .trim();
 
   return (
-    querySecret === configuredSecret ||
-    headerSecret === configuredSecret ||
-    bearer === configuredSecret
+    safeSecretEquals(querySecret, configuredSecret) ||
+    safeSecretEquals(headerSecret, configuredSecret) ||
+    safeSecretEquals(bearer, configuredSecret)
+  );
+}
+
+function safeSecretEquals(provided: string | null | undefined, expected: string) {
+  const value = provided?.trim() ?? "";
+
+  if (!value) {
+    return false;
+  }
+
+  const providedBuffer = Buffer.from(value);
+  const expectedBuffer = Buffer.from(expected);
+
+  return (
+    providedBuffer.length === expectedBuffer.length &&
+    timingSafeEqual(providedBuffer, expectedBuffer)
   );
 }
 
