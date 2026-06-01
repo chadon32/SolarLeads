@@ -14,6 +14,10 @@ import { SolarAnalysis } from "@/components/solar-analysis";
 import { SolarReportDashboard, type DetailTab } from "@/components/solar-report-dashboard";
 import { formatDisplayAddress } from "@/lib/address-format";
 import { trackEvent } from "@/lib/analytics";
+import {
+  DEFAULT_BATTERY_OPTION_ID,
+  getBatteryById,
+} from "@/lib/batteries";
 import type { RoofAnalysis } from "@/lib/roof-analysis";
 import { buildSolarMetrics } from "@/lib/solar-metrics";
 import {
@@ -64,16 +68,42 @@ type HomeClientProps = {
   initialAddress?: string;
 };
 
+type SavedProgress = {
+  address: string;
+  annualSavings?: number;
+  monthlyBill?: number;
+  panelCount?: number;
+  savedAt: string;
+  selectedPanelId?: string;
+  systemKw?: number;
+};
+
+type NeighborhoodData = {
+  rate: number;
+  solarHomes: number;
+  totalEstimateCount?: number;
+  zip: string;
+};
+
 export function HomeClient({ initialAddress = "" }: HomeClientProps) {
   const [selectedAddress, setSelectedAddress] = useState(initialAddress);
   const [solarData, setSolarData] = useState<RoofAnalysis | null>(null);
   const [activePanelCount, setActivePanelCount] = useState(0);
   const [monthlyBill, setMonthlyBill] = useState(200);
   const [selectedPanelId, setSelectedPanelId] = useState(DEFAULT_SOLAR_PANEL_ID);
+  const [addBattery, setAddBattery] = useState(false);
+  const [batteryOption, setBatteryOption] = useState(DEFAULT_BATTERY_OPTION_ID);
   const [selectedInverterType, setSelectedInverterType] =
     useState<InverterType>("string");
   const [reportTab, setReportTab] = useState<DetailTab>("overview");
   const [shareStatus, setShareStatus] = useState("");
+  const [savedProgress, setSavedProgress] = useState<SavedProgress | null>(null);
+  const [showReturnBanner, setShowReturnBanner] = useState(false);
+  const [neighborhoodData, setNeighborhoodData] =
+    useState<NeighborhoodData | null>(null);
+  const [totalEstimateCount, setTotalEstimateCount] = useState<number | null>(
+    null
+  );
   const [showProgressNav, setShowProgressNav] = useState(false);
   const [activeProgressSection, setActiveProgressSection] =
     useState("rooftop-analysis");
@@ -86,6 +116,83 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
   const hasValidAnalysis = Boolean(solarData?.validSite);
   const heroCompact = Boolean(selectedAddress);
   const selectedPanel = getPanelById(selectedPanelId);
+  const selectedBattery = addBattery ? getBatteryById(batteryOption) : null;
+
+  useEffect(() => {
+    const referralCode = new URLSearchParams(window.location.search)
+      .get("ref")
+      ?.trim();
+
+    if (referralCode) {
+      window.sessionStorage.setItem("referredBy", referralCode.toUpperCase());
+    }
+
+    let frame = 0;
+
+    try {
+      const saved = window.localStorage.getItem("solarProgress");
+      if (saved) {
+        const parsed = JSON.parse(saved) as SavedProgress;
+        const ageHours =
+          (Date.now() - new Date(parsed.savedAt).getTime()) / 3_600_000;
+
+        if (ageHours > 48) {
+          window.localStorage.removeItem("solarProgress");
+        } else if (parsed.address) {
+          frame = window.requestAnimationFrame(() => {
+            setSavedProgress(parsed);
+            setShowReturnBanner(true);
+          });
+        }
+      }
+    } catch {
+      window.localStorage.removeItem("solarProgress");
+    }
+
+    void fetch("/api/neighborhood", { cache: "no-store" })
+      .then((response) => response.json())
+      .then((payload: { totalEstimateCount?: number }) => {
+        if (typeof payload.totalEstimateCount === "number") {
+          setTotalEstimateCount(payload.totalEstimateCount);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      if (frame) {
+        window.cancelAnimationFrame(frame);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const zip = extractArizonaZip(selectedAddress);
+
+    if (!zip) {
+      const frame = window.requestAnimationFrame(() => setNeighborhoodData(null));
+      return () => window.cancelAnimationFrame(frame);
+    }
+
+    let cancelled = false;
+
+    void fetch(`/api/neighborhood?zip=${encodeURIComponent(zip)}`, {
+      cache: "no-store",
+    })
+      .then((response) => response.json())
+      .then((payload: NeighborhoodData) => {
+        if (!cancelled && payload?.zip) {
+          setNeighborhoodData(payload);
+          if (typeof payload.totalEstimateCount === "number") {
+            setTotalEstimateCount(payload.totalEstimateCount);
+          }
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedAddress]);
 
   useEffect(() => {
     if (!solarData?.validSite) {
@@ -196,6 +303,56 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
     };
   }, [activePanelCount, monthlyBill, selectedInverterType, selectedPanel, solarData]);
 
+  useEffect(() => {
+    if (!solarData?.validSite || !selectedAddress || !reportMetrics) {
+      return;
+    }
+
+    window.localStorage.setItem(
+      "solarProgress",
+      JSON.stringify({
+        address: selectedAddress,
+        annualSavings: reportMetrics.annualSavings,
+        monthlyBill,
+        panelCount: reportMetrics.panelCount,
+        savedAt: new Date().toISOString(),
+        selectedPanelId,
+        systemKw: reportMetrics.systemKw,
+      })
+    );
+  }, [
+    monthlyBill,
+    reportMetrics,
+    selectedAddress,
+    selectedPanelId,
+    solarData?.validSite,
+  ]);
+
+  const restoreProgress = () => {
+    if (!savedProgress?.address) {
+      return;
+    }
+
+    setSelectedAddress(savedProgress.address);
+    setSelectedLocation(null);
+    setSolarData(null);
+    setMonthlyBill(savedProgress.monthlyBill || 200);
+    setActivePanelCount(savedProgress.panelCount || 0);
+    setSelectedPanelId(savedProgress.selectedPanelId || DEFAULT_SOLAR_PANEL_ID);
+    setShowReturnBanner(false);
+
+    window.requestAnimationFrame(() => {
+      document
+        .getElementById("rooftop-analysis")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  };
+
+  const dismissReturnBanner = () => {
+    window.localStorage.removeItem("solarProgress");
+    setShowReturnBanner(false);
+  };
+
   const openSendReportTab = () => {
     setReportTab("send");
     window.requestAnimationFrame(() => {
@@ -239,6 +396,13 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
         show={showProgressNav && hasValidAnalysis}
         onNavigate={handleProgressNavClick}
       />
+      {showReturnBanner && savedProgress ? (
+        <ReturnBanner
+          address={savedProgress.address}
+          onDismiss={dismissReturnBanner}
+          onRestore={restoreProgress}
+        />
+      ) : null}
       {shareStatus ? (
         <div className="fixed right-5 top-20 z-[60] hidden rounded-full border border-emerald-200/20 bg-emerald-400/18 px-4 py-2 text-sm font-semibold text-emerald-50 shadow-[0_18px_45px_rgba(6,95,70,0.28)] backdrop-blur-xl md:block">
           {shareStatus}
@@ -406,6 +570,23 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
                   );
                 }}
               />
+              {totalEstimateCount ? (
+                <div className="mt-3 rounded-[1.15rem] border border-emerald-300/12 bg-emerald-300/[0.055] px-4 py-3 text-sm text-emerald-50">
+                  Join{" "}
+                  <span className="font-semibold">
+                    {formatNumber(totalEstimateCount)}
+                  </span>{" "}
+                  Arizona homeowners who have started a solar estimate.
+                </div>
+              ) : null}
+              {neighborhoodData ? (
+                <div className="mt-3 rounded-[1.15rem] border border-emerald-300/12 bg-emerald-300/[0.055] px-4 py-3 text-sm text-emerald-50">
+                  <span className="font-semibold">
+                    {formatNumber(neighborhoodData.solarHomes)} homes
+                  </span>{" "}
+                  within 1 mile of this address are estimated to have already gone solar.
+                </div>
+              ) : null}
               <label className="mt-4 block rounded-[1.35rem] border border-white/10 bg-black/18 px-4 py-3 text-left">
                 <span className="block text-[0.62rem] font-semibold uppercase tracking-[0.26em] text-cyan-100/78">
                   What is your monthly electric bill?
@@ -556,8 +737,12 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
                 onTabChange={setReportTab}
                 selectedInverterType={selectedInverterType}
                 selectedPanelId={selectedPanelId}
+                addBattery={addBattery}
+                batteryOption={batteryOption}
                 onSelectedInverterTypeChange={setSelectedInverterType}
                 onSelectedPanelIdChange={setSelectedPanelId}
+                onAddBatteryChange={setAddBattery}
+                onBatteryOptionChange={setBatteryOption}
                 sendReportContent={
                   <LeadCaptureForm
                     initialAddress={selectedAddress}
@@ -568,6 +753,8 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
                     lng={selectedLocation?.lng}
                     selectedInverterType={selectedInverterType}
                     selectedPanel={selectedPanel}
+                    addBattery={addBattery}
+                    selectedBattery={selectedBattery}
                     onMonthlyBillChange={setMonthlyBill}
                   />
                 }
@@ -749,6 +936,44 @@ function ProgressNav({
   );
 }
 
+function ReturnBanner({
+  address,
+  onDismiss,
+  onRestore,
+}: {
+  address: string;
+  onDismiss: () => void;
+  onRestore: () => void;
+}) {
+  return (
+    <div className="fixed inset-x-4 bottom-4 z-[70] mx-auto flex max-w-5xl flex-col gap-3 rounded-[1.3rem] border border-cyan-200/18 bg-slate-950/92 px-4 py-3 text-sm text-white shadow-[0_24px_80px_rgba(0,0,0,0.42)] backdrop-blur-xl sm:flex-row sm:items-center sm:justify-between">
+      <p className="leading-6 text-white/72">
+        Welcome back. Your estimate for{" "}
+        <span className="font-semibold text-white">
+          {formatDisplayAddress(address)}
+        </span>{" "}
+        is saved.
+      </p>
+      <div className="flex shrink-0 flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={onRestore}
+          className="rounded-full bg-cyan-200 px-4 py-2 text-xs font-semibold text-slate-950 transition hover:bg-white"
+        >
+          Continue my estimate
+        </button>
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="rounded-full border border-white/10 bg-white/[0.055] px-4 py-2 text-xs font-semibold text-white/72 transition hover:bg-white/[0.1] hover:text-white"
+        >
+          Start fresh
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function SectionIntro({
   eyebrow,
   title,
@@ -852,6 +1077,16 @@ function formatMoney(value: number) {
     maximumFractionDigits: 0,
     style: "currency",
   }).format(value);
+}
+
+function formatNumber(value: number) {
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
+function extractArizonaZip(address: string) {
+  return address.match(/\bAZ\s+(\d{5})(?:-\d{4})?\b/i)?.[1] ?? "";
 }
 
 function FeatureCard({ title, copy }: { title: string; copy: string }) {

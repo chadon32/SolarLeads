@@ -44,7 +44,9 @@ const resendApiKey = process.env.RESEND_API_KEY?.trim();
 const resendFromEmail = process.env.RESEND_FROM_EMAIL?.trim();
 const twilioAccountSid = process.env.TWILIO_ACCOUNT_SID?.trim();
 const twilioAuthToken = process.env.TWILIO_AUTH_TOKEN?.trim();
-const twilioFromNumber = process.env.TWILIO_FROM_NUMBER?.trim();
+const twilioFromNumber =
+  process.env.TWILIO_PHONE_NUMBER?.trim() ||
+  process.env.TWILIO_FROM_NUMBER?.trim();
 
 export async function markInitialFollowUpDelivered(leadId: string) {
   try {

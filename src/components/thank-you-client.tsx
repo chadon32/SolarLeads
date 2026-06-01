@@ -15,11 +15,19 @@ import { formatDisplayAddress } from "@/lib/address-format";
 type ThankYouPayload = {
   address?: string;
   annualSavings?: number;
+  batteryAdded?: boolean;
+  batteryBrand?: string;
+  batteryCost?: number;
+  batteryModel?: string;
+  email?: string;
   firstName?: string;
+  panelBrand?: string;
   panelCount?: number;
+  panelModel?: string;
   paybackYears?: number;
   preferredContactMethod?: string;
   quoteRequested?: boolean;
+  referralCode?: string | null;
   reportUrl?: string;
   systemKw?: number;
   utilityBillUploaded?: boolean;
@@ -30,11 +38,19 @@ const fallbackPayload: Required<Omit<ThankYouPayload, "reportUrl">> & {
 } = {
   address: "Your Arizona home",
   annualSavings: 0,
+  batteryAdded: false,
+  batteryBrand: "",
+  batteryCost: 0,
+  batteryModel: "",
+  email: "",
   firstName: "there",
+  panelBrand: "",
   panelCount: 0,
+  panelModel: "",
   paybackYears: 0,
   preferredContactMethod: "Phone",
   quoteRequested: false,
+  referralCode: null,
   systemKw: 0,
   utilityBillUploaded: false,
 };
@@ -46,7 +62,9 @@ export function ThankYouClient() {
     let frame = 0;
 
     try {
-      const stored = window.sessionStorage.getItem("arizonaSolarThankYou");
+      const stored =
+        window.sessionStorage.getItem("solarLeadData") ||
+        window.sessionStorage.getItem("arizonaSolarThankYou");
       const parsed = stored ? (JSON.parse(stored) as ThankYouPayload) : {};
       frame = window.requestAnimationFrame(() => setPayload(parsed));
     } catch {
@@ -65,13 +83,39 @@ export function ThankYouClient() {
       annualSavings: safeNumber(source.annualSavings),
       firstName: source.firstName?.trim() || "there",
       panelCount: Math.max(0, Math.round(safeNumber(source.panelCount))),
+      panelBrand: source.panelBrand || "",
+      panelModel: source.panelModel || "",
       paybackYears: safeNumber(source.paybackYears),
       preferredContactMethod: source.preferredContactMethod || "Phone",
       quoteRequested: Boolean(source.quoteRequested),
+      referralCode: source.referralCode || null,
       systemKw: safeNumber(source.systemKw),
       utilityBillUploaded: Boolean(source.utilityBillUploaded),
     };
   }, [payload]);
+  const calendlyUrl = useMemo(
+    () =>
+      buildCalendlyUrl({
+        address: summary.address,
+        email: summary.email,
+        firstName: summary.firstName,
+      }),
+    [summary.address, summary.email, summary.firstName]
+  );
+  const referralUrl =
+    summary.referralCode && typeof window !== "undefined"
+      ? `${window.location.origin}?ref=${encodeURIComponent(summary.referralCode)}`
+      : "";
+  const whatsappUrl = referralUrl
+    ? `https://wa.me/?text=${encodeURIComponent(
+        `I just got my free Arizona solar estimate. Get yours here: ${referralUrl}`
+      )}`
+    : "";
+  const smsUrl = referralUrl
+    ? `sms:?body=${encodeURIComponent(
+        `Check out this free Arizona solar estimate tool: ${referralUrl}`
+      )}`
+    : "";
 
   const loaded = payload !== null;
 
@@ -86,7 +130,7 @@ export function ThankYouClient() {
             <div>
               <span className="inline-flex items-center gap-2 rounded-full border border-emerald-300/20 bg-emerald-300/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.22em] text-emerald-100">
                 <CheckCircle2 className="h-4 w-4" />
-                {summary.quoteRequested ? "Get 3 Local Quotes" : "Report ready"}
+                {summary.quoteRequested ? "Request received" : "Report ready"}
               </span>
               <h1 className="mt-5 text-4xl font-semibold tracking-tight text-white sm:text-5xl">
                 {summary.quoteRequested
@@ -95,7 +139,7 @@ export function ThankYouClient() {
               </h1>
               <p className="mt-4 max-w-2xl text-base leading-7 text-slate-300">
                 {summary.quoteRequested
-                  ? "Your quote request was received. A solar specialist can follow up with your report details."
+                  ? "Your request was received. A solar specialist can follow up with your report details."
                   : "We emailed your personalized Arizona Solar AI proposal and saved the roof model summary for your next step."}
               </p>
               {summary.utilityBillUploaded ? (
@@ -184,7 +228,7 @@ export function ThankYouClient() {
                   index="2"
                   icon={SunMedium}
                   title="Get matched with local quote options"
-                  body="A solar specialist can follow up with your report details and quote preferences."
+                  body="A solar specialist can follow up with your report details and final review preferences."
                 />
                 <NextStep
                   index="3"
@@ -195,10 +239,108 @@ export function ThankYouClient() {
               </div>
             </article>
           </div>
+
+          <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_0.85fr]">
+            <section className="rounded-[1.5rem] border border-white/10 bg-slate-950/42 p-5">
+              <p className="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-200">
+                Book your free consultation
+              </p>
+              <h2 className="mt-3 text-2xl font-semibold text-white">
+                Pick a time that works for you
+              </h2>
+              <p className="mt-2 text-sm leading-6 text-slate-400">
+                No pressure, just answers about your roof model, savings estimate, and next steps.
+              </p>
+              {calendlyUrl ? (
+                <div
+                  className="calendly-inline-widget mt-4 overflow-hidden rounded-[1.2rem] bg-white"
+                  data-url={calendlyUrl}
+                  style={{ minWidth: "320px", height: "630px" }}
+                />
+              ) : (
+                <div className="mt-4 rounded-[1.2rem] border border-white/10 bg-white/[0.04] p-5 text-sm text-slate-300">
+                  Booking calendar is not connected yet. Add NEXT_PUBLIC_CALENDLY_URL to enable online scheduling.
+                </div>
+              )}
+            </section>
+
+            {summary.referralCode ? (
+              <section className="rounded-[1.5rem] border border-emerald-300/14 bg-emerald-300/[0.055] p-5">
+                <p className="text-xs font-semibold uppercase tracking-[0.3em] text-emerald-100">
+                  Referral program
+                </p>
+                <h2 className="mt-3 text-2xl font-semibold text-white">
+                  Give $200, get $200
+                </h2>
+                <p className="mt-2 text-sm leading-6 text-slate-300">
+                  Share your link with friends or neighbors. Referral credit applies after the referred homeowner completes installation.
+                </p>
+                <div className="mt-4 rounded-[1rem] border border-white/10 bg-slate-950/45 p-3">
+                  <p className="break-all text-sm font-semibold text-white">
+                    {referralUrl}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void navigator.clipboard?.writeText(referralUrl);
+                    }}
+                    className="mt-3 w-full rounded-full bg-white px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100"
+                  >
+                    Copy referral link
+                  </button>
+                </div>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  <a
+                    href={whatsappUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="rounded-full border border-white/10 bg-white/[0.06] px-4 py-2.5 text-center text-sm font-semibold text-white transition hover:bg-white/[0.1]"
+                  >
+                    Share on WhatsApp
+                  </a>
+                  <a
+                    href={smsUrl}
+                    className="rounded-full border border-white/10 bg-white/[0.06] px-4 py-2.5 text-center text-sm font-semibold text-white transition hover:bg-white/[0.1]"
+                  >
+                    Share via text
+                  </a>
+                </div>
+              </section>
+            ) : null}
+          </div>
         </div>
       </section>
     </main>
   );
+}
+
+function buildCalendlyUrl({
+  address,
+  email,
+  firstName,
+}: {
+  address?: string;
+  email?: string;
+  firstName?: string;
+}) {
+  const baseUrl = process.env.NEXT_PUBLIC_CALENDLY_URL?.trim();
+
+  if (!baseUrl) {
+    return "";
+  }
+
+  try {
+    const url = new URL(baseUrl);
+    url.searchParams.set("hide_landing_page_details", "1");
+    url.searchParams.set("hide_gdpr_banner", "1");
+    url.searchParams.set("primary_color", "22d3ee");
+    if (firstName) url.searchParams.set("name", firstName);
+    if (email) url.searchParams.set("email", email);
+    if (address) url.searchParams.set("a1", address);
+    return url.toString();
+  } catch {
+    return "";
+  }
 }
 
 function SummaryMetric({ label, value }: { label: string; value: string }) {

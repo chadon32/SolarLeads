@@ -22,6 +22,11 @@ import {
   buildSolarMetrics,
 } from "@/lib/solar-metrics";
 import {
+  BATTERY_OPTIONS,
+  getBatteryById,
+  type BatteryOption,
+} from "@/lib/batteries";
+import {
   detectArizonaUtility,
   getInverterOption,
   getPanelById,
@@ -45,7 +50,11 @@ type SolarReportDashboardProps = {
   onMonthlyBillChange?: (monthlyBill: number) => void;
   onSelectedInverterTypeChange?: (inverterType: InverterType) => void;
   onSelectedPanelIdChange?: (panelId: string) => void;
+  onAddBatteryChange?: (addBattery: boolean) => void;
+  onBatteryOptionChange?: (batteryOption: string) => void;
   onTabChange?: (tab: DetailTab) => void;
+  addBattery?: boolean;
+  batteryOption?: string;
   selectedInverterType?: InverterType;
   selectedPanelId?: string;
   sendReportContent?: ReactNode;
@@ -82,10 +91,14 @@ export function SolarReportDashboard({
   analysis,
   monthlyBill: externalMonthlyBill = 200,
   onActivePanelCountChange,
+  onAddBatteryChange,
+  onBatteryOptionChange,
   onMonthlyBillChange,
   onSelectedInverterTypeChange,
   onSelectedPanelIdChange,
   onTabChange,
+  addBattery = false,
+  batteryOption,
   selectedInverterType = "string",
   selectedPanelId,
   sendReportContent,
@@ -96,6 +109,7 @@ export function SolarReportDashboard({
   const [selectedAdvisorQuestion, setSelectedAdvisorQuestion] = useState(0);
   const selectedPanel = getPanelById(selectedPanelId);
   const selectedInverter = getInverterOption(selectedInverterType);
+  const selectedBattery = addBattery ? getBatteryById(batteryOption) : null;
   const activeTab = externalActiveTab ?? internalActiveTab;
   const values = useMemo(
     () =>
@@ -105,7 +119,8 @@ export function SolarReportDashboard({
         financingMode,
         activePanelCount,
         selectedPanel,
-        selectedInverter.costAdderPerWatt
+        selectedInverter.costAdderPerWatt,
+        selectedBattery
       ),
     [
       activePanelCount,
@@ -113,6 +128,7 @@ export function SolarReportDashboard({
       financingMode,
       monthlyBill,
       selectedInverter.costAdderPerWatt,
+      selectedBattery,
       selectedPanel,
     ]
   );
@@ -286,6 +302,10 @@ export function SolarReportDashboard({
               monthlyBill={monthlyBill}
               onSelectedInverterTypeChange={onSelectedInverterTypeChange}
               onSelectedPanelIdChange={onSelectedPanelIdChange}
+              onAddBatteryChange={onAddBatteryChange}
+              onBatteryOptionChange={onBatteryOptionChange}
+              addBattery={addBattery}
+              batteryOption={batteryOption}
               selectedInverterType={selectedInverterType}
               selectedPanelId={selectedPanel.id}
               values={values}
@@ -325,18 +345,26 @@ type PanelSortKey =
   | "paybackYears";
 
 function PanelsTab({
+  addBattery,
   address,
   analysis,
+  batteryOption,
   monthlyBill,
+  onAddBatteryChange,
+  onBatteryOptionChange,
   onSelectedInverterTypeChange,
   onSelectedPanelIdChange,
   selectedInverterType,
   selectedPanelId,
   values,
 }: {
+  addBattery: boolean;
   address: string;
   analysis: RoofAnalysis;
+  batteryOption?: string;
   monthlyBill: number;
+  onAddBatteryChange?: (addBattery: boolean) => void;
+  onBatteryOptionChange?: (batteryOption: string) => void;
   onSelectedInverterTypeChange?: (inverterType: InverterType) => void;
   onSelectedPanelIdChange?: (panelId: string) => void;
   selectedInverterType: InverterType;
@@ -370,11 +398,14 @@ function PanelsTab({
     [panelFitsById]
   );
   const selectedPanel = getPanelById(selectedPanelId);
+  const selectedBattery = addBattery ? getBatteryById(batteryOption) : null;
   const selectedFit =
     panelFits.find((item) => item.panel.id === selectedPanel.id)?.fit ??
     values.selectedPanelFit;
   const utility = detectArizonaUtility(address);
-  const federalCredit = selectedFit.taxCredit;
+  const federalCredit = Math.round(
+    (selectedFit.systemCost + (selectedBattery?.cost ?? 0)) * 0.3
+  );
   const stateCredit = selectedFit.netCost > 0 ? 1000 : 0;
   const sortedFits = [...panelFits].sort((left, right) => {
     const direction = sortDirection === "asc" ? 1 : -1;
@@ -486,6 +517,13 @@ function PanelsTab({
         selectedInverterType={selectedInverterType}
         shadeRisk={getRoofShadeRiskLabel(analysis.annualSunlightHours)}
         onSelectedInverterTypeChange={onSelectedInverterTypeChange}
+      />
+
+      <BatteryStorageSection
+        addBattery={addBattery}
+        batteryOption={batteryOption}
+        onAddBatteryChange={onAddBatteryChange}
+        onBatteryOptionChange={onBatteryOptionChange}
       />
 
       <IncentivesSection
@@ -781,6 +819,106 @@ function getInverterRecommendation(annualSunlightHours: number): {
     inverterType: "microinverters",
     note: "Significant shade - microinverters strongly recommended.",
   };
+}
+
+function BatteryStorageSection({
+  addBattery,
+  batteryOption,
+  onAddBatteryChange,
+  onBatteryOptionChange,
+}: {
+  addBattery: boolean;
+  batteryOption?: string;
+  onAddBatteryChange?: (addBattery: boolean) => void;
+  onBatteryOptionChange?: (batteryOption: string) => void;
+}) {
+  return (
+    <section id="battery-storage" className="rounded-[1rem] border border-white/10 bg-black/18 p-4">
+      <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+        <div>
+          <p className="text-[0.62rem] font-semibold uppercase tracking-[0.24em] text-cyan-100/80">
+            Battery backup
+          </p>
+          <h4 className="mt-1 text-lg font-semibold text-white">
+            Add battery storage?
+          </h4>
+          <p className="mt-2 text-xs leading-5 text-white/50">
+            Backup power during outages. Batteries can qualify for the 30% federal tax credit.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => onAddBatteryChange?.(!addBattery)}
+          className={`inline-flex min-w-32 items-center justify-center rounded-full px-4 py-2.5 text-sm font-semibold transition ${
+            addBattery
+              ? "bg-cyan-200 text-slate-950"
+              : "border border-white/10 bg-white/[0.06] text-white/76 hover:bg-white/[0.1]"
+          }`}
+        >
+          {addBattery ? "Battery added" : "Add battery"}
+        </button>
+      </div>
+
+      {addBattery ? (
+        <div className="mt-4 grid gap-2 md:grid-cols-3">
+          {BATTERY_OPTIONS.map((battery) => (
+            <BatteryCard
+              key={battery.id}
+              battery={battery}
+              selected={getBatteryById(batteryOption).id === battery.id}
+              onSelect={() => onBatteryOptionChange?.(battery.id)}
+            />
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function BatteryCard({
+  battery,
+  onSelect,
+  selected,
+}: {
+  battery: BatteryOption;
+  onSelect: () => void;
+  selected: boolean;
+}) {
+  const afterCredit = Math.round(battery.cost * 0.7);
+
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={`rounded-[0.95rem] border p-3 text-left transition ${
+        selected
+          ? "border-cyan-200/48 bg-cyan-200/[0.08]"
+          : "border-white/10 bg-black/20 hover:bg-white/[0.04]"
+      }`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <p className="text-sm font-semibold text-white">
+            {battery.brand} {battery.model}
+          </p>
+          <p className="mt-1 text-xs leading-5 text-white/50">{battery.bestFor}</p>
+        </div>
+        {selected ? (
+          <span className="rounded-full bg-cyan-200 px-2 py-1 text-[0.52rem] font-bold uppercase tracking-[0.12em] text-slate-950">
+            Selected
+          </span>
+        ) : null}
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-white/58">
+        <PanelFinancialRow label="Capacity" value={`${battery.capacityKwh} kWh`} />
+        <PanelFinancialRow label="Backup" value={`~${battery.backupHours} hrs`} />
+        <PanelFinancialRow label="Cost" value={formatMoney(battery.cost)} />
+        <PanelFinancialRow label="After credit" value={formatMoney(afterCredit)} />
+        <PanelFinancialRow label="Warranty" value={`${battery.warranty_years} yrs`} />
+        <PanelFinancialRow label="Power" value={`${battery.powerKw} kW`} />
+      </div>
+    </button>
+  );
 }
 
 function IncentivesSection({
@@ -1781,7 +1919,8 @@ function buildDashboardValues(
   financingMode: FinancingMode,
   activePanelCount?: number,
   selectedPanel: SolarPanel = getPanelById(),
-  inverterCostAdderPerWatt = 0
+  inverterCostAdderPerWatt = 0,
+  selectedBattery: BatteryOption | null = null
 ) {
   const baseMetrics = buildSolarMetrics(analysis);
   const maxPanelCount = Math.max(1, baseMetrics.maxPanelCount);
@@ -1848,9 +1987,12 @@ function buildDashboardValues(
   const buyIncentiveRate = 0.3;
   const utilityEscalationRate = 0.03;
   const loanPaymentMultiplier = 1.38;
-  const installedCost = selectedPanelFit.systemCost;
-  const taxCredit = selectedPanelFit.taxCredit;
-  const netCostAfterCredit = selectedPanelFit.netCost;
+  const batteryCost = selectedBattery?.cost ?? 0;
+  const installedCost = selectedPanelFit.systemCost + batteryCost;
+  const taxCredit = Math.round(installedCost * 0.3);
+  const netCostAfterCredit = Math.max(installedCost - taxCredit, 0);
+  const paybackYears =
+    annualSavings > 0 ? roundTo(netCostAfterCredit / annualSavings, 1) : 0;
   const leaseMonthlyEstimate = Math.round((recommendedKw * 1000 * 8) / 12);
   const totalCostWithoutSolar = Math.round(
     Array.from({ length: 20 }).reduce<number>(
@@ -1886,13 +2028,16 @@ function buildDashboardValues(
       { label: "Arizona electricity rate", value: `$${azRatePerKwh.toFixed(2)}/kWh` },
       {
         label: "Installed cost basis",
-        value: `$${(selectedPanel.pricePerWatt + inverterCostAdderPerWatt).toFixed(2)}/W`,
+        value: `$${(selectedPanel.pricePerWatt + inverterCostAdderPerWatt).toFixed(2)}/W${
+          selectedBattery ? ` + ${formatMoney(batteryCost)} battery` : ""
+        }`,
       },
       { label: "Utility escalation", value: `${Math.round(utilityEscalationRate * 100)}% / yr` },
       { label: "Buy incentive placeholder", value: `${Math.round(buyIncentiveRate * 100)}%` },
       { label: "Loan payment multiplier", value: `${loanPaymentMultiplier.toFixed(2)}x installed cost` },
     ],
     installationSqFt,
+    batteryCost,
     installedCost,
     leaseMonthlyEstimate,
     maxPanelCount,
@@ -1901,12 +2046,13 @@ function buildDashboardValues(
     billWithSolar,
     netCostAfterCredit,
     panelCount,
-    paybackYears: selectedPanelFit.paybackYears,
+    paybackYears,
     recommendedKw,
     recommendedPanelCount,
     rejectedPanelCandidateCount,
     selectedPanelFit,
     selectedPanel,
+    selectedBattery,
     savingsRows: [
       { label: "Average annual savings", source: "user-adjusted" as const, value: annualSavings },
       { label: "Total 20-year cost with solar", source: "illustrative" as const, value: totalCostWithSolar },

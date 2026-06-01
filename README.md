@@ -42,7 +42,9 @@ RESEND_API_KEY=your_resend_api_key_here
 RESEND_FROM_EMAIL=reports@yourdomain.com
 TWILIO_ACCOUNT_SID=your_twilio_account_sid_here
 TWILIO_AUTH_TOKEN=your_twilio_auth_token_here
-TWILIO_FROM_NUMBER=+16025550123
+TWILIO_PHONE_NUMBER=+16025550123
+OWNER_PHONE_NUMBER=+16025550123
+NEXT_PUBLIC_CALENDLY_URL=https://calendly.com/your-calendly-link/30min
 DASHBOARD_ACCESS_TOKEN=your_dashboard_token_here
 ```
 

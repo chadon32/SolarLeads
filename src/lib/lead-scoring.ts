@@ -31,7 +31,7 @@ export type LeadScoreResult = {
 };
 
 export const LEAD_SCORE_EXPLANATION =
-  "Lead score is based on contact completeness, savings estimate, panel fit, monthly bill, and homeowner engagement.";
+  "Lead score is based on contact completeness, savings estimate, panel fit, monthly bill, bill verification, and homeowner engagement.";
 
 export function calculateLeadScore(input: LeadScoreInput): LeadScoreResult {
   const annualSavings = finite(input.annualSavings);
@@ -48,6 +48,7 @@ export function calculateLeadScore(input: LeadScoreInput): LeadScoreResult {
   if (panelCount !== null && panelCount >= 8) score += 10;
   if (monthlyBill !== null && monthlyBill >= 150) score += 10;
   if (hasPanelSelection(input)) score += 5;
+  if (input.utilityBillUploaded) score += 10;
 
   const roundedScore = clamp(Math.round(score), 0, 100);
   const tier = getLeadScoreTier(roundedScore);

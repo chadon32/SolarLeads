@@ -47,6 +47,13 @@ alter table public.leads add column if not exists quote_requested_at timestamptz
 alter table public.leads add column if not exists preferred_contact_method text;
 alter table public.leads add column if not exists best_time_to_contact text;
 alter table public.leads add column if not exists quote_notes text;
+alter table public.leads add column if not exists sms_sent_at timestamptz;
+alter table public.leads add column if not exists battery_added boolean not null default false;
+alter table public.leads add column if not exists battery_brand text;
+alter table public.leads add column if not exists battery_model text;
+alter table public.leads add column if not exists battery_cost integer;
+alter table public.leads add column if not exists referral_code text;
+alter table public.leads add column if not exists referred_by text;
 
 alter table public.leads enable row level security;
 
@@ -64,6 +71,9 @@ create index if not exists leads_utility_bill_uploaded_idx on public.leads (util
 create index if not exists leads_follow_up_status_idx on public.leads (follow_up_status);
 create index if not exists leads_next_follow_up_at_idx on public.leads (next_follow_up_at);
 create index if not exists leads_quote_requested_idx on public.leads (quote_requested, quote_requested_at desc);
+create index if not exists leads_referred_by_idx on public.leads (referred_by);
+create unique index if not exists leads_referral_code_idx on public.leads (referral_code)
+where referral_code is not null;
 create unique index if not exists leads_dedupe_idx
 on public.leads (lower(email), lower(address), monthly_bill);
 

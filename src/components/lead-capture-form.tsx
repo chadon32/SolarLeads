@@ -6,6 +6,7 @@ import { FileCheck2, UploadCloud } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatDisplayAddress } from "@/lib/address-format";
 import { trackEvent } from "@/lib/analytics";
+import type { BatteryOption } from "@/lib/batteries";
 import { formatName } from "@/lib/name-format";
 import {
   getRoofAreaM2,
@@ -31,6 +32,8 @@ type LeadCaptureFormProps = {
   onMonthlyBillChange?: (monthlyBill: number) => void;
   selectedInverterType?: InverterType;
   selectedPanel?: SolarPanel | null;
+  addBattery?: boolean;
+  selectedBattery?: BatteryOption | null;
 };
 
 type FormValues = {
@@ -53,6 +56,7 @@ type SavedLead = {
   estimatedSavings: number;
   quoteRequested?: boolean;
   reportUrl: string;
+  referralCode?: string | null;
   utilityBillUploaded?: boolean;
 };
 
@@ -134,6 +138,8 @@ export function LeadCaptureForm({
   onMonthlyBillChange,
   selectedInverterType = "string",
   selectedPanel,
+  addBattery = false,
+  selectedBattery,
 }: LeadCaptureFormProps) {
   const [values, setValues] = useState<FormValues>({
     ...emptyValues,
@@ -347,6 +353,14 @@ export function LeadCaptureForm({
             inverterCostAdderPerWatt: selectedInverter.costAdderPerWatt,
           })
         : null;
+    const batteryCost = addBattery && selectedBattery ? selectedBattery.cost : 0;
+    const totalSystemCost = (panelFit?.systemCost ?? 0) + batteryCost;
+    const totalFederalTaxCredit = Math.round(totalSystemCost * 0.3);
+    const totalNetSystemCost = Math.max(totalSystemCost - totalFederalTaxCredit, 0);
+    const totalPaybackYears =
+      panelFit && panelFit.annualSavings > 0
+        ? Number((totalNetSystemCost / panelFit.annualSavings).toFixed(1))
+        : panelFit?.paybackYears ?? baseMetrics?.paybackYears ?? 0;
     const metrics =
       baseMetrics && panelFit
         ? {
@@ -355,7 +369,7 @@ export function LeadCaptureForm({
             annualSavings: panelFit.annualSavings,
             monthlySavings: Math.round(panelFit.annualSavings / 12),
             panelCount: panelFit.maxPanelsFit,
-            paybackYears: panelFit.paybackYears,
+            paybackYears: totalPaybackYears,
             systemKw: panelFit.systemKw,
           }
         : baseMetrics;
@@ -416,12 +430,20 @@ export function LeadCaptureForm({
           utilityBillFilePath:
             utilityBill.status === "uploaded" ? utilityBill.filePath : undefined,
           utilityBillUploaded: utilityBill.status === "uploaded",
+          batteryAdded: addBattery,
+          batteryBrand: selectedBattery?.brand,
+          batteryModel: selectedBattery?.model,
+          batteryCost: selectedBattery?.cost,
+          referredBy:
+            typeof window !== "undefined"
+              ? window.sessionStorage.getItem("referredBy")
+              : undefined,
           selectedPanelBrand: selectedPanel?.brand,
           selectedPanelModel: selectedPanel?.model,
           selectedPanelWatts: selectedPanel?.watts,
-          systemCostBeforeIncentives: panelFit?.systemCost,
-          federalTaxCredit: panelFit?.taxCredit,
-          netSystemCost: panelFit?.netCost,
+          systemCostBeforeIncentives: totalSystemCost || panelFit?.systemCost,
+          federalTaxCredit: totalFederalTaxCredit || panelFit?.taxCredit,
+          netSystemCost: totalNetSystemCost || panelFit?.netCost,
           selectedInverterType,
         }),
       });
@@ -452,6 +474,11 @@ export function LeadCaptureForm({
 
       setMessage("Emailing your PDF report...");
 
+      const reportUrl =
+        `${window.location.origin}/estimate?address=${encodeURIComponent(
+          payload.lead.address
+        )}`;
+
       await Promise.allSettled([
         fetch("/api/follow-ups", {
           method: "POST",
@@ -475,23 +502,46 @@ export function LeadCaptureForm({
             utilityBillUploaded: utilityBill.status === "uploaded",
           }),
         }),
+        fetch("/api/sms", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            address: formatDisplayAddress(payload.lead.address),
+            annualSavings: metrics.annualSavings,
+            firstName: formattedName.split(/\s+/)[0] ?? "there",
+            leadId: payload.lead.id,
+            phone: values.phone.trim(),
+            reportUrl,
+          }),
+        }),
       ]);
 
-      sessionStorage.setItem(
-        "arizonaSolarThankYou",
-        JSON.stringify({
+      const thankYouPayload = {
           address: formatDisplayAddress(payload.lead.address),
           annualSavings: metrics.annualSavings,
+          batteryAdded: addBattery,
+          batteryBrand: selectedBattery?.brand,
+          batteryCost: selectedBattery?.cost,
+          batteryModel: selectedBattery?.model,
+          email: values.email.trim(),
           firstName: formattedName.split(/\s+/)[0] ?? "there",
           panelCount: metrics.panelCount,
+          panelBrand: selectedPanel?.brand,
+          panelModel: selectedPanel?.model,
           paybackYears: metrics.paybackYears,
           preferredContactMethod: values.preferredContactMethod,
           quoteRequested: true,
+          referralCode: payload.lead.referralCode,
           reportUrl: payload.lead.reportUrl,
           systemKw: metrics.systemKw,
           utilityBillUploaded: utilityBill.status === "uploaded",
-        })
-      );
+      };
+
+      sessionStorage.setItem("arizonaSolarThankYou", JSON.stringify(thankYouPayload));
+      sessionStorage.setItem("solarLeadData", JSON.stringify(thankYouPayload));
+      localStorage.removeItem("solarProgress");
       window.location.assign("/thank-you");
     } catch {
       setStatus("error");

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { startTransition, useDeferredValue, useEffect, useMemo, useState } from "react";
-import { ArrowDownToLine, Download, Search, Send, SlidersHorizontal, UserRound } from "lucide-react";
+import { ArrowDownToLine, CalendarDays, Download, Search, Send, SlidersHorizontal, UserRound } from "lucide-react";
 import { formatDisplayAddress } from "@/lib/address-format";
 import { trackEvent } from "@/lib/analytics";
 import { formatName } from "@/lib/name-format";
@@ -46,6 +46,14 @@ export type DashboardCrmLead = {
   status: DashboardLeadStatus;
   pdfStatus: "ready" | "pending";
   utilityBillUploaded: boolean;
+  smsSentAt: string | null;
+  batteryAdded: boolean;
+  batteryBrand: string | null;
+  batteryModel: string | null;
+  batteryCost: number | null;
+  referralCode: string | null;
+  referredBy: string | null;
+  referralsMade: number;
 };
 
 export type DashboardCrmFollowUp = {
@@ -98,6 +106,27 @@ function getReportDownloadPath(leadId: string) {
 
 function getEstimateReportPath(address: string) {
   return `/estimate?address=${encodeURIComponent(address)}`;
+}
+
+function getCalendlyUrl(lead: DashboardCrmLead) {
+  const baseUrl = process.env.NEXT_PUBLIC_CALENDLY_URL?.trim();
+
+  if (!baseUrl) {
+    return "";
+  }
+
+  try {
+    const url = new URL(baseUrl);
+    url.searchParams.set("name", formatName(lead.name));
+    url.searchParams.set("email", lead.email);
+    url.searchParams.set("a1", formatDisplayAddress(lead.address));
+    url.searchParams.set("hide_landing_page_details", "1");
+    url.searchParams.set("hide_gdpr_banner", "1");
+    url.searchParams.set("primary_color", "22d3ee");
+    return url.toString();
+  } catch {
+    return "";
+  }
 }
 
 function getDashboardTokenFromLocation() {
@@ -320,6 +349,38 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
     }
   };
 
+  const handleResendSms = async (lead: DashboardCrmLead) => {
+    try {
+      const response = await fetch("/api/sms", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          address: formatDisplayAddress(lead.address),
+          annualSavings: lead.annualSavings,
+          firstName: formatName(lead.name).split(/\s+/)[0] ?? "there",
+          leadId: lead.id,
+          phone: lead.phone,
+          reportUrl: `${window.location.origin}${getEstimateReportPath(lead.address)}`,
+        }),
+      });
+      const payload: { smsSentAt?: string; success?: boolean } = await response
+        .json()
+        .catch(() => ({}));
+
+      if (response.ok && payload.smsSentAt) {
+        setLeadItems((current) =>
+          current.map((item) =>
+            item.id === lead.id ? { ...item, smsSentAt: payload.smsSentAt ?? null } : item
+          )
+        );
+      }
+    } catch {
+      // Manual SMS resend should never break dashboard usage.
+    }
+  };
+
   const handleStatusChange = async (
     lead: DashboardCrmLead,
     nextStatus: DashboardLeadStatus
@@ -381,6 +442,13 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
         "selected_panel_model",
         "selected_panel_watts",
         "utility_bill_uploaded",
+        "sms_sent_at",
+        "battery_added",
+        "battery_brand",
+        "battery_model",
+        "battery_cost",
+        "referral_code",
+        "referred_by",
         "system_cost_before_incentives",
         "federal_tax_credit",
         "net_system_cost",
@@ -404,6 +472,13 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
         lead.selectedPanelModel ?? "",
         lead.selectedPanelWatts ? String(lead.selectedPanelWatts) : "",
         lead.utilityBillUploaded ? "Yes" : "No",
+        lead.smsSentAt ?? "",
+        lead.batteryAdded ? "Yes" : "No",
+        lead.batteryBrand ?? "",
+        lead.batteryModel ?? "",
+        lead.batteryCost ? String(Math.round(lead.batteryCost)) : "",
+        lead.referralCode ?? "",
+        lead.referredBy ?? "",
         lead.systemCostBeforeIncentives
           ? String(Math.round(lead.systemCostBeforeIncentives))
           : "",
@@ -541,6 +616,7 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
                   void handleStatusChange(selectedLead, nextStatus)
                 }
                 onViewUtilityBill={() => void handleUtilityBillView(selectedLead)}
+                onResendSms={() => void handleResendSms(selectedLead)}
                 onSendFollowUpNow={(followUp) => void handleSendFollowUpNow(followUp)}
                 pdfUnavailable={pdfUnavailableIds.has(selectedLead.id)}
                 utilityBillUnavailable={utilityBillUnavailableIds.has(selectedLead.id)}
@@ -807,6 +883,7 @@ function LeadDetailPanel({
   followUps,
   lead,
   onDownloadPdf,
+  onResendSms,
   onSendFollowUpNow,
   onStatusChange,
   onViewUtilityBill,
@@ -816,6 +893,7 @@ function LeadDetailPanel({
   followUps: DashboardCrmFollowUp[];
   lead: DashboardCrmLead;
   onDownloadPdf: () => void;
+  onResendSms: () => void;
   onSendFollowUpNow: (followUp: DashboardCrmFollowUp) => void;
   onStatusChange: (status: DashboardLeadStatus) => void;
   onViewUtilityBill: () => void;
@@ -868,6 +946,16 @@ function LeadDetailPanel({
           label="Utility bill"
           value={lead.utilityBillUploaded ? "Uploaded for review" : "Not uploaded"}
         />
+        <DetailRow
+          label="SMS"
+          value={
+            lead.smsSentAt
+              ? `Sent ${formatDateTime(lead.smsSentAt)}`
+              : lead.phone
+                ? "Not sent yet"
+                : "Not sent: no phone"
+          }
+        />
         <DetailRow label="Annual savings" value={formatMoney(lead.annualSavings)} />
         <DetailRow label="System size" value={`${formatDecimal(lead.systemSizeKw)} kW`} />
         <DetailRow label="Panel count" value={`${lead.panelCount} panels`} />
@@ -884,6 +972,28 @@ function LeadDetailPanel({
         <DetailRow
           label="Inverter"
           value={formatInverterLabel(lead.selectedInverterType)}
+        />
+        <DetailRow
+          label="Battery"
+          value={
+            lead.batteryAdded && lead.batteryBrand && lead.batteryModel
+              ? `${lead.batteryBrand} ${lead.batteryModel}${
+                  lead.batteryCost ? ` - ${formatMoney(lead.batteryCost)}` : ""
+                }`
+              : "None"
+          }
+        />
+        <DetailRow
+          label="Referral code"
+          value={lead.referralCode ?? "Not captured"}
+        />
+        <DetailRow
+          label="Referred by"
+          value={lead.referredBy ?? "Direct"}
+        />
+        <DetailRow
+          label="Referrals made"
+          value={`${lead.referralsMade}`}
         />
         <DetailRow
           label="Gross system cost"
@@ -940,6 +1050,15 @@ function LeadDetailPanel({
             </button>
           )
         ) : null}
+        <button
+          type="button"
+          onClick={onResendSms}
+          disabled={!lead.phone}
+          className="inline-flex items-center justify-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-4 py-3 text-sm font-semibold text-cyan-50 transition hover:bg-cyan-300/18 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <Send className="h-4 w-4" aria-hidden="true" />
+          Resend SMS
+        </button>
         <a
           href={getEstimateReportPath(lead.address)}
           target="_blank"
@@ -957,6 +1076,19 @@ function LeadDetailPanel({
           </p>
           <SlidersHorizontal className="h-4 w-4 text-slate-500" aria-hidden="true" />
         </div>
+        <a
+          href={getCalendlyUrl(lead)}
+          target="_blank"
+          rel="noreferrer"
+          className={`mt-3 inline-flex w-full items-center justify-center gap-2 rounded-full px-4 py-2.5 text-xs font-semibold transition ${
+            getCalendlyUrl(lead)
+              ? "border border-cyan-300/20 bg-cyan-300/10 text-cyan-50 hover:bg-cyan-300/18"
+              : "pointer-events-none border border-white/10 bg-white/[0.035] text-slate-500"
+          }`}
+        >
+          <CalendarDays className="h-4 w-4" aria-hidden="true" />
+          {getCalendlyUrl(lead) ? "Book a call" : "Calendly not connected"}
+        </a>
         {followUps.length ? (
           <div className="mt-3 grid gap-2">
             {followUps.slice(0, 4).map((followUp) => (
@@ -1191,6 +1323,19 @@ function formatDecimal(value: number) {
     maximumFractionDigits: 1,
     minimumFractionDigits: 0,
   }).format(Number.isFinite(value) ? value : 0);
+}
+
+function formatDateTime(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "recently";
+  }
+
+  return new Intl.DateTimeFormat("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
 }
 
 function formatInverterLabel(value: string | null) {

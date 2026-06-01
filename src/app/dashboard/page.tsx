@@ -66,6 +66,13 @@ type DashboardLead = {
   twenty_year_savings?: number | null;
   utility_bill_file_path?: string | null;
   utility_bill_uploaded?: boolean | null;
+  sms_sent_at?: string | null;
+  battery_added?: boolean | null;
+  battery_brand?: string | null;
+  battery_model?: string | null;
+  battery_cost?: number | null;
+  referral_code?: string | null;
+  referred_by?: string | null;
   status?: string | null;
   created_at: string;
 };
@@ -93,6 +100,8 @@ export default async function DashboardPage({
 
   const supabase = getSupabaseAdminClient();
   const scoredLeadSelect =
+    "id, name, email, phone, address, monthly_bill, estimated_savings, panel_count, system_size_kw, annual_savings, annual_energy_kwh, roi_years, selected_panel_brand, selected_panel_model, selected_panel_watts, roof_area_m2, system_cost_before_incentives, federal_tax_credit, net_system_cost, selected_inverter_type, energy_offset_pct, lead_score, lead_score_label, pdf_downloaded, pdf_generated, quote_requested, solar_suitability_score, twenty_year_savings, utility_bill_uploaded, utility_bill_file_path, sms_sent_at, battery_added, battery_brand, battery_model, battery_cost, referral_code, referred_by, status, created_at";
+  const scoredLeadSelectWithoutNewOptional =
     "id, name, email, phone, address, monthly_bill, estimated_savings, panel_count, system_size_kw, annual_savings, annual_energy_kwh, roi_years, selected_panel_brand, selected_panel_model, selected_panel_watts, roof_area_m2, system_cost_before_incentives, federal_tax_credit, net_system_cost, selected_inverter_type, energy_offset_pct, lead_score, lead_score_label, pdf_downloaded, pdf_generated, quote_requested, solar_suitability_score, twenty_year_savings, utility_bill_uploaded, utility_bill_file_path, status, created_at";
   const scoredLeadSelectWithoutUtilityBillPath =
     "id, name, email, phone, address, monthly_bill, estimated_savings, panel_count, system_size_kw, annual_savings, annual_energy_kwh, roi_years, selected_panel_brand, selected_panel_model, selected_panel_watts, roof_area_m2, system_cost_before_incentives, federal_tax_credit, net_system_cost, selected_inverter_type, energy_offset_pct, lead_score, lead_score_label, pdf_downloaded, pdf_generated, quote_requested, solar_suitability_score, twenty_year_savings, utility_bill_uploaded, status, created_at";
@@ -111,6 +120,14 @@ export default async function DashboardPage({
     leadsResult = await supabase
       .from("leads")
       .select(scoredLeadSelectWithoutUtilityBillPath)
+      .order("created_at", { ascending: false })
+      .limit(10) as unknown as LeadsQueryResult;
+  }
+
+  if (leadsResult.error && shouldRetryLegacySelect(leadsResult.error.message)) {
+    leadsResult = await supabase
+      .from("leads")
+      .select(scoredLeadSelectWithoutNewOptional)
       .order("created_at", { ascending: false })
       .limit(10) as unknown as LeadsQueryResult;
   }
@@ -256,6 +273,16 @@ export default async function DashboardPage({
         getLeadStatus(followUpsByLeadId.get(lead.id) ?? []),
       pdfStatus: "ready",
       utilityBillUploaded: Boolean(lead.utility_bill_uploaded),
+      smsSentAt: lead.sms_sent_at ?? null,
+      batteryAdded: Boolean(lead.battery_added),
+      batteryBrand: lead.battery_brand ?? null,
+      batteryModel: lead.battery_model ?? null,
+      batteryCost: Number(lead.battery_cost ?? 0) || null,
+      referralCode: lead.referral_code ?? null,
+      referredBy: lead.referred_by ?? null,
+      referralsMade: lead.referral_code
+        ? leadList.filter((candidate) => candidate.referred_by === lead.referral_code).length
+        : 0,
     };
   });
   const averageLeadScore = crmLeads.length

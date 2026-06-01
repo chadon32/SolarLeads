@@ -33,8 +33,13 @@ type LeadBody = {
   roofPitchDegrees?: number;
   lat?: number;
   lng?: number;
+  batteryAdded?: boolean;
+  batteryBrand?: string;
+  batteryCost?: number;
+  batteryModel?: string;
   federalTaxCredit?: number;
   netSystemCost?: number;
+  referredBy?: string;
   selectedInverterType?: string;
   selectedPanelBrand?: string;
   selectedPanelModel?: string;
@@ -102,6 +107,9 @@ export async function POST(request: Request) {
     const pdfGenerated = body.pdfGenerated ?? true;
     const pdfDownloaded = false;
     const utilityBillUploaded = body.utilityBillUploaded ?? false;
+    const batteryAdded = Boolean(body.batteryAdded);
+    const referralCode = createReferralCode();
+    const referredBy = toNullableText(body.referredBy)?.toUpperCase() ?? null;
     const utilityBillFilePath = utilityBillUploaded
       ? toNullableText(body.utilityBillFilePath)
       : null;
@@ -208,6 +216,10 @@ export async function POST(request: Request) {
     };
     const scoredInsert = {
       ...extendedInsert,
+      battery_added: batteryAdded,
+      battery_brand: batteryAdded ? toNullableText(body.batteryBrand) : null,
+      battery_cost: batteryAdded ? toNullableInteger(body.batteryCost) : null,
+      battery_model: batteryAdded ? toNullableText(body.batteryModel) : null,
       best_time_to_contact: bestTimeToContact,
       energy_offset_pct: toNullableNumber(body.energyOffsetPct),
       follow_up_notes: quoteNotes,
@@ -220,6 +232,8 @@ export async function POST(request: Request) {
       quote_notes: quoteNotes,
       quote_requested: quoteRequested,
       quote_requested_at: quoteRequested ? new Date().toISOString() : null,
+      referral_code: referralCode,
+      referred_by: referredBy,
       solar_suitability_score: toNullableInteger(body.solarSuitabilityScore),
       twenty_year_savings: twentyYearSavings,
       utility_bill_file_path: utilityBillFilePath,
@@ -238,12 +252,23 @@ export async function POST(request: Request) {
       selectedPanel: [body.selectedPanelBrand, body.selectedPanelModel]
         .filter(Boolean)
         .join(" "),
+      batteryAdded,
+      referredBy,
       utilityBillUploaded,
     });
 
-    const scoredInsertWithoutUtilityBillPath = Object.fromEntries(
+    const scoredInsertWithoutNewOptionalFields = Object.fromEntries(
       Object.entries(scoredInsert).filter(
-        ([key]) => key !== "utility_bill_file_path"
+        ([key]) =>
+          ![
+            "battery_added",
+            "battery_brand",
+            "battery_cost",
+            "battery_model",
+            "referral_code",
+            "referred_by",
+            "utility_bill_file_path",
+          ].includes(key)
       )
     );
     // TODO: Move confirmed bill files from pending/YYYY-MM-DD/uuid.ext to
@@ -257,11 +282,11 @@ export async function POST(request: Request) {
 
     if (
       insertResult.error &&
-      isMissingColumn(insertResult.error.message, "utility_bill_file_path")
+      shouldRetryLegacyInsert(insertResult.error.message)
     ) {
       insertResult = await supabase
         .from("leads")
-        .insert(scoredInsertWithoutUtilityBillPath)
+        .insert(scoredInsertWithoutNewOptionalFields)
         .select("id, name, email, address, monthly_bill, estimated_savings")
         .single();
     }
@@ -313,6 +338,10 @@ export async function POST(request: Request) {
       selectedPanelBrand: toNullableText(body.selectedPanelBrand),
       selectedPanelModel: toNullableText(body.selectedPanelModel),
       selectedPanelWatts: toNullableInteger(body.selectedPanelWatts),
+      batteryAdded,
+      batteryBrand: batteryAdded ? toNullableText(body.batteryBrand) : null,
+      batteryCost: batteryAdded ? toNullableInteger(body.batteryCost) : null,
+      batteryModel: batteryAdded ? toNullableText(body.batteryModel) : null,
       systemSizeKw: toNullableNumber(body.systemSizeKw),
       utilityBillUploaded,
       bestTimeToContact,
@@ -332,6 +361,7 @@ export async function POST(request: Request) {
         leadScore: leadScore.score,
         leadScoreLabel: leadScore.label,
         quoteRequested,
+        referralCode,
         reportUrl: buildReportPdfPath(data.id),
         utilityBillUploaded,
       },
@@ -366,6 +396,10 @@ async function sendOwnerLeadEmail({
   selectedPanelBrand,
   selectedPanelModel,
   selectedPanelWatts,
+  batteryAdded,
+  batteryBrand,
+  batteryCost,
+  batteryModel,
   systemSizeKw,
   utilityBillUploaded,
 }: {
@@ -387,6 +421,10 @@ async function sendOwnerLeadEmail({
   selectedPanelBrand: string | null;
   selectedPanelModel: string | null;
   selectedPanelWatts: number | null;
+  batteryAdded: boolean;
+  batteryBrand: string | null;
+  batteryCost: number | null;
+  batteryModel: string | null;
   systemSizeKw: number | null;
   utilityBillUploaded: boolean;
 }) {
@@ -423,6 +461,11 @@ async function sendOwnerLeadEmail({
             ? "Uploaded for quote review"
             : "Not uploaded"
         }`,
+        `Battery: ${
+          batteryAdded && batteryBrand && batteryModel
+            ? `${batteryBrand} ${batteryModel} - $${batteryCost ?? 0}`
+            : "None"
+        }`,
         `Inverter: ${selectedInverterType ?? "Unavailable"}`,
         `Quote notes: ${quoteNotes ?? "None"}`,
         `ROI: ${roiYears ?? "Unavailable"} years`,
@@ -449,6 +492,10 @@ function toNullableText(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+function createReferralCode() {
+  return Math.random().toString(36).slice(2, 8).toUpperCase();
+}
+
 function shouldRetryLegacyInsert(message: string) {
   const normalized = message.toLowerCase();
   return (
@@ -456,8 +503,4 @@ function shouldRetryLegacyInsert(message: string) {
     normalized.includes("schema cache") ||
     normalized.includes("could not find")
   );
-}
-
-function isMissingColumn(message: string, column: string) {
-  return message.toLowerCase().includes(column.toLowerCase());
 }
