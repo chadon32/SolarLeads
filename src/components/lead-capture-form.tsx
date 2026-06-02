@@ -480,6 +480,26 @@ export function LeadCaptureForm({
         leadId: payload.lead.id,
       });
 
+      const smsRequest = fetch("/api/sms", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          leadId: payload.lead.id,
+          phone: values.phone.trim(),
+          phoneConsent: smsConsent,
+        }),
+      })
+        .then(async (smsResponse) => {
+          const smsResult = await smsResponse.json().catch(() => ({}));
+          console.info("[lead-sms-result]", smsResult);
+          return smsResult;
+        })
+        .catch((error) => {
+          console.warn("[lead-sms-result]", error);
+        });
+
       await Promise.allSettled([
         fetch("/api/follow-ups", {
           method: "POST",
@@ -503,17 +523,7 @@ export function LeadCaptureForm({
             utilityBillUploaded: Boolean(payload.lead.utilityBillUploaded),
           }),
         }),
-        fetch("/api/sms", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            leadId: payload.lead.id,
-            phone: values.phone.trim(),
-            phoneConsent: smsConsent,
-          }),
-        }),
+        smsRequest,
       ]);
 
       const thankYouPayload = {

@@ -607,7 +607,6 @@ export function SolarAnalysis({
             <div className="border-t border-white/8 p-3">
               <div className="relative overflow-hidden rounded-[1.1rem] border border-white/12 bg-slate-800/35">
                 <ViewportCanvas
-                  satelliteImage={satelliteImage}
                   annualFluxUrl={annualFluxUrl}
                   dsmUrl={dsmUrl}
                   solarMaskUrl={solarMaskUrl}
@@ -686,7 +685,6 @@ export function SolarAnalysis({
               <div className="border-t border-white/8 p-4 sm:p-5">
                 <div className="relative overflow-hidden rounded-[1.7rem] border border-white/8">
                   <ViewportCanvas
-                    satelliteImage={satelliteImage}
                     annualFluxUrl={annualFluxUrl}
                     dsmUrl={dsmUrl}
                     solarMaskUrl={solarMaskUrl}
@@ -839,7 +837,6 @@ function ViewportHeader({
 }
 
 function ViewportCanvas({
-  satelliteImage,
   annualFluxUrl,
   dsmUrl,
   solarMaskUrl,
@@ -852,7 +849,6 @@ function ViewportCanvas({
   selectedPanelCount,
   selectedPanel,
 }: {
-  satelliteImage: string | null;
   annualFluxUrl: string | null;
   dsmUrl: string | null;
   solarMaskUrl: string | null;
@@ -866,7 +862,6 @@ function ViewportCanvas({
   selectedPanel?: SolarPanel | null;
 }) {
   const mapElementRef = useRef<HTMLDivElement | null>(null);
-  const initializedRef = useRef(false);
   const mapRef = useRef<GoogleMapInstance | null>(null);
   const overlayRefs = useRef<GoogleMapOverlayInstance[]>([]);
   const overlayRunRef = useRef(0);
@@ -896,7 +891,7 @@ function ViewportCanvas({
         return;
       }
 
-      if (!initializedRef.current) {
+      if (!mapRef.current) {
         mapElementRef.current.replaceChildren();
         mapRef.current = new googleApi.maps.Map(mapElementRef.current, {
           center,
@@ -908,7 +903,6 @@ function ViewportCanvas({
           keyboardShortcuts: false,
           gestureHandling: "greedy",
         });
-        initializedRef.current = true;
       }
 
       if (!mapRef.current) {
@@ -953,7 +947,6 @@ function ViewportCanvas({
       clearGoogleOverlays(overlayRefs.current);
       overlayRefs.current = [];
       mapRef.current = null;
-      initializedRef.current = false;
       mapElementRef.current?.replaceChildren();
     };
   }, []);
@@ -1137,28 +1130,19 @@ function ViewportCanvas({
     cameraTargetKey,
   ]);
 
-  const showMapFallback = !mapsApiKey;
+  const showMapFallback = !mapsApiKey || !center;
 
   return (
     <div className={`relative overflow-hidden bg-slate-950 ${compact ? "min-h-[24rem] lg:min-h-[30rem]" : "min-h-[36rem] lg:min-h-[43rem]"}`}>
-      <div ref={mapElementRef} className="absolute inset-0" />
-      {showMapFallback && satelliteImage ? (
-        <Image
-          src={satelliteImage}
-          alt={`Satellite view of ${address}`}
-          fill
-          unoptimized
-          className="object-cover"
-        />
-      ) : null}
+      <div ref={mapElementRef} className="absolute inset-0" aria-label={`Satellite roof map for ${address}`} />
       {showMapFallback ? (
         <div className="absolute inset-0 flex items-center justify-center bg-slate-950/72 px-6 text-center">
           <p className="max-w-sm text-sm leading-6 text-slate-300">
-            Google Maps browser key is missing. Add
+            Google Maps browser key or roof center is missing. Add
             {" "}
             <span className="font-semibold text-white">NEXT_PUBLIC_GOOGLE_MAPS_API_KEY</span>
             {" "}
-            to render live map overlays.
+            and complete the roof lookup to render live map overlays.
           </p>
         </div>
       ) : null}

@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import Script from "next/script";
 import { Manrope, Space_Grotesk } from "next/font/google";
 import { GoogleAnalytics } from "@/components/google-analytics";
 import "./globals.css";
@@ -81,10 +80,6 @@ export default function RootLayout({
     <html lang="en" className={`${display.variable} ${body.variable} h-full`}>
       <body className="min-h-full antialiased">
         <GoogleAnalytics />
-        <Script
-          src="https://assets.calendly.com/assets/external/widget.js"
-          strategy="lazyOnload"
-        />
         {children}
       </body>
     </html>

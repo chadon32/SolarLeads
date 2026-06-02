@@ -1124,7 +1124,7 @@ function ReportOverviewTab({
         </p>
         <div className="mt-4 grid grid-cols-2 gap-2">
           <MiniReadout label="20-year savings" source="modeled" value={formatMoney(values.twentyYearSavings)} />
-          <MiniReadout label="Energy offset" source="modeled" value={`${Math.min(100, Math.round((values.annualKwh / 14000) * 100))}%`} />
+          <MiniReadout label="Energy offset" source="modeled" value={`${values.energyOffsetPct}%`} />
         </div>
         <button
           type="button"
@@ -1967,6 +1967,11 @@ function buildDashboardValues(
   const recommendedKw = selectedPanelFit.systemKw;
   const annualSavings = selectedPanelFit.annualSavings;
   const monthlySavings = Math.round(selectedPanelFit.annualSavings / 12);
+  const azRatePerKwh = 0.13;
+  const energyOffsetPct = Math.min(
+    Math.round(((annualKwh * azRatePerKwh) / (monthlyBill * 12)) * 100),
+    100
+  );
   const billWithSolar = Math.max(monthlyBill - monthlySavings, 0);
   const recommendedPanelCount = findRecommendedPanelCount(analysis, monthlyBill, maxPanelCount);
   const twentyYearSavings = Math.round(annualSavings * 20);
@@ -1984,7 +1989,6 @@ function buildDashboardValues(
   const carbonMetricTons = roundTo(metrics.co2OffsetLbs / 2205, 1);
   const carsRemoved = roundTo(carbonMetricTons / 4.6, 1);
   const treesEquivalent = roundTo(carbonMetricTons * 16.7, 1);
-  const azRatePerKwh = 0.13;
   const buyIncentiveRate = 0.3;
   const utilityEscalationRate = 0.03;
   const loanPaymentMultiplier = 1.38;
@@ -2038,6 +2042,7 @@ function buildDashboardValues(
       { label: "Loan payment multiplier", value: `${loanPaymentMultiplier.toFixed(2)}x installed cost` },
     ],
     installationSqFt,
+    energyOffsetPct,
     batteryCost,
     installedCost,
     leaseMonthlyEstimate,

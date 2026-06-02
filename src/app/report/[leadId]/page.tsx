@@ -32,6 +32,8 @@ type ReportLead = {
   energy_offset_pct?: number | null;
   estimated_savings?: number | null;
   id: string;
+  lead_score?: number | null;
+  lead_score_label?: string | null;
   monthly_bill?: number | null;
   name: string | null;
   panel_count?: number | null;
@@ -114,9 +116,23 @@ export default async function ReportViewerPage({
     lead.system_size_kw ?? (report.panelCount ? (report.panelCount * 400) / 1000 : 0)
   );
   const panelCount = Number(lead.panel_count ?? report.panelCount);
-  const roiYears = Number(lead.roi_years ?? report.estimatedRoiYears);
-  const energyOffset = Number(lead.energy_offset_pct ?? report.annualEnergyOffset);
-  const solarScore = Number(lead.solar_suitability_score ?? 0);
+  const grossCost = panelCount > 0 ? panelCount * 400 * 2.75 : 0;
+  const netCost = grossCost * 0.7;
+  const netPaybackYears =
+    annualSavings > 0 && netCost > 0 ? Number((netCost / annualSavings).toFixed(1)) : 0;
+  const roiYears = Number.isFinite(netPaybackYears) && netPaybackYears > 0
+    ? netPaybackYears
+    : Number(lead.roi_years ?? report.estimatedRoiYears);
+  const annualKwh = Number(lead.annual_energy_kwh ?? 0);
+  const monthlyBill = Number(lead.monthly_bill ?? 0);
+  const energyOffset =
+    annualKwh > 0 && monthlyBill > 0
+      ? Math.min(Math.round(((annualKwh * 0.13) / (monthlyBill * 12)) * 100), 100)
+      : Number(lead.energy_offset_pct ?? report.annualEnergyOffset);
+  const solarScore = Number(lead.lead_score ?? lead.solar_suitability_score ?? 0);
+  const solarScoreLabel = lead.lead_score
+    ? (lead.lead_score_label || getLeadScoreLabel(solarScore)).toUpperCase()
+    : null;
 
   return (
     <ReportShell>
@@ -172,9 +188,17 @@ export default async function ReportViewerPage({
             <Metric label="Annual savings" value={formatMoney(annualSavings)} source="Modeled" />
             <Metric label="System size" value={`${formatDecimal(systemSizeKw)} kW`} source="Modeled" />
             <Metric label="Panel count" value={`${Math.round(panelCount || 0)}`} source="Solar API" />
-            <Metric label="Estimated ROI" value={`${formatDecimal(roiYears)} yrs`} source="Illustrative" />
+            <Metric label="Estimated ROI" value={`${formatDecimal(roiYears)} yrs`} source="Modeled" />
             <Metric label="Energy offset" value={`${Math.round(energyOffset || 0)}%`} source="Modeled" />
-            <Metric label="Solar score" value={solarScore ? `${Math.round(solarScore)}/100` : "Preliminary"} source="Estimated" />
+            <Metric
+              label="Solar score"
+              value={
+                solarScore
+                  ? `${Math.round(solarScore)}/100${solarScoreLabel ? ` - ${solarScoreLabel}` : ""}`
+                  : "Preliminary"
+              }
+              source="Estimated"
+            />
           </div>
         </article>
 
@@ -315,7 +339,7 @@ function ReportUnavailable({
 async function getLead(leadId: string) {
   const supabase = getSupabaseAdminClient();
   const selects = [
-    "id, name, email, phone, address, monthly_bill, estimated_savings, created_at, panel_count, system_size_kw, annual_savings, annual_energy_kwh, roi_years, energy_offset_pct, solar_suitability_score",
+    "id, name, email, phone, address, monthly_bill, estimated_savings, created_at, panel_count, system_size_kw, annual_savings, annual_energy_kwh, roi_years, energy_offset_pct, solar_suitability_score, lead_score, lead_score_label",
     "id, name, email, phone, address, monthly_bill, estimated_savings, created_at, panel_count, system_size_kw, annual_savings, annual_energy_kwh",
     "id, name, email, phone, address, monthly_bill, estimated_savings, created_at",
   ];
@@ -348,6 +372,12 @@ function shouldRetryLegacySelect(message: string) {
     message.includes("schema cache") ||
     message.includes("Could not find")
   );
+}
+
+function getLeadScoreLabel(score: number) {
+  if (score >= 70) return "HOT LEAD";
+  if (score >= 45) return "WARM LEAD";
+  return "COLD LEAD";
 }
 
 function ReportShell({ children }: { children: React.ReactNode }) {

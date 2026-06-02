@@ -51,6 +51,13 @@ export async function POST(req: NextRequest) {
   const dashboardAuth = verifyDashboardRequest(req);
   const isDashboardResend = Boolean(body.dashboardResend);
 
+  console.log("SMS API called with:", {
+    dashboardResend: isDashboardResend,
+    leadId,
+    phone: body.phone ? "***provided***" : null,
+  });
+  console.log("Twilio SID exists:", Boolean(process.env.TWILIO_ACCOUNT_SID));
+
   if (!leadId) {
     return NextResponse.json({ message: "leadId is required." }, { status: 400 });
   }
@@ -108,6 +115,7 @@ export async function POST(req: NextRequest) {
   );
   const smsSentAt = new Date().toISOString();
   const firstName = formatName(lead.name).split(/\s+/)[0] || "there";
+  console.log("SMS lead resolved:", { firstName, leadId });
   const address = formatDisplayAddress(lead.address ?? "your Arizona home");
   const annualSavings = Math.round(
     Number(lead.annual_savings ?? lead.estimated_savings ?? 0) || 0

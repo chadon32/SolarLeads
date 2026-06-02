@@ -134,7 +134,8 @@ export async function POST(request: Request) {
                 (Number.isFinite(selectedPanelWatts) && selectedPanelWatts > 0
                   ? selectedPanelWatts
                   : 400) *
-                2.75) /
+                2.75 *
+                0.7) /
               estimatedSavings
             ).toFixed(1)
           )

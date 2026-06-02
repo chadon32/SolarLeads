@@ -82,8 +82,9 @@ export function buildSolarMetrics(
   );
   const systemKw = roundTo((panelCount * STANDARD_PANEL_WATTS) / 1000, 1);
   const installedCost = panelCount * STANDARD_PANEL_WATTS * INSTALLED_COST_PER_WATT;
+  const netInstalledCost = installedCost * 0.7;
   const paybackYears =
-    annualSavings > 0 ? roundTo(installedCost / annualSavings, 1) : 0;
+    annualSavings > 0 ? roundTo(netInstalledCost / annualSavings, 1) : 0;
   const carbonFactorKgPerMwh =
     analysis.carbonOffsetFactorKgPerMwh && analysis.carbonOffsetFactorKgPerMwh > 0
       ? analysis.carbonOffsetFactorKgPerMwh
@@ -115,7 +116,11 @@ export function buildSolarMetrics(
     co2OffsetLbs: Math.round((annualKwh / 1000) * carbonFactorKgPerMwh * 2.205),
     coveragePct: Math.min(
       100,
-      Math.round((annualKwh / ARIZONA_AVG_ANNUAL_HOME_KWH) * 100)
+      Math.round(
+        annualBill
+          ? (utilitySavingsValue / annualBill) * 100
+          : (annualKwh / ARIZONA_AVG_ANNUAL_HOME_KWH) * 100
+      )
     ),
     widthM: roundTo(analysis.widthM, 1),
     depthM: roundTo(analysis.depthM, 1),

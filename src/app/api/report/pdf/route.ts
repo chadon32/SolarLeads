@@ -63,6 +63,8 @@ type ReportLead = {
   selected_panel_brand?: string | null;
   selected_panel_model?: string | null;
   selected_panel_watts?: number | null;
+  system_cost_before_incentives?: number | null;
+  net_system_cost?: number | null;
   energy_offset_pct?: number | null;
   lead_score?: number | null;
   lead_score_label?: string | null;
@@ -110,6 +112,8 @@ type ProposalData = {
   energyOffsetPct?: number;
   annualImpactLbs?: number;
   roiYears?: number;
+  grossPaybackYears?: number;
+  netPaybackYears?: number;
   leadScore: number;
   leadScoreLabel: LeadScoreLabel;
   quoteRequested: boolean;
@@ -186,7 +190,7 @@ export async function GET(request: Request) {
 
     const supabase = getSupabaseAdminClient();
     const scoredLeadSelect =
-      "id, name, email, phone, address, monthly_bill, estimated_savings, created_at, panel_count, system_size_kw, annual_savings, monthly_savings, annual_energy_kwh, roof_area_m2, usable_area_m2, roof_pitch_deg, selected_panel_brand, selected_panel_model, selected_panel_watts, energy_offset_pct, lead_score, lead_score_label, pdf_downloaded, pdf_generated, quote_requested, solar_suitability_score, twenty_year_savings, utility_bill_uploaded, lat, lng";
+      "id, name, email, phone, address, monthly_bill, estimated_savings, created_at, panel_count, system_size_kw, annual_savings, monthly_savings, annual_energy_kwh, roof_area_m2, usable_area_m2, roof_pitch_deg, selected_panel_brand, selected_panel_model, selected_panel_watts, system_cost_before_incentives, net_system_cost, energy_offset_pct, lead_score, lead_score_label, pdf_downloaded, pdf_generated, quote_requested, solar_suitability_score, twenty_year_savings, utility_bill_uploaded, lat, lng";
     const extendedLeadSelect =
       "id, name, email, phone, address, monthly_bill, estimated_savings, created_at, panel_count, system_size_kw, annual_savings, monthly_savings, annual_energy_kwh, roof_area_m2, usable_area_m2, roof_pitch_deg, selected_panel_brand, selected_panel_model, selected_panel_watts, lat, lng";
     const baseLeadSelect =
@@ -243,7 +247,7 @@ export async function GET(request: Request) {
     await markPdfDownloaded(supabase, lead.id, proposal);
     const assets: PdfAssets = {
       roofImage: await loadRoofImage(pdf, proposal),
-      qrImage: await loadQrImage(pdf, request.url),
+      qrImage: await loadQrImage(pdf, buildEstimateUrl(request.url, proposal.address)),
     };
 
     drawExecutiveSummary(pdf.addPage([612, 792]), proposal, assets, fonts, colors);
@@ -341,15 +345,22 @@ function buildProposalData(
       : undefined;
   const sunlightHours =
     annualKwh && systemKw ? Math.round(annualKwh / systemKw) : undefined;
-  const installedCost = systemKw
+  const installedCost = positiveNumber(lead.system_cost_before_incentives) ?? (systemKw
     ? systemKw * 1000 * 2.75
     : panelCount
       ? panelCount * 400 * 2.75
-      : undefined;
-  const roiYears =
+      : undefined);
+  const netSystemCost = positiveNumber(lead.net_system_cost) ??
+    (installedCost ? installedCost * 0.7 : undefined);
+  const grossPaybackYears =
     annualSavings && installedCost
       ? Number((installedCost / annualSavings).toFixed(1))
       : undefined;
+  const netPaybackYears =
+    annualSavings && netSystemCost
+      ? Number((netSystemCost / annualSavings).toFixed(1))
+      : undefined;
+  const roiYears = netPaybackYears;
   const twentyYearSavings = annualSavings ? annualSavings * 20 : undefined;
   const costWithoutSolar20Yr = monthlyBill ? monthlyBill * 12 * 20 * 1.12 : undefined;
   const costWithSolar20Yr =
@@ -357,9 +368,10 @@ function buildProposalData(
       ? Math.max(0, costWithoutSolar20Yr - twentyYearSavings)
       : undefined;
   const annualImpactLbs = positiveNumber(report.annualImpactLbs);
-  const energyOffsetPct = positiveNumber(
-    lead.energy_offset_pct ?? report.annualEnergyOffset
-  );
+  const energyOffsetPct =
+    annualKwh && monthlyBill
+      ? clamp(Math.round(((annualKwh * 0.13) / (monthlyBill * 12)) * 100), 0, 100)
+      : positiveNumber(lead.energy_offset_pct ?? report.annualEnergyOffset);
   const suitabilityScore = getPdfSuitabilityScore({
     energyOffsetPct,
     panelCount,
@@ -434,6 +446,10 @@ function buildProposalData(
     energyOffsetPct,
     annualImpactLbs,
     roiYears: roiYears && roiYears > 0 ? roiYears : undefined,
+    grossPaybackYears:
+      grossPaybackYears && grossPaybackYears > 0 ? grossPaybackYears : undefined,
+    netPaybackYears:
+      netPaybackYears && netPaybackYears > 0 ? netPaybackYears : undefined,
     leadScore,
     leadScoreLabel: normalizeLeadScoreLabel(lead.lead_score_label, leadScore),
     quoteRequested: Boolean(lead.quote_requested),
@@ -904,11 +920,13 @@ function drawFinancingPage(
     472,
     164,
     "Cash Purchase",
-    "Best for homeowners who want the highest long-term savings and can pay upfront.",
+    "Pay in full and own your system outright. Highest long-term savings, zero interest.",
     ["Highest ownership control", "No loan interest", "Largest upfront cost"],
     proposal.installedCost ? formatMoney(proposal.installedCost) : "Estimate unavailable",
     fonts,
-    colors
+    colors,
+    false,
+    "Upfront cost"
   );
   drawFinanceOption(
     page,
@@ -946,19 +964,30 @@ function drawFinancingPage(
     font: fonts.bold,
     color: colors.text,
   });
-  drawSourceBadge(page, 422, 396, "Illustrative", fonts, colors);
+  drawSourceBadge(page, 422, 396, "Modeled", fonts, colors);
 
   const rows = [
-    ["Up-front cost of installation", proposal.installedCost ? formatMoney(proposal.installedCost) : "Unavailable"],
-    ["Estimated annual savings", formatMoneyMaybe(proposal.annualSavings)],
-    ["Simple payback period", proposal.roiYears ? `${proposal.roiYears} years` : "Unavailable"],
-    ["Total 20-year cost with solar", formatMoneyMaybe(proposal.costWithSolar20Yr)],
-    ["Total 20-year cost without solar", formatMoneyMaybe(proposal.costWithoutSolar20Yr)],
-    ["Total 20-year savings", formatMoneyMaybe(proposal.twentyYearSavings)],
+    {
+      label: "Up-front cost of installation",
+      value: proposal.installedCost ? formatMoney(proposal.installedCost) : "Unavailable",
+    },
+    { label: "Estimated annual savings", value: formatMoneyMaybe(proposal.annualSavings) },
+    {
+      label: "Gross payback (before incentives)",
+      value: proposal.grossPaybackYears ? `${proposal.grossPaybackYears} yrs` : "Unavailable",
+    },
+    {
+      label: "Net payback (after 30% tax credit)",
+      primary: true,
+      value: proposal.netPaybackYears ? `${proposal.netPaybackYears} yrs - PRIMARY` : "Unavailable",
+    },
+    { label: "Total 20-year cost with solar", value: formatMoneyMaybe(proposal.costWithSolar20Yr) },
+    { label: "Total 20-year cost without solar", value: formatMoneyMaybe(proposal.costWithoutSolar20Yr) },
+    { label: "Total 20-year savings", value: formatMoneyMaybe(proposal.twentyYearSavings) },
   ];
 
-  rows.forEach(([label, value], index) => {
-    const y = 356 - index * 30;
+  rows.forEach((row, index) => {
+    const y = 358 - index * 27;
     page.drawLine({
       start: { x: 60, y: y + 18 },
       end: { x: 552, y: y + 18 },
@@ -966,21 +995,38 @@ function drawFinancingPage(
       color: colors.line,
       opacity: 0.55,
     });
-    page.drawText(label, {
+    page.drawText(row.label, {
       x: 60,
       y,
       size: 9.5,
-      font: fonts.regular,
-      color: colors.muted,
+      font: row.primary ? fonts.bold : fonts.regular,
+      color: row.primary ? colors.green : colors.muted,
     });
-    page.drawText(value, {
+    page.drawText(row.value, {
       x: 430,
       y,
       size: 10,
       font: fonts.bold,
-      color: value === "Unavailable" || value === "Estimate unavailable" ? colors.muted : colors.text,
+      color:
+        row.value === "Unavailable" || row.value === "Estimate unavailable"
+          ? colors.muted
+          : row.primary
+            ? colors.green
+            : colors.text,
     });
   });
+
+  drawTextBlock(
+    page,
+    "Net payback assumes the federal 30% Investment Tax Credit (ITC) is claimed in the year of installation.",
+    60,
+    166,
+    455,
+    fonts.regular,
+    8.2,
+    10.5,
+    colors.muted
+  );
 
   drawDisclaimer(page, 42, 122, fonts, colors);
 }
@@ -1396,7 +1442,8 @@ function drawFinanceOption(
   monthlyImpact: string,
   fonts: PdfFonts,
   colors: PdfColors,
-  highlighted = false
+  highlighted = false,
+  impactLabel = "Monthly impact"
 ) {
   drawCard(page, x, y, width, 170, colors, highlighted ? colors.cyan : undefined);
   page.drawText(title, {
@@ -1410,7 +1457,7 @@ function drawFinanceOption(
   bullets.forEach((bullet, index) => {
     drawBullet(page, x + 16, y + 78 - index * 18, bullet, fonts, colors, 7.8);
   });
-  page.drawText("Monthly impact", {
+  page.drawText(impactLabel, {
     x: x + 14,
     y: y + 18,
     size: 7.4,
@@ -1915,6 +1962,11 @@ async function loadQrImage(pdf: PDFDocument, url: string) {
   } catch {
     return null;
   }
+}
+
+function buildEstimateUrl(requestUrl: string, address: string) {
+  const origin = new URL(requestUrl).origin;
+  return `${origin}/estimate?address=${encodeURIComponent(address)}`;
 }
 
 function buildPdfFilename(proposal: ProposalData) {

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { startTransition, useDeferredValue, useEffect, useMemo, useState } from "react";
-import { ArrowDownToLine, CalendarDays, Download, Search, Send, SlidersHorizontal, UserRound } from "lucide-react";
+import { ArrowDownToLine, Download, Search, Send, SlidersHorizontal, UserRound } from "lucide-react";
 import { formatDisplayAddress } from "@/lib/address-format";
 import { trackEvent } from "@/lib/analytics";
 import { formatName } from "@/lib/name-format";
@@ -82,6 +82,7 @@ type DashboardCrmProps = {
     pdfsGenerated: number;
     averagePayback: number;
     conversionRate: number | null;
+    totalPipelineValue: number;
   };
 };
 
@@ -115,27 +116,6 @@ function getReportDownloadPath(lead: DashboardCrmLead) {
 
 function getEstimateReportPath(address: string) {
   return `/estimate?address=${encodeURIComponent(address)}`;
-}
-
-function getCalendlyUrl(lead: DashboardCrmLead) {
-  const baseUrl = process.env.NEXT_PUBLIC_CALENDLY_URL?.trim();
-
-  if (!baseUrl) {
-    return "";
-  }
-
-  try {
-    const url = new URL(baseUrl);
-    url.searchParams.set("name", formatName(lead.name));
-    url.searchParams.set("email", lead.email);
-    url.searchParams.set("a1", formatDisplayAddress(lead.address));
-    url.searchParams.set("hide_landing_page_details", "1");
-    url.searchParams.set("hide_gdpr_banner", "1");
-    url.searchParams.set("primary_color", "22d3ee");
-    return url.toString();
-  } catch {
-    return "";
-  }
 }
 
 function getDashboardTokenFromLocation() {
@@ -567,13 +547,14 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
           </div>
         </header>
 
-        <section className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+        <section className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-7">
           <KpiCard label="Total Leads" value={formatNumber(stats.totalLeads)} />
           <KpiCard label="Avg Savings" value={formatMoney(stats.averageSavings)} />
           <KpiCard label="Avg Lead Score" value={`${formatNumber(stats.averageLeadScore)}/100`} />
           <KpiCard label="Avg Payback" value={`${formatDecimal(stats.averagePayback)} yrs`} />
           <KpiCard label="Queued Follow-ups" value={formatNumber(stats.queuedFollowUps)} />
           <KpiCard label="PDFs Generated" value={formatNumber(stats.pdfsGenerated)} />
+          <KpiCard label="Total Pipeline Value" value={formatMoney(stats.totalPipelineValue)} />
         </section>
 
         <section className="grid gap-4 lg:grid-cols-[minmax(0,7fr)_minmax(22rem,3fr)]">
@@ -784,7 +765,7 @@ function LeadTable({
                     ) : null}
                     {shouldWarnSmsNotSent(lead) ? (
                       <span className="ml-1 mt-2 inline-flex rounded-full border border-amber-300/25 bg-amber-300/12 px-2 py-0.5 text-[0.58rem] font-bold uppercase tracking-[0.12em] text-amber-100">
-                        No SMS
+                        SMS not sent
                       </span>
                     ) : null}
                   </span>
@@ -908,7 +889,7 @@ function LeadPipelineCard({
         </div>
         {shouldWarnSmsNotSent(lead) ? (
           <span className="mt-2 inline-flex rounded-full border border-amber-300/25 bg-amber-300/12 px-2 py-0.5 text-[0.58rem] font-bold uppercase tracking-[0.12em] text-amber-100">
-            No SMS
+            SMS not sent
           </span>
         ) : null}
         <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
@@ -1173,19 +1154,6 @@ function LeadDetailPanel({
           </p>
           <SlidersHorizontal className="h-4 w-4 text-slate-500" aria-hidden="true" />
         </div>
-        <a
-          href={getCalendlyUrl(lead)}
-          target="_blank"
-          rel="noreferrer"
-          className={`mt-3 inline-flex w-full items-center justify-center gap-2 rounded-full px-4 py-2.5 text-xs font-semibold transition ${
-            getCalendlyUrl(lead)
-              ? "border border-cyan-300/20 bg-cyan-300/10 text-cyan-50 hover:bg-cyan-300/18"
-              : "pointer-events-none border border-white/10 bg-white/[0.035] text-slate-500"
-          }`}
-        >
-          <CalendarDays className="h-4 w-4" aria-hidden="true" />
-          {getCalendlyUrl(lead) ? "Book a call" : "Calendly not connected"}
-        </a>
         {followUps.length ? (
           <div className="mt-3 grid gap-2">
             {followUps.slice(0, 4).map((followUp) => (

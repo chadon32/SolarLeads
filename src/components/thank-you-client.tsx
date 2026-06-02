@@ -93,15 +93,6 @@ export function ThankYouClient() {
       utilityBillUploaded: Boolean(source.utilityBillUploaded),
     };
   }, [payload]);
-  const calendlyUrl = useMemo(
-    () =>
-      buildCalendlyUrl({
-        address: summary.address,
-        email: summary.email,
-        firstName: summary.firstName,
-      }),
-    [summary.address, summary.email, summary.firstName]
-  );
   const referralUrl =
     summary.referralCode && typeof window !== "undefined"
       ? `${window.location.origin}?ref=${encodeURIComponent(summary.referralCode)}`
@@ -243,25 +234,26 @@ export function ThankYouClient() {
           <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_0.85fr]">
             <section className="rounded-[1.5rem] border border-white/10 bg-slate-950/42 p-5">
               <p className="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-200">
-                Book your free consultation
+                What happens next?
               </p>
               <h2 className="mt-3 text-2xl font-semibold text-white">
-                Pick a time that works for you
+                A solar advisor follows up within 24 hours
               </h2>
               <p className="mt-2 text-sm leading-6 text-slate-400">
-                No pressure, just answers about your roof model, savings estimate, and next steps.
+                A solar advisor will reach out to review your report and answer
+                any questions. No pressure - you&apos;re in control of the timeline.
               </p>
-              {calendlyUrl ? (
-                <div
-                  className="calendly-inline-widget mt-4 overflow-hidden rounded-[1.2rem] bg-white"
-                  data-url={calendlyUrl}
-                  style={{ minWidth: "320px", height: "630px" }}
-                />
-              ) : (
-                <div className="mt-4 rounded-[1.2rem] border border-white/10 bg-white/[0.04] p-5 text-sm text-slate-300">
-                  Booking calendar is not connected yet. Add NEXT_PUBLIC_CALENDLY_URL to enable online scheduling.
-                </div>
-              )}
+              <div className="mt-4 grid gap-2 text-sm font-semibold text-emerald-50">
+                <span className="rounded-full border border-emerald-300/18 bg-emerald-300/10 px-4 py-2">
+                  Report emailed to you
+                </span>
+                <span className="rounded-full border border-emerald-300/18 bg-emerald-300/10 px-4 py-2">
+                  Advisor follows up by phone
+                </span>
+                <span className="rounded-full border border-emerald-300/18 bg-emerald-300/10 px-4 py-2">
+                  Free on-site quote when ready
+                </span>
+              </div>
             </section>
 
             {summary.referralCode ? (
@@ -308,40 +300,59 @@ export function ThankYouClient() {
                 </div>
               </section>
             ) : null}
+            <section className="rounded-[1.5rem] border border-amber-300/14 bg-amber-300/[0.055] p-5">
+              <p className="text-xs font-semibold uppercase tracking-[0.3em] text-amber-100">
+                Share your savings
+              </p>
+              <h2 className="mt-3 text-2xl font-semibold text-white">
+                Your roof could save {formatMoney(summary.annualSavings)}/year
+              </h2>
+              <p className="mt-2 text-sm leading-6 text-slate-300">
+                Share this with friends who pay high Arizona electric bills.
+              </p>
+              {referralUrl ? (
+                <>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                    <a
+                      href={whatsappUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="rounded-full border border-white/10 bg-white/[0.06] px-4 py-2.5 text-center text-sm font-semibold text-white transition hover:bg-white/[0.1]"
+                    >
+                      Share on WhatsApp
+                    </a>
+                    <a
+                      href={smsUrl}
+                      className="rounded-full border border-white/10 bg-white/[0.06] px-4 py-2.5 text-center text-sm font-semibold text-white transition hover:bg-white/[0.1]"
+                    >
+                      Share via text
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void navigator.clipboard?.writeText(referralUrl);
+                      }}
+                      className="rounded-full bg-white px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100"
+                    >
+                      Copy link
+                    </button>
+                  </div>
+                  <p className="mt-3 text-xs leading-5 text-slate-400">
+                    Sharing your referral link: when a friend submits their
+                    estimate, both of you get recognized in our referral program.
+                  </p>
+                </>
+              ) : (
+                <p className="mt-3 text-sm leading-6 text-slate-400">
+                  Your referral link will appear here when the report data is loaded.
+                </p>
+              )}
+            </section>
           </div>
         </div>
       </section>
     </main>
   );
-}
-
-function buildCalendlyUrl({
-  address,
-  email,
-  firstName,
-}: {
-  address?: string;
-  email?: string;
-  firstName?: string;
-}) {
-  const baseUrl = process.env.NEXT_PUBLIC_CALENDLY_URL?.trim();
-
-  if (!baseUrl) {
-    return "";
-  }
-
-  try {
-    const url = new URL(baseUrl);
-    url.searchParams.set("hide_landing_page_details", "1");
-    url.searchParams.set("hide_gdpr_banner", "1");
-    url.searchParams.set("primary_color", "22d3ee");
-    if (firstName) url.searchParams.set("name", firstName);
-    if (email) url.searchParams.set("email", email);
-    if (address) url.searchParams.set("a1", address);
-    return url.toString();
-  } catch {
-    return "";
-  }
 }
 
 function SummaryMetric({ label, value }: { label: string; value: string }) {

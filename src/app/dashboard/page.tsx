@@ -309,6 +309,13 @@ export default async function DashboardPage({
   const averagePayback = roiValues.length
     ? roiValues.reduce((sum, value) => sum + value, 0) / roiValues.length
     : 0;
+  const totalPipelineValue = crmLeads.reduce(
+    (sum, lead) =>
+      sum +
+      (lead.systemCostBeforeIncentives ??
+        Math.round(Math.max(lead.systemSizeKw, 0) * 1000 * 2.75)),
+    0
+  );
 
   const crmFollowUps: DashboardCrmFollowUp[] = followUpList.map((item) => ({
     id: item.id,
@@ -336,6 +343,7 @@ export default async function DashboardPage({
         averageLeadScore,
         averagePayback,
         conversionRate: null,
+        totalPipelineValue,
       }}
     />
   );
