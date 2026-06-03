@@ -12,7 +12,13 @@ import {
   buildSolarReportFromSolarValues,
   type SolarReport,
 } from "@/lib/solar-report";
-import { APP_CANONICAL_URL, APP_NAME, APP_REPORT_NAME } from "@/lib/brand";
+import {
+  APP_CANONICAL_URL,
+  APP_LEAD_DISCLOSURE_COPY,
+  APP_NAME,
+  APP_PRIVACY_COPY,
+  APP_REPORT_NAME,
+} from "@/lib/brand";
 import {
   buildSolarAdvisorProfile,
   type SolarAdvisorProfile,
@@ -640,6 +646,22 @@ function drawExecutiveSummary(
       color: colors.green,
     });
   }
+  page.drawText(APP_PRIVACY_COPY, {
+    x: 42,
+    y: 104,
+    size: 7,
+    font: fonts.regular,
+    color: colors.muted,
+    maxWidth: 528,
+  });
+  page.drawText(APP_LEAD_DISCLOSURE_COPY, {
+    x: 42,
+    y: 94,
+    size: 7,
+    font: fonts.regular,
+    color: colors.muted,
+    maxWidth: 528,
+  });
 }
 
 async function markPdfDownloaded(

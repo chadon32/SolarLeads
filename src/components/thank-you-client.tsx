@@ -11,7 +11,11 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { formatDisplayAddress } from "@/lib/address-format";
-import { APP_NAME } from "@/lib/brand";
+import {
+  APP_LEAD_DISCLOSURE_COPY,
+  APP_NAME,
+  APP_PRIVACY_COPY,
+} from "@/lib/brand";
 
 type ThankYouPayload = {
   address?: string;
@@ -133,6 +137,12 @@ export function ThankYouClient() {
                 {summary.quoteRequested
                   ? "Your request was received. A solar specialist can follow up with your report details."
                   : `We emailed your personalized ${APP_NAME} proposal and saved the roof model summary for your next step.`}
+              </p>
+              <p className="mt-4 rounded-[1rem] border border-white/8 bg-slate-950/28 px-4 py-3 text-sm leading-6 text-slate-300">
+                {APP_PRIVACY_COPY}
+              </p>
+              <p className="mt-2 text-xs leading-6 text-slate-500">
+                {APP_LEAD_DISCLOSURE_COPY}
               </p>
               {summary.utilityBillUploaded ? (
                 <p className="mt-4 inline-flex rounded-full border border-emerald-300/18 bg-emerald-300/10 px-4 py-2 text-sm font-semibold text-emerald-100">

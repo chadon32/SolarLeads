@@ -14,8 +14,11 @@ import { SolarAnalysis } from "@/components/solar-analysis";
 import { SolarReportDashboard, type DetailTab } from "@/components/solar-report-dashboard";
 import { formatDisplayAddress } from "@/lib/address-format";
 import { trackEvent } from "@/lib/analytics";
-import { APP_TAGLINE } from "@/lib/brand";
-import { APP_NAME } from "@/lib/brand";
+import {
+  APP_NAME,
+  APP_PRIVACY_COPY,
+  APP_TAGLINE,
+} from "@/lib/brand";
 import {
   DEFAULT_BATTERY_OPTION_ID,
   getBatteryById,
@@ -775,7 +778,7 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
       <footer className="relative z-10 mx-auto flex w-full max-w-7xl items-center justify-center px-5 pb-10 text-center text-sm text-white/56 sm:px-7 md:px-10 lg:px-12">
         <div className="liquid-glass inline-flex items-center gap-3 rounded-full px-5 py-3">
           <ShieldCheck className="h-4 w-4 text-cyan-100" aria-hidden="true" />
-          <span>Your information is secure. We respect your privacy.</span>
+          <span>{APP_PRIVACY_COPY}</span>
         </div>
       </footer>
     </main>

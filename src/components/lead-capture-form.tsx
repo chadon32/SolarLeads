@@ -6,6 +6,7 @@ import { FileCheck2, UploadCloud } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatDisplayAddress } from "@/lib/address-format";
 import { trackEvent } from "@/lib/analytics";
+import { APP_LEAD_DISCLOSURE_COPY, APP_PRIVACY_COPY } from "@/lib/brand";
 import type { BatteryOption } from "@/lib/batteries";
 import { formatName } from "@/lib/name-format";
 import {
@@ -686,7 +687,10 @@ export function LeadCaptureForm({
           />
 
           <p className="mt-6 text-center text-sm leading-6 text-slate-400">
-            No spam. Your report details are used to help licensed Arizona solar specialists prepare relevant quotes.
+            {APP_PRIVACY_COPY}
+          </p>
+          <p className="mt-2 text-center text-[0.8rem] leading-6 text-slate-500">
+            {APP_LEAD_DISCLOSURE_COPY}
           </p>
 
           <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-center">
