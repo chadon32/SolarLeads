@@ -1,4 +1,5 @@
 import { ImageResponse } from "next/og";
+import { APP_NAME, APP_TAGLINE } from "@/lib/brand";
 
 export const runtime = "edge";
 export const size = {
@@ -32,7 +33,7 @@ export default function OpenGraphImage() {
             textTransform: "uppercase",
           }}
         >
-          Arizona Solar AI
+          {APP_NAME}
         </div>
         <div
           style={{
@@ -53,7 +54,7 @@ export default function OpenGraphImage() {
             textAlign: "center",
           }}
         >
-          Free estimate for Arizona homeowners
+          {APP_TAGLINE}
         </div>
         <div
           style={{

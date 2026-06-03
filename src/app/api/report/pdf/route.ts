@@ -12,6 +12,7 @@ import {
   buildSolarReportFromSolarValues,
   type SolarReport,
 } from "@/lib/solar-report";
+import { APP_CANONICAL_URL, APP_NAME, APP_REPORT_NAME } from "@/lib/brand";
 import {
   buildSolarAdvisorProfile,
   type SolarAdvisorProfile,
@@ -41,7 +42,8 @@ type SourceLabel =
   | "Illustrative"
   | "Estimated"
   | "Requested"
-  | "Next Step";
+  | "Next Step"
+  | "Installer Verification Required";
 
 type ReportLead = {
   id: string;
@@ -114,16 +116,22 @@ type ProposalData = {
   roiYears?: number;
   grossPaybackYears?: number;
   netPaybackYears?: number;
+  federalTaxCredit?: number;
   leadScore: number;
   leadScoreLabel: LeadScoreLabel;
   quoteRequested: boolean;
   utilityBillUploaded: boolean;
+  selectedPanelBrand?: string;
+  selectedPanelModel?: string;
+  selectedPanelWatts?: number;
+  panelSizeLabel: string;
   roofAreaSqFt?: number;
   usableAreaSqFt?: number;
   usableRoofPct?: number;
   roofPitchDeg?: number;
   sunlightHours?: number;
   suitabilityScore: number;
+  suitabilityLabel: string;
   installedCost?: number;
   costWithoutSolar20Yr?: number;
   costWithSolar20Yr?: number;
@@ -252,9 +260,14 @@ export async function GET(request: Request) {
 
     drawExecutiveSummary(pdf.addPage([612, 792]), proposal, assets, fonts, colors);
     drawRoofAnalysisPage(pdf.addPage([612, 792]), proposal, assets, fonts, colors);
+    drawSolarReadinessPage(pdf.addPage([612, 792]), proposal, fonts, colors);
+    drawPanelLayoutPage(pdf.addPage([612, 792]), proposal, assets, fonts, colors);
+    drawSunlightAnalysisPage(pdf.addPage([612, 792]), proposal, assets, fonts, colors);
     drawSavingsPage(pdf.addPage([612, 792]), proposal, fonts, colors);
     drawFinancingPage(pdf.addPage([612, 792]), proposal, fonts, colors);
+    drawAiSolarAdvisorPage(pdf.addPage([612, 792]), proposal, fonts, colors);
     drawNextStepsPage(pdf.addPage([612, 792]), proposal, assets, fonts, colors);
+    drawInstallerVerificationPage(pdf.addPage([612, 792]), proposal, fonts, colors);
 
     const bytes = await pdf.save();
 
@@ -302,7 +315,7 @@ function verifyReportAccess(
   }
 
   const message = signature.missingSecret
-    ? "Report links are not configured. Please contact Arizona Solar AI for a fresh report link."
+    ? `Report links are not configured. Please contact ${APP_NAME} for a fresh report link.`
     : signature.expired
       ? "This report link has expired. Please request a fresh report link."
       : "This report link is invalid or missing a signature.";
@@ -450,16 +463,22 @@ function buildProposalData(
       grossPaybackYears && grossPaybackYears > 0 ? grossPaybackYears : undefined,
     netPaybackYears:
       netPaybackYears && netPaybackYears > 0 ? netPaybackYears : undefined,
+    federalTaxCredit: installedCost ? installedCost * 0.3 : undefined,
     leadScore,
     leadScoreLabel: normalizeLeadScoreLabel(lead.lead_score_label, leadScore),
     quoteRequested: Boolean(lead.quote_requested),
     utilityBillUploaded: Boolean(lead.utility_bill_uploaded),
+    selectedPanelBrand: lead.selected_panel_brand ?? undefined,
+    selectedPanelModel: lead.selected_panel_model ?? undefined,
+    selectedPanelWatts: positiveNumber(lead.selected_panel_watts),
+    panelSizeLabel: buildPanelSizeLabel(positiveNumber(lead.selected_panel_watts)),
     roofAreaSqFt,
     usableAreaSqFt,
     usableRoofPct,
     roofPitchDeg: positiveNumber(lead.roof_pitch_deg),
     sunlightHours,
     suitabilityScore,
+    suitabilityLabel: getHomeownerSuitabilityLabel(suitabilityScore),
     installedCost,
     costWithoutSolar20Yr,
     costWithSolar20Yr,
@@ -476,7 +495,7 @@ function drawExecutiveSummary(
 ) {
   drawPageShell(page, "EXECUTIVE SUMMARY", proposal, fonts, colors);
 
-  page.drawText("Your Solar Potential Report", {
+  page.drawText(`Your ${APP_REPORT_NAME}`, {
     x: 42,
     y: 694,
     size: 31,
@@ -518,19 +537,19 @@ function drawExecutiveSummary(
     color: colors.text,
   });
   drawConfidenceBadge(page, 456, 599, proposal.confidence, fonts, colors);
-  page.drawText(`Lead score ${proposal.leadScore}/100`, {
+  page.drawText(`Solar Readiness Score ${proposal.suitabilityScore}/100`, {
     x: 326,
     y: 582,
     size: 8,
     font: fonts.bold,
     color: colors.cyan,
   });
-  page.drawText(proposal.leadScoreLabel, {
-    x: 408,
+  page.drawText(proposal.suitabilityLabel, {
+    x: 462,
     y: 582,
     size: 8,
     font: fonts.bold,
-    color: getLeadScorePdfColor(proposal.leadScoreLabel, colors),
+    color: colors.green,
   });
 
   drawRoofVisual(page, 42, 328, 528, 218, proposal, assets.roofImage, fonts, colors, {
@@ -737,6 +756,307 @@ function drawRoofAnalysisPage(
       colors.green
     );
   }
+}
+
+function drawSolarReadinessPage(
+  page: PDFPage,
+  proposal: ProposalData,
+  fonts: PdfFonts,
+  colors: PdfColors
+) {
+  drawPageShell(page, "SOLAR READINESS", proposal, fonts, colors);
+
+  page.drawText("Solar Readiness", {
+    x: 42,
+    y: 698,
+    size: 27,
+    font: fonts.bold,
+    color: colors.text,
+  });
+  drawTextBlock(
+    page,
+    "This section translates the technical roof model into a homeowner-friendly readiness score. It uses roof fit, available sunlight, system size, and estimated bill offset. Internal lead scoring is intentionally not shown in this homeowner report.",
+    42,
+    674,
+    492,
+    fonts.regular,
+    9.5,
+    12,
+    colors.muted
+  );
+
+  drawCard(page, 42, 466, 220, 150, colors, colors.cyan);
+  page.drawText("Solar Readiness Score", {
+    x: 62,
+    y: 584,
+    size: 12,
+    font: fonts.bold,
+    color: colors.text,
+  });
+  page.drawText(`${proposal.suitabilityScore}/100`, {
+    x: 62,
+    y: 532,
+    size: 42,
+    font: fonts.bold,
+    color: colors.cyan,
+  });
+  page.drawText(proposal.suitabilityLabel, {
+    x: 62,
+    y: 506,
+    size: 12,
+    font: fonts.bold,
+    color: colors.green,
+  });
+  drawSourceBadge(page, 62, 480, "Modeled", fonts, colors);
+
+  drawCard(page, 286, 466, 284, 150, colors);
+  page.drawText("What drives the score", {
+    x: 306,
+    y: 584,
+    size: 12,
+    font: fonts.bold,
+    color: colors.text,
+  });
+  const readinessFactors = [
+    `Energy offset: ${formatPctMaybe(proposal.energyOffsetPct)}`,
+    `Accepted panel count: ${proposal.panelCount ?? 0}`,
+    `Solar-ready area: ${formatSqFtMaybe(proposal.usableAreaSqFt)}`,
+    `Sunlight quality: ${proposal.advisor.sunlightQuality.label}`,
+  ];
+  readinessFactors.forEach((factor, index) =>
+    drawBullet(page, 306, 558 - index * 24, factor, fonts, colors, 8.2)
+  );
+
+  drawCard(page, 42, 256, 528, 166, colors);
+  page.drawText(proposal.advisor.suitability.headline, {
+    x: 60,
+    y: 392,
+    size: 13,
+    font: fonts.bold,
+    color: colors.text,
+  });
+  page.drawText("Positive factors", {
+    x: 60,
+    y: 364,
+    size: 9,
+    font: fonts.bold,
+    color: colors.green,
+  });
+  proposal.advisor.suitability.positiveFactors.slice(0, 3).forEach((reason, index) => {
+    drawBullet(page, 62, 342 - index * 19, reason, fonts, colors, 7.7);
+  });
+  page.drawText("Installer verification items", {
+    x: 320,
+    y: 364,
+    size: 9,
+    font: fonts.bold,
+    color: colors.gold,
+  });
+  proposal.advisor.suitability.limitingFactors.slice(0, 3).forEach((reason, index) => {
+    drawBullet(page, 322, 342 - index * 19, reason, fonts, colors, 7.7);
+  });
+
+  drawDisclaimer(page, 42, 170, fonts, colors);
+}
+
+function drawPanelLayoutPage(
+  page: PDFPage,
+  proposal: ProposalData,
+  assets: PdfAssets,
+  fonts: PdfFonts,
+  colors: PdfColors
+) {
+  drawPageShell(page, "PANEL LAYOUT", proposal, fonts, colors);
+
+  page.drawText("Panel Layout", {
+    x: 42,
+    y: 698,
+    size: 27,
+    font: fonts.bold,
+    color: colors.text,
+  });
+  drawTextBlock(
+    page,
+    "Panels are modeled from accepted roof candidates and translated into a clean installer-style layout. The final layout may change after fire setbacks, roof condition, electrical design, and field measurements are confirmed.",
+    42,
+    674,
+    492,
+    fonts.regular,
+    9.5,
+    12,
+    colors.muted
+  );
+
+  drawRoofVisual(page, 42, 358, 528, 274, proposal, assets.roofImage, fonts, colors, {
+    showLegend: true,
+    visualization: "panels",
+  });
+
+  drawMetricCard(
+    page,
+    42,
+    248,
+    120,
+    78,
+    "Accepted panels",
+    proposal.panelCount ? `${proposal.panelCount}` : "Unavailable",
+    "Solar API",
+    colors.cyan,
+    fonts,
+    colors
+  );
+  drawMetricCard(
+    page,
+    174,
+    248,
+    120,
+    78,
+    "Panel size",
+    proposal.panelSizeLabel,
+    "Modeled from panel layout",
+    colors.blue,
+    fonts,
+    colors
+  );
+  drawMetricCard(
+    page,
+    306,
+    248,
+    120,
+    78,
+    "System size",
+    formatKwMaybe(proposal.systemKw),
+    proposal.systemKwSource,
+    colors.green,
+    fonts,
+    colors
+  );
+  drawMetricCard(
+    page,
+    438,
+    248,
+    132,
+    78,
+    "Panel model",
+    getPanelDisplayName(proposal),
+    "Modeled",
+    colors.gold,
+    fonts,
+    colors
+  );
+
+  drawCard(page, 42, 110, 528, 100, colors);
+  page.drawText("Why this panel selection", {
+    x: 60,
+    y: 182,
+    size: 13,
+    font: fonts.bold,
+    color: colors.text,
+  });
+  drawTextBlock(
+    page,
+    `The model prioritizes usable roof planes with stronger sunlight and enough continuous area for a practical residential array. The current layout supports ${proposal.panelCount ?? 0} accepted panels and a modeled ${formatKwMaybe(proposal.systemKw)} system. Panel count, equipment brand, and inverter selection should be confirmed during final installer design.`,
+    60,
+    162,
+    492,
+    fonts.regular,
+    8.5,
+    11,
+    colors.muted
+  );
+}
+
+function drawSunlightAnalysisPage(
+  page: PDFPage,
+  proposal: ProposalData,
+  assets: PdfAssets,
+  fonts: PdfFonts,
+  colors: PdfColors
+) {
+  drawPageShell(page, "SUNLIGHT ANALYSIS", proposal, fonts, colors);
+
+  page.drawText("Sunlight Analysis", {
+    x: 42,
+    y: 698,
+    size: 27,
+    font: fonts.bold,
+    color: colors.text,
+  });
+  drawTextBlock(
+    page,
+    "The sunlight layer explains where the roof appears strongest for solar production. Green areas indicate stronger sunlight quality, yellow indicates moderate sunlight, and orange/red indicates limited sunlight or possible shading.",
+    42,
+    674,
+    492,
+    fonts.regular,
+    9.5,
+    12,
+    colors.muted
+  );
+
+  drawRoofVisual(page, 42, 360, 528, 270, proposal, assets.roofImage, fonts, colors, {
+    showLegend: true,
+    visualization: "sunlight",
+  });
+
+  drawCard(page, 42, 214, 250, 104, colors);
+  page.drawText("Sunlight quality", {
+    x: 60,
+    y: 286,
+    size: 12,
+    font: fonts.bold,
+    color: colors.text,
+  });
+  page.drawText(proposal.advisor.sunlightQuality.label, {
+    x: 60,
+    y: 258,
+    size: 22,
+    font: fonts.bold,
+    color: getSunlightPdfColor(proposal.advisor.sunlightQuality.label, colors),
+  });
+  drawSourceBadge(page, 60, 232, proposal.advisor.sunlightQuality.source, fonts, colors);
+
+  drawCard(page, 314, 214, 256, 104, colors);
+  page.drawText("Roof exposure", {
+    x: 332,
+    y: 286,
+    size: 12,
+    font: fonts.bold,
+    color: colors.text,
+  });
+  drawTextBlock(
+    page,
+    proposal.sunlightHours
+      ? `${formatNumber(proposal.sunlightHours)} modeled annual sunlight hours are used with the accepted panel layout to estimate production. Exposure depends on roof direction, pitch, shade, and nearby obstructions.`
+      : "Detailed sunlight hours were not saved for this lead, so the report uses the saved production and savings estimate.",
+    332,
+    264,
+    210,
+    fonts.regular,
+    8.3,
+    10.7,
+    colors.muted
+  );
+
+  drawCard(page, 42, 96, 528, 80, colors);
+  page.drawText("How to interpret the layer", {
+    x: 60,
+    y: 148,
+    size: 12,
+    font: fonts.bold,
+    color: colors.text,
+  });
+  drawTextBlock(
+    page,
+    proposal.advisor.sunlightQuality.summary,
+    60,
+    130,
+    492,
+    fonts.regular,
+    8.4,
+    10.8,
+    colors.muted
+  );
 }
 
 function drawSavingsPage(
@@ -1031,6 +1351,119 @@ function drawFinancingPage(
   drawDisclaimer(page, 42, 122, fonts, colors);
 }
 
+function drawAiSolarAdvisorPage(
+  page: PDFPage,
+  proposal: ProposalData,
+  fonts: PdfFonts,
+  colors: PdfColors
+) {
+  drawPageShell(page, "AI SOLAR ADVISOR", proposal, fonts, colors);
+
+  page.drawText("AI Solar Advisor", {
+    x: 42,
+    y: 698,
+    size: 27,
+    font: fonts.bold,
+    color: colors.text,
+  });
+  drawTextBlock(
+    page,
+    "A plain-English interpretation of the roof model, savings estimate, and next decision points. This summary is deterministic and based only on the saved report data.",
+    42,
+    674,
+    492,
+    fonts.regular,
+    9.5,
+    12,
+    colors.muted
+  );
+
+  drawCard(page, 42, 486, 528, 142, colors, colors.cyan);
+  page.drawText("Personalized summary", {
+    x: 60,
+    y: 600,
+    size: 14,
+    font: fonts.bold,
+    color: colors.text,
+  });
+  drawSourceBadge(page, 438, 600, "Estimated", fonts, colors);
+  drawTextBlock(
+    page,
+    proposal.advisor.summary,
+    60,
+    578,
+    492,
+    fonts.regular,
+    8.6,
+    11,
+    colors.muted
+  );
+
+  drawCard(page, 42, 292, 250, 154, colors);
+  page.drawText("Key takeaways", {
+    x: 60,
+    y: 416,
+    size: 12,
+    font: fonts.bold,
+    color: colors.text,
+  });
+  [
+    `${proposal.panelCount ?? 0} accepted panels for a modeled ${formatKwMaybe(proposal.systemKw)} system.`,
+    `${formatMoneyMaybe(proposal.annualSavings)} estimated annual savings from the current bill input.`,
+    `${formatPctMaybe(proposal.energyOffsetPct)} estimated energy offset from modeled production.`,
+    `Sunlight quality is ${proposal.advisor.sunlightQuality.label.toLowerCase()}.`,
+  ].forEach((item, index) => drawBullet(page, 60, 392 - index * 25, item, fonts, colors, 7.8));
+
+  drawCard(page, 320, 292, 250, 154, colors);
+  page.drawText("Homeowner questions", {
+    x: 338,
+    y: 416,
+    size: 12,
+    font: fonts.bold,
+    color: colors.text,
+  });
+  proposal.advisor.questions.slice(0, 4).forEach((question, index) => {
+    page.drawText(question.question, {
+      x: 338,
+      y: 392 - index * 28,
+      size: 8.4,
+      font: fonts.bold,
+      color: colors.cyan,
+    });
+  });
+
+  drawCard(page, 42, 104, 528, 150, colors);
+  page.drawText("Most important limitation", {
+    x: 60,
+    y: 226,
+    size: 13,
+    font: fonts.bold,
+    color: colors.text,
+  });
+  drawTextBlock(
+    page,
+    proposal.advisor.disclaimer,
+    60,
+    204,
+    492,
+    fonts.regular,
+    9,
+    12,
+    colors.muted
+  );
+  drawTextBlock(
+    page,
+    "Use this report to decide whether the roof and savings look worth a final installer review. It should not be treated as a final engineering plan or a guaranteed utility bill outcome.",
+    60,
+    158,
+    492,
+    fonts.regular,
+    8.4,
+    11,
+    colors.muted
+  );
+}
+
 function drawNextStepsPage(
   page: PDFPage,
   proposal: ProposalData,
@@ -1094,7 +1527,7 @@ function drawNextStepsPage(
   );
   drawContactRow(page, 360, 540, "Email", proposal.email, fonts, colors);
   drawContactRow(page, 360, 502, "Report ID", proposal.id, fonts, colors);
-  drawContactRow(page, 360, 464, "Website", "solar-leads-psi.vercel.app", fonts, colors);
+  drawContactRow(page, 360, 464, "Website", new URL(APP_CANONICAL_URL).hostname, fonts, colors);
 
   page.drawText("Open this report", {
     x: 360,
@@ -1145,6 +1578,98 @@ function drawNextStepsPage(
   notes.forEach((note, index) => drawBullet(page, 62, 242 - index * 24, note, fonts, colors));
 }
 
+function drawInstallerVerificationPage(
+  page: PDFPage,
+  proposal: ProposalData,
+  fonts: PdfFonts,
+  colors: PdfColors
+) {
+  drawPageShell(page, "INSTALLER VERIFICATION", proposal, fonts, colors);
+
+  page.drawText("Installer Verification", {
+    x: 42,
+    y: 698,
+    size: 27,
+    font: fonts.bold,
+    color: colors.text,
+  });
+  drawTextBlock(
+    page,
+    "Before making a solar purchase decision, a licensed installer should confirm roof, electrical, incentive, and utility details. This checklist keeps the estimate useful while being clear about what still needs professional review.",
+    42,
+    674,
+    492,
+    fonts.regular,
+    9.5,
+    12,
+    colors.muted
+  );
+
+  const verificationGroups = [
+    {
+      title: "Roof and layout",
+      items: [
+        "Roof age, condition, material, and structural capacity.",
+        "Final fire setbacks, access pathways, vents, skylights, and obstructions.",
+        "Exact panel layout, attachment points, and roof plane measurements.",
+      ],
+    },
+    {
+      title: "Electrical and utility",
+      items: [
+        "Main service panel capacity and interconnection requirements.",
+        "Current utility rate plan, export credit rules, and net billing details.",
+        "Battery backup or inverter choice if shading or backup needs are present.",
+      ],
+    },
+    {
+      title: "Pricing and incentives",
+      items: [
+        "Final equipment pricing, labor, permits, and financing terms.",
+        "Federal tax credit eligibility and Arizona incentive applicability.",
+        "Production guarantee, workmanship warranty, and monitoring plan.",
+      ],
+    },
+  ];
+
+  verificationGroups.forEach((group, index) => {
+    const x = 42 + index * 176;
+    drawCard(page, x, 354, 158, 260, colors);
+    page.drawText(group.title, {
+      x: x + 14,
+      y: 584,
+      size: 11,
+      font: fonts.bold,
+      color: colors.text,
+    });
+    group.items.forEach((item, itemIndex) => {
+      drawBullet(page, x + 14, 548 - itemIndex * 56, item, fonts, colors, 7.5);
+    });
+  });
+
+  drawCard(page, 42, 154, 528, 150, colors, colors.gold);
+  page.drawText("Final confirmation", {
+    x: 60,
+    y: 276,
+    size: 14,
+    font: fonts.bold,
+    color: colors.text,
+  });
+  drawTextBlock(
+    page,
+    `This report is a strong starting point for ${proposal.address}. The saved model shows ${proposal.panelCount ?? 0} accepted panels, ${formatKwMaybe(proposal.systemKw)} system size, ${formatMoneyMaybe(proposal.annualSavings)} estimated annual savings, and ${formatPctMaybe(proposal.energyOffsetPct)} energy offset. Final design may change after installer verification.`,
+    60,
+    252,
+    492,
+    fonts.regular,
+    9,
+    12,
+    colors.muted
+  );
+  drawSourceBadge(page, 60, 174, "Modeled", fonts, colors);
+  drawSourceBadge(page, 130, 174, "Installer Verification Required", fonts, colors, 150);
+}
+
 function drawPageShell(
   page: PDFPage,
   section: string,
@@ -1160,7 +1685,7 @@ function drawPageShell(
   page.drawCircle({ x: 94, y: 118, size: 160, color: colors.gold, opacity: 0.05 });
   page.drawRectangle({ x: 28, y: 28, width: width - 56, height: height - 56, borderColor: colors.line, borderWidth: 0.8, color: colors.shell, opacity: 0.9 });
 
-  page.drawText("ARIZONA SOLAR AI", {
+  page.drawText(APP_NAME.toUpperCase(), {
     x: 42,
     y: 744,
     size: 10,
@@ -1201,7 +1726,11 @@ function drawRoofVisual(
   image: PDFImage | null,
   fonts: PdfFonts,
   colors: PdfColors,
-  options: { compact?: boolean; showLegend?: boolean } = {}
+  options: {
+    compact?: boolean;
+    showLegend?: boolean;
+    visualization?: "roof" | "panels" | "sunlight";
+  } = {}
 ) {
   drawCard(page, x, y, width, height, colors);
   page.drawRectangle({ x: x + 6, y: y + 6, width: width - 12, height: height - 12, color: colors.mapBg });
@@ -1215,6 +1744,7 @@ function drawRoofVisual(
       opacity: 0.9,
     });
     page.drawRectangle({ x: x + 6, y: y + 6, width: width - 12, height: height - 12, color: colors.bg, opacity: 0.08 });
+    drawRoofModelOverlay(page, x, y, width, height, proposal, colors, options.visualization ?? "roof");
     drawSelectedPropertyMarker(page, x, y, width, height, fonts, colors);
   } else {
     page.drawRectangle({
@@ -1253,7 +1783,15 @@ function drawRoofVisual(
     color: colors.badgeFill,
     opacity: 0.9,
   });
-  page.drawText(image ? "SATELLITE ROOF IMAGE" : "ROOF IMAGE UNAVAILABLE", {
+  const label =
+    options.visualization === "panels"
+      ? "PANEL LAYOUT PREVIEW"
+      : options.visualization === "sunlight"
+        ? "SUNLIGHT QUALITY PREVIEW"
+        : image
+          ? "SATELLITE ROOF IMAGE"
+          : "ROOF IMAGE UNAVAILABLE";
+  page.drawText(label, {
     x: x + 30,
     y: y + height - 29,
     size: 7.5,
@@ -1290,6 +1828,161 @@ function drawSelectedPropertyMarker(
     size: 6.6,
     font: fonts.bold,
     color: colors.text,
+  });
+}
+
+function drawRoofModelOverlay(
+  page: PDFPage,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  proposal: ProposalData,
+  colors: PdfColors,
+  visualization: "roof" | "panels" | "sunlight"
+) {
+  const roof = getReportRoofPolygon(x, y, width, height);
+  const usable = getReportUsablePolygon(x, y, width, height);
+
+  if (visualization === "sunlight") {
+    drawSunlightBands(page, usable, proposal, colors);
+  }
+
+  drawPolygon(
+    page,
+    roof,
+    colors.cyan,
+    visualization === "sunlight" ? 0.05 : 0.08,
+    colors.cyan,
+    1.4,
+    0.8
+  );
+  drawPolygon(
+    page,
+    usable,
+    visualization === "sunlight" ? colors.green : colors.gold,
+    visualization === "sunlight" ? 0.08 : 0.06,
+    visualization === "sunlight" ? colors.green : colors.gold,
+    0.9,
+    0.65
+  );
+
+  if (visualization === "panels") {
+    drawPanelLayoutOverlay(page, x, y, width, height, proposal, colors);
+  }
+}
+
+function getReportRoofPolygon(x: number, y: number, width: number, height: number) {
+  const left = x + width * 0.29;
+  const right = x + width * 0.72;
+  const bottom = y + height * 0.22;
+  const top = y + height * 0.74;
+
+  return [
+    [left + width * 0.06, top],
+    [right - width * 0.05, top - height * 0.04],
+    [right, bottom + height * 0.18],
+    [right - width * 0.18, bottom],
+    [left + width * 0.03, bottom + height * 0.06],
+    [left, bottom + height * 0.34],
+  ];
+}
+
+function getReportUsablePolygon(x: number, y: number, width: number, height: number) {
+  const left = x + width * 0.34;
+  const right = x + width * 0.66;
+  const bottom = y + height * 0.31;
+  const top = y + height * 0.66;
+
+  return [
+    [left + width * 0.04, top],
+    [right - width * 0.02, top - height * 0.02],
+    [right, bottom + height * 0.13],
+    [right - width * 0.12, bottom],
+    [left + width * 0.02, bottom + height * 0.04],
+    [left, bottom + height * 0.22],
+  ];
+}
+
+function drawPanelLayoutOverlay(
+  page: PDFPage,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  proposal: ProposalData,
+  colors: PdfColors
+) {
+  const panelCount = clamp(Math.round(proposal.panelCount ?? 0), 0, 48);
+  if (panelCount <= 0) return;
+
+  const rows = Math.max(2, Math.ceil(Math.sqrt(panelCount / 1.55)));
+  const cols = Math.ceil(panelCount / rows);
+  const panelW = Math.min(22, (width * 0.32) / cols);
+  const panelH = Math.min(14, (height * 0.3) / rows);
+  const gap = 3;
+  const layoutW = cols * panelW + (cols - 1) * gap;
+  const layoutH = rows * panelH + (rows - 1) * gap;
+  const startX = x + width * 0.5 - layoutW / 2;
+  const startY = y + height * 0.49 - layoutH / 2;
+
+  for (let index = 0; index < panelCount; index += 1) {
+    const row = Math.floor(index / cols);
+    const col = index % cols;
+    drawRotatedRect(
+      page,
+      startX + col * (panelW + gap),
+      startY + (rows - row - 1) * (panelH + gap),
+      panelW,
+      panelH,
+      -8,
+      colors.blue,
+      0.76,
+      colors.text,
+      0.72
+    );
+  }
+}
+
+function drawSunlightBands(
+  page: PDFPage,
+  polygon: number[][],
+  proposal: ProposalData,
+  colors: PdfColors
+) {
+  const xs = polygon.map(([px]) => px);
+  const ys = polygon.map(([, py]) => py);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  const sunlightLabel = proposal.advisor.sunlightQuality.label;
+  const strongShare = sunlightLabel === "HIGH" ? 0.62 : sunlightLabel === "MODERATE" ? 0.42 : 0.26;
+  const bandWidth = (maxX - minX) / 3;
+
+  page.drawRectangle({
+    x: minX,
+    y: minY,
+    width: bandWidth,
+    height: maxY - minY,
+    color: colors.green,
+    opacity: 0.18 + strongShare * 0.1,
+  });
+  page.drawRectangle({
+    x: minX + bandWidth,
+    y: minY,
+    width: bandWidth,
+    height: maxY - minY,
+    color: colors.gold,
+    opacity: 0.2,
+  });
+  page.drawRectangle({
+    x: minX + bandWidth * 2,
+    y: minY,
+    width: bandWidth,
+    height: maxY - minY,
+    color: colors.orange,
+    opacity: 0.16,
   });
 }
 
@@ -1638,18 +2331,6 @@ function drawConfidenceBadge(
   });
 }
 
-function getLeadScorePdfColor(label: LeadScoreLabel, colors: PdfColors) {
-  if (label === "Hot Lead") {
-    return colors.orange;
-  }
-
-  if (label === "Warm Lead") {
-    return colors.gold;
-  }
-
-  return colors.muted;
-}
-
 function drawImageLegend(
   page: PDFPage,
   x: number,
@@ -1731,22 +2412,6 @@ function drawCard(
     borderColor: borderColor ?? colors.line,
     borderWidth: borderColor ? 1.1 : 0.7,
   });
-}
-
-function drawMapPattern(page: PDFPage, x: number, y: number, width: number, height: number, colors: PdfColors) {
-  page.drawRectangle({ x, y, width, height, color: colors.mapBg });
-  for (let index = 0; index < 9; index += 1) {
-    page.drawRectangle({
-      x: x + 18 + index * 54,
-      y: y + 24 + (index % 3) * 28,
-      width: 42,
-      height: 22,
-      color: index % 2 ? colors.slate : colors.gold,
-      opacity: 0.18,
-    });
-  }
-  page.drawLine({ start: { x, y: y + height * 0.62 }, end: { x: x + width, y: y + height * 0.42 }, thickness: 22, color: colors.line, opacity: 0.12 });
-  page.drawLine({ start: { x: x + width * 0.2, y }, end: { x: x + width * 0.74, y: y + height }, thickness: 14, color: colors.line, opacity: 0.1 });
 }
 
 function drawRotatedRect(
@@ -2030,6 +2695,46 @@ function getPdfConfidenceLabel(score: number): ProposalData["confidence"] {
   if (score >= 65) return "Good";
   if (score >= 45) return "Moderate";
   return "Limited";
+}
+
+function getHomeownerSuitabilityLabel(score: number) {
+  if (score >= 85) return "Strong Candidate";
+  if (score >= 65) return "Good Candidate";
+  if (score >= 45) return "Preliminary Estimate";
+  return "Installer Verification Required";
+}
+
+function buildPanelSizeLabel(watts?: number) {
+  const normalizedWatts = watts && watts > 0 ? Math.round(watts) : 400;
+  return `${normalizedWatts}W module`;
+}
+
+function getPanelDisplayName(proposal: ProposalData) {
+  const brand = proposal.selectedPanelBrand?.trim();
+  const watts = proposal.selectedPanelWatts
+    ? `${Math.round(proposal.selectedPanelWatts)}W`
+    : "400W";
+
+  if (!brand) {
+    return watts;
+  }
+
+  return `${shortenPanelBrand(brand)} ${watts}`;
+}
+
+function shortenPanelBrand(brand: string) {
+  if (/qcells|hanwha/i.test(brand)) return "Qcells";
+  if (/canadian/i.test(brand)) return "Canadian";
+  if (/sunpower/i.test(brand)) return "SunPower";
+  if (/panasonic/i.test(brand)) return "Panasonic";
+  if (/jinko/i.test(brand)) return "Jinko";
+  return brand;
+}
+
+function getSunlightPdfColor(label: string, colors: PdfColors) {
+  if (/high|strong|excellent/i.test(label)) return colors.green;
+  if (/moderate/i.test(label)) return colors.gold;
+  return colors.orange;
 }
 
 function positiveNumber(value: unknown) {

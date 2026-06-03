@@ -47,7 +47,6 @@ export type DashboardCrmLead = {
   status: DashboardLeadStatus;
   pdfStatus: "ready" | "pending";
   utilityBillUploaded: boolean;
-  smsSentAt: string | null;
   batteryAdded: boolean;
   batteryBrand: string | null;
   batteryModel: string | null;
@@ -99,6 +98,13 @@ const sortOptions = [
   { label: "Savings high", value: "savings-desc" },
   { label: "Savings low", value: "savings-asc" },
 ] as const;
+
+const primaryButtonClass =
+  "inline-flex min-h-11 items-center justify-center gap-2 rounded-full bg-white px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100";
+const secondaryButtonClass =
+  "inline-flex min-h-11 items-center justify-center gap-2 rounded-full border border-white/10 bg-white/[0.055] px-4 py-3 text-sm font-semibold text-white/80 transition hover:bg-white/[0.1] hover:text-white";
+const successButtonClass =
+  "inline-flex min-h-11 items-center justify-center gap-2 rounded-full border border-emerald-300/20 bg-emerald-300/10 px-4 py-3 text-sm font-semibold text-emerald-50 transition hover:bg-emerald-300/18";
 
 type SortValue = (typeof sortOptions)[number]["value"];
 
@@ -365,35 +371,6 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
     }
   };
 
-  const handleResendSms = async (lead: DashboardCrmLead) => {
-    try {
-      const response = await fetch("/api/sms", {
-        credentials: "same-origin",
-        method: "POST",
-        headers: getDashboardAuthHeaders({
-          "Content-Type": "application/json",
-        }),
-        body: JSON.stringify({
-          dashboardResend: true,
-          leadId: lead.id,
-        }),
-      });
-      const payload: { smsSentAt?: string; success?: boolean } = await response
-        .json()
-        .catch(() => ({}));
-
-      if (response.ok && payload.smsSentAt) {
-        setLeadItems((current) =>
-          current.map((item) =>
-            item.id === lead.id ? { ...item, smsSentAt: payload.smsSentAt ?? null } : item
-          )
-        );
-      }
-    } catch {
-      // Manual SMS resend should never break dashboard usage.
-    }
-  };
-
   const handleStatusChange = async (
     lead: DashboardCrmLead,
     nextStatus: DashboardLeadStatus
@@ -456,7 +433,6 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
         "selected_panel_model",
         "selected_panel_watts",
         "utility_bill_uploaded",
-        "sms_sent_at",
         "battery_added",
         "battery_brand",
         "battery_model",
@@ -486,7 +462,6 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
         lead.selectedPanelModel ?? "",
         lead.selectedPanelWatts ? String(lead.selectedPanelWatts) : "",
         lead.utilityBillUploaded ? "Yes" : "No",
-        lead.smsSentAt ?? "",
         lead.batteryAdded ? "Yes" : "No",
         lead.batteryBrand ?? "",
         lead.batteryModel ?? "",
@@ -515,14 +490,14 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
   };
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(25,72,108,0.28),_transparent_36%),linear-gradient(180deg,#05070d_0%,#07111d_68%,#06070b_100%)] px-4 py-6 text-slate-100 sm:px-6 lg:px-10">
-      <div className="mx-auto max-w-7xl space-y-5">
-        <header className="flex flex-col justify-between gap-4 rounded-[1.6rem] border border-white/10 bg-white/[0.04] px-5 py-4 shadow-[0_18px_70px_rgba(2,8,20,0.32)] backdrop-blur-xl lg:flex-row lg:items-center">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(25,72,108,0.28),_transparent_36%),linear-gradient(180deg,#05070d_0%,#07111d_68%,#06070b_100%)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8 xl:px-10">
+      <div className="mx-auto max-w-[96rem] space-y-6">
+        <header className="flex flex-col justify-between gap-5 rounded-[1.7rem] border border-white/10 bg-white/[0.045] px-6 py-5 shadow-[0_18px_70px_rgba(2,8,20,0.32)] backdrop-blur-xl lg:flex-row lg:items-center">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.34em] text-cyan-300">
               Homeowner dashboard
             </p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-tight text-white">
+            <h1 className="mt-2 text-3xl font-semibold tracking-tight text-white lg:text-[2.15rem]">
               Solar lead pipeline
             </h1>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">
@@ -533,21 +508,21 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
             <button
               type="button"
               onClick={exportCsv}
-              className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.06] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-white/[0.1]"
+              className={secondaryButtonClass}
             >
               <ArrowDownToLine className="h-4 w-4" aria-hidden="true" />
               Export CSV
             </button>
             <Link
               href="/"
-              className="inline-flex items-center rounded-full bg-white px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100"
+              className={primaryButtonClass}
             >
               Back to site
             </Link>
           </div>
         </header>
 
-        <section className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-7">
+        <section className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-7">
           <KpiCard label="Total Leads" value={formatNumber(stats.totalLeads)} />
           <KpiCard label="Avg Savings" value={formatMoney(stats.averageSavings)} />
           <KpiCard label="Avg Lead Score" value={`${formatNumber(stats.averageLeadScore)}/100`} />
@@ -557,8 +532,8 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
           <KpiCard label="Total Pipeline Value" value={formatMoney(stats.totalPipelineValue)} />
         </section>
 
-        <section className="grid gap-4 lg:grid-cols-[minmax(0,7fr)_minmax(22rem,3fr)]">
-          <div className="rounded-[1.6rem] border border-white/10 bg-white/[0.04] p-4 shadow-[0_18px_70px_rgba(2,8,20,0.32)] backdrop-blur-xl">
+        <section className="grid gap-5 xl:grid-cols-[minmax(0,1.45fr)_minmax(26rem,0.95fr)] 2xl:grid-cols-[minmax(0,1.55fr)_minmax(31rem,0.95fr)]">
+          <div className="rounded-[1.7rem] border border-white/10 bg-white/[0.04] p-5 shadow-[0_18px_70px_rgba(2,8,20,0.32)] backdrop-blur-xl">
             <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
               <label className="flex min-h-12 flex-1 items-center gap-3 rounded-full border border-white/10 bg-slate-950/55 px-4 text-sm text-slate-300">
                 <Search className="h-4 w-4 text-cyan-200" aria-hidden="true" />
@@ -594,7 +569,7 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
                 />
               </div>
             </div>
-            <p className="mt-3 rounded-[0.95rem] border border-white/8 bg-slate-950/34 px-3 py-2 text-xs leading-5 text-slate-400">
+            <p className="mt-4 rounded-[1rem] border border-white/8 bg-slate-950/34 px-4 py-3 text-xs leading-5 text-slate-400">
               {LEAD_SCORE_EXPLANATION}
             </p>
 
@@ -621,7 +596,7 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
             )}
           </div>
 
-          <aside className="space-y-4 lg:sticky lg:top-5 lg:max-h-[calc(100vh-2.5rem)] lg:self-start lg:overflow-y-auto lg:pr-1">
+          <aside className="space-y-4 xl:sticky xl:top-6 xl:self-start">
             {selectedLead ? (
               <LeadDetailPanel
                 followUps={followUpsForSelected}
@@ -631,7 +606,6 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
                   void handleStatusChange(selectedLead, nextStatus)
                 }
                 onViewUtilityBill={() => void handleUtilityBillView(selectedLead)}
-                onResendSms={() => void handleResendSms(selectedLead)}
                 onSendFollowUpNow={(followUp) => void handleSendFollowUpNow(followUp)}
                 pdfUnavailable={pdfUnavailableIds.has(selectedLead.id)}
                 utilityBillUnavailable={utilityBillUnavailableIds.has(selectedLead.id)}
@@ -651,25 +625,25 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
 
 function KpiCard({ label, value }: { label: string; value: string }) {
   return (
-    <article className="rounded-[1.25rem] border border-white/10 bg-white/[0.045] p-4 shadow-[0_14px_45px_rgba(2,8,20,0.24)] backdrop-blur-xl">
-      <p className="text-[0.62rem] font-semibold uppercase tracking-[0.22em] text-slate-400">
+    <article className="flex min-h-[7.2rem] flex-col justify-between rounded-[1.15rem] border border-white/10 bg-white/[0.045] p-4 shadow-[0_14px_45px_rgba(2,8,20,0.22)] backdrop-blur-xl">
+      <p className="text-[0.66rem] font-semibold uppercase tracking-[0.16em] text-slate-400">
         {label}
       </p>
-      <p className="mt-2 text-2xl font-semibold tracking-tight text-white">{value}</p>
+      <p className="mt-3 text-2xl font-semibold tracking-tight text-white">{value}</p>
     </article>
   );
 }
 
 function StageSummary({ leads }: { leads: DashboardCrmLead[] }) {
   return (
-    <div className="grid gap-2 md:grid-cols-5">
+    <div className="grid gap-3 md:grid-cols-5">
       {statusColumns.map((column) => {
         const count = leads.filter((lead) => lead.status === column.id).length;
 
         return (
           <div
             key={column.id}
-            className="rounded-[1rem] border border-white/8 bg-slate-950/42 px-3 py-3"
+            className="rounded-[1rem] border border-white/8 bg-slate-950/42 px-3 py-3.5"
           >
             <div className="flex items-center justify-between gap-2">
               <span className="text-[0.58rem] font-semibold uppercase tracking-[0.18em] text-slate-400">
@@ -715,8 +689,8 @@ function LeadTable({
   updatingIds: Set<string>;
 }) {
   return (
-    <div className="overflow-hidden rounded-[1.25rem] border border-white/10 bg-slate-950/42">
-      <div className="hidden grid-cols-[minmax(15rem,1.35fr)_0.7fr_0.65fr_0.6fr_0.8fr_0.85fr] gap-3 border-b border-white/8 px-4 py-3 text-[0.58rem] font-semibold uppercase tracking-[0.18em] text-slate-500 lg:grid">
+    <div className="overflow-hidden rounded-[1.2rem] border border-white/10 bg-slate-950/48">
+      <div className="hidden grid-cols-[minmax(18rem,1.45fr)_0.8fr_minmax(8.25rem,0.92fr)_0.72fr_0.9fr_1.05fr] gap-5 border-b border-white/8 px-5 py-3.5 text-[0.58rem] font-semibold uppercase tracking-[0.18em] text-slate-500 lg:grid">
         <span>Lead</span>
         <span>Savings</span>
         <span>Score</span>
@@ -733,7 +707,7 @@ function LeadTable({
           return (
             <article
               key={lead.id}
-              className={`grid gap-3 px-4 py-4 transition lg:grid-cols-[minmax(15rem,1.35fr)_0.7fr_0.65fr_0.6fr_0.8fr_0.85fr] lg:items-center ${
+              className={`grid gap-5 px-5 py-5 transition lg:grid-cols-[minmax(18rem,1.45fr)_0.8fr_minmax(8.25rem,0.92fr)_0.72fr_0.9fr_1.05fr] lg:items-center ${
                 selected
                   ? "bg-cyan-300/[0.075] ring-1 ring-inset ring-cyan-200/25"
                   : "hover:bg-white/[0.035]"
@@ -763,32 +737,29 @@ function LeadTable({
                         Bill verified
                       </span>
                     ) : null}
-                    {shouldWarnSmsNotSent(lead) ? (
-                      <span className="ml-1 mt-2 inline-flex rounded-full border border-amber-300/25 bg-amber-300/12 px-2 py-0.5 text-[0.58rem] font-bold uppercase tracking-[0.12em] text-amber-100">
-                        SMS not sent
-                      </span>
-                    ) : null}
                   </span>
                 </div>
               </button>
 
               <TableMetric label="Savings" value={formatMoney(lead.annualSavings)} />
-              <div className="flex items-center gap-2">
+              <div className="flex min-w-0 items-center gap-3 justify-self-start">
                 <LeadScoreBadge label={lead.leadScoreLabel} score={lead.leadScore} />
                 <span className="text-sm font-semibold text-white lg:hidden">
                   {lead.leadScore}/100
                 </span>
               </div>
-              <TableMetric
-                label="Payback"
-                value={`${formatDecimal(lead.estimatedRoiYears)} yrs`}
-              />
+              <div className="lg:pl-2">
+                <TableMetric
+                  label="Payback"
+                  value={`${formatDecimal(lead.estimatedRoiYears)} yrs`}
+                />
+              </div>
               <StatusSelect
                 disabled={updatingIds.has(lead.id)}
                 value={lead.status}
                 onChange={(nextStatus) => onStatusChange(lead, nextStatus)}
               />
-              <div className="flex items-center justify-start gap-2 lg:justify-end">
+              <div className="flex flex-wrap items-center justify-start gap-2 lg:justify-end">
                 {pdfUnavailable ? (
                   <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-semibold text-slate-500">
                     PDF unavailable
@@ -797,7 +768,7 @@ function LeadTable({
                   <button
                     type="button"
                     onClick={() => onDownloadPdf(lead)}
-                    className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-2 text-xs font-semibold text-slate-950 transition hover:bg-cyan-100"
+                  className="inline-flex min-h-10 items-center gap-1.5 rounded-full bg-white px-3.5 py-2 text-xs font-semibold text-slate-950 transition hover:bg-cyan-100"
                   >
                     <Download className="h-3.5 w-3.5" aria-hidden="true" />
                     PDF
@@ -807,22 +778,14 @@ function LeadTable({
                   href={getEstimateReportPath(lead.address)}
                   target="_blank"
                   rel="noreferrer"
-                  className="rounded-full border border-white/10 bg-white/[0.055] px-3 py-2 text-xs font-semibold text-white/78 transition hover:bg-white/[0.1] hover:text-white"
+                  className="inline-flex min-h-10 items-center rounded-full border border-white/10 bg-white/[0.055] px-3.5 py-2 text-xs font-semibold text-white/78 transition hover:bg-white/[0.1] hover:text-white"
                 >
                   Open
                 </a>
-                {lead.phone ? (
-                  <a
-                    href={`sms:${lead.phone.replace(/\D/g, "")}`}
-                    className="rounded-full border border-cyan-300/18 bg-cyan-300/10 px-3 py-2 text-xs font-semibold text-cyan-50 transition hover:bg-cyan-300/18"
-                  >
-                    Text
-                  </a>
-                ) : null}
                 {lead.email ? (
                   <a
                     href={`mailto:${lead.email}`}
-                    className="rounded-full border border-white/10 bg-white/[0.055] px-3 py-2 text-xs font-semibold text-white/78 transition hover:bg-white/[0.1] hover:text-white"
+                    className="inline-flex min-h-10 items-center rounded-full border border-white/10 bg-white/[0.055] px-3.5 py-2 text-xs font-semibold text-white/78 transition hover:bg-white/[0.1] hover:text-white"
                   >
                     Email
                   </a>
@@ -887,14 +850,10 @@ function LeadPipelineCard({
           </div>
           <LeadScoreBadge label={lead.leadScoreLabel} score={lead.leadScore} />
         </div>
-        {shouldWarnSmsNotSent(lead) ? (
-          <span className="mt-2 inline-flex rounded-full border border-amber-300/25 bg-amber-300/12 px-2 py-0.5 text-[0.58rem] font-bold uppercase tracking-[0.12em] text-amber-100">
-            SMS not sent
-          </span>
-        ) : null}
-        <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+        <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-3">
           <MiniMetric label="Savings" value={formatMoney(lead.annualSavings)} />
           <MiniMetric label="Lead score" value={`${lead.leadScore}/100`} />
+          <MiniMetric label="Payback" value={`${formatDecimal(lead.estimatedRoiYears)} yrs`} />
         </div>
       </button>
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-white/8 pt-3">
@@ -915,14 +874,6 @@ function LeadPipelineCard({
             PDF
           </button>
         )}
-        {lead.phone ? (
-          <a
-            href={`sms:${lead.phone.replace(/\D/g, "")}`}
-            className="rounded-full border border-cyan-300/18 bg-cyan-300/10 px-2.5 py-1.5 text-xs font-semibold text-cyan-50 transition hover:bg-cyan-300/18"
-          >
-            Text
-          </a>
-        ) : null}
         {lead.email ? (
           <a
             href={`mailto:${lead.email}`}
@@ -940,7 +891,6 @@ function LeadDetailPanel({
   followUps,
   lead,
   onDownloadPdf,
-  onResendSms,
   onSendFollowUpNow,
   onStatusChange,
   onViewUtilityBill,
@@ -950,7 +900,6 @@ function LeadDetailPanel({
   followUps: DashboardCrmFollowUp[];
   lead: DashboardCrmLead;
   onDownloadPdf: () => void;
-  onResendSms: () => void;
   onSendFollowUpNow: (followUp: DashboardCrmFollowUp) => void;
   onStatusChange: (status: DashboardLeadStatus) => void;
   onViewUtilityBill: () => void;
@@ -958,7 +907,7 @@ function LeadDetailPanel({
   utilityBillUnavailable: boolean;
 }) {
   return (
-    <section className="rounded-[1.6rem] border border-white/10 bg-white/[0.045] p-5 shadow-[0_18px_70px_rgba(2,8,20,0.32)] backdrop-blur-xl">
+    <section className="rounded-[1.7rem] border border-white/10 bg-white/[0.045] p-5 shadow-[0_18px_70px_rgba(2,8,20,0.32)] backdrop-blur-xl lg:p-6">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-xs font-semibold uppercase tracking-[0.28em] text-cyan-300">
@@ -978,7 +927,7 @@ function LeadDetailPanel({
         </div>
       </div>
 
-      <div className="mt-4 rounded-[1.05rem] border border-white/8 bg-slate-950/38 p-4">
+      <div className="mt-5 rounded-[1.1rem] border border-white/8 bg-slate-950/38 p-4">
         <div className="flex items-center justify-between gap-3">
           <div>
             <p className="text-[0.62rem] font-semibold uppercase tracking-[0.24em] text-slate-500">
@@ -995,23 +944,13 @@ function LeadDetailPanel({
         </p>
       </div>
 
-      <div className="mt-5 grid gap-2 text-sm">
+      <div className="mt-5 grid gap-3 text-sm md:grid-cols-2">
         <DetailRow label="Email" value={lead.email} />
         <DetailRow label="Phone" value={lead.phone} />
         <DetailRow label="Monthly bill" value={formatMoney(lead.monthlyBill)} />
         <DetailRow
           label="Utility bill"
           value={lead.utilityBillUploaded ? "Uploaded for review" : "Not uploaded"}
-        />
-        <DetailRow
-          label="SMS"
-          value={
-            lead.smsSentAt
-              ? `Sent ${formatDateTime(lead.smsSentAt)}`
-              : lead.phone
-                ? "Not sent yet"
-                : "Not sent: no phone"
-          }
         />
         <DetailRow label="Annual savings" value={formatMoney(lead.annualSavings)} />
         <DetailRow label="System size" value={`${formatDecimal(lead.systemSizeKw)} kW`} />
@@ -1075,28 +1014,7 @@ function LeadDetailPanel({
         <DetailRow label="CO2 offset" value={`${formatNumber(lead.co2OffsetLbs)} lbs`} />
       </div>
 
-      <div className="mt-5 grid gap-2">
-        <div
-          className={`rounded-[1rem] border px-4 py-3 text-sm ${
-            lead.smsSentAt
-              ? "border-emerald-300/20 bg-emerald-300/10 text-emerald-50"
-              : "border-white/10 bg-slate-950/42 text-slate-400"
-          }`}
-        >
-          <p className="text-[0.58rem] font-bold uppercase tracking-[0.2em]">
-            SMS status
-          </p>
-          <p className="mt-1 font-semibold">
-            {lead.smsSentAt
-              ? `SMS sent ${formatDateTime(lead.smsSentAt)}`
-              : "No SMS sent yet"}
-          </p>
-          {shouldWarnSmsNotSent(lead) ? (
-            <p className="mt-2 inline-flex rounded-full border border-amber-300/25 bg-amber-300/12 px-2 py-1 text-[0.62rem] font-bold uppercase tracking-[0.14em] text-amber-100">
-              SMS not sent - follow up manually
-            </p>
-          ) : null}
-        </div>
+      <div className="mt-6 grid gap-2 sm:grid-cols-2">
         <StatusSelect value={lead.status} onChange={onStatusChange} />
         {pdfUnavailable ? (
           <div className="rounded-full border border-white/10 bg-slate-950/42 px-4 py-3 text-center text-sm font-semibold text-slate-500">
@@ -1106,7 +1024,7 @@ function LeadDetailPanel({
           <button
             type="button"
             onClick={onDownloadPdf}
-            className="inline-flex items-center justify-center gap-2 rounded-full bg-white px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100"
+            className={primaryButtonClass}
           >
             <Download className="h-4 w-4" aria-hidden="true" />
             Download PDF
@@ -1121,27 +1039,18 @@ function LeadDetailPanel({
             <button
               type="button"
               onClick={onViewUtilityBill}
-              className="inline-flex items-center justify-center gap-2 rounded-full border border-emerald-300/20 bg-emerald-300/10 px-4 py-3 text-sm font-semibold text-emerald-50 transition hover:bg-emerald-300/18"
+              className={successButtonClass}
             >
               <Download className="h-4 w-4" aria-hidden="true" />
               View Utility Bill
             </button>
           )
         ) : null}
-        <button
-          type="button"
-          onClick={onResendSms}
-          disabled={!lead.phone}
-          className="inline-flex items-center justify-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-4 py-3 text-sm font-semibold text-cyan-50 transition hover:bg-cyan-300/18 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <Send className="h-4 w-4" aria-hidden="true" />
-          Resend SMS
-        </button>
         <a
           href={getEstimateReportPath(lead.address)}
           target="_blank"
           rel="noreferrer"
-          className="inline-flex items-center justify-center rounded-full border border-white/10 bg-white/[0.05] px-4 py-3 text-sm font-semibold text-white transition hover:bg-white/[0.09]"
+          className={`${secondaryButtonClass} sm:col-span-2`}
         >
           Open Report
         </a>
@@ -1159,7 +1068,7 @@ function LeadDetailPanel({
             {followUps.slice(0, 4).map((followUp) => (
               <div
                 key={followUp.id}
-                className="rounded-[0.9rem] border border-white/8 bg-white/[0.035] px-3 py-2 text-xs text-slate-300"
+                className="rounded-[1rem] border border-white/8 bg-white/[0.035] px-3.5 py-3 text-xs text-slate-300"
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-semibold text-white">{followUp.title}</span>
@@ -1251,9 +1160,11 @@ function MiniMetric({ label, value }: { label: string; value: string }) {
 
 function DetailRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="grid gap-1 border-b border-white/8 py-2 last:border-b-0 sm:grid-cols-[0.78fr_1.22fr] sm:items-start">
-      <span className="text-slate-500">{label}</span>
-      <span className="break-words text-left font-semibold text-white sm:text-right">
+    <div className="rounded-[1rem] border border-white/8 bg-slate-950/34 px-3.5 py-3">
+      <span className="block text-[0.62rem] font-semibold uppercase tracking-[0.16em] text-slate-500">
+        {label}
+      </span>
+      <span className="mt-1.5 block break-words text-left font-semibold text-white">
         {value}
       </span>
     </div>
@@ -1287,8 +1198,12 @@ function LeadScoreBadge({
   score: number;
 }) {
   const color =
-    label === "Hot Lead"
+    label === "Premium Lead"
+      ? "border-fuchsia-300/30 bg-fuchsia-300/18 text-fuchsia-50"
+      : label === "Hot Lead"
       ? "border-rose-300/25 bg-rose-300/16 text-rose-50"
+      : label === "Qualified Lead"
+        ? "border-emerald-300/25 bg-emerald-300/16 text-emerald-50"
       : label === "Warm Lead"
         ? "border-amber-300/25 bg-amber-300/16 text-amber-50"
         : "border-slate-300/18 bg-white/[0.08] text-slate-200";
@@ -1325,7 +1240,7 @@ function StatusSelect({
       disabled={disabled}
       value={value}
       onChange={(event) => onChange(event.target.value as DashboardLeadStatus)}
-      className="min-h-9 rounded-full border border-white/10 bg-slate-950/72 px-3 text-xs font-semibold text-white outline-none transition hover:border-cyan-300/35 disabled:opacity-60"
+      className="min-h-11 rounded-full border border-white/10 bg-slate-950/72 px-4 text-xs font-semibold text-white outline-none transition hover:border-cyan-300/35 disabled:opacity-60"
     >
       {statusColumns.map((column) => (
         <option key={column.id} value={column.id}>
@@ -1348,7 +1263,7 @@ function Select({
   value: string;
 }) {
   return (
-    <label className="inline-flex min-h-12 items-center gap-2 rounded-full border border-white/10 bg-slate-950/55 px-3 text-xs font-semibold text-slate-300">
+    <label className="inline-flex min-h-12 items-center gap-2 rounded-full border border-white/10 bg-slate-950/55 px-4 text-xs font-semibold text-slate-300">
       <span className="text-slate-500">{label}</span>
       <select
         value={value}
@@ -1429,10 +1344,6 @@ function formatPanelSelection(lead: DashboardCrmLead) {
   }
 
   return "Not captured";
-}
-
-function shouldWarnSmsNotSent(lead: DashboardCrmLead) {
-  return lead.leadScore >= 70 && !lead.smsSentAt;
 }
 
 function buildPdfFilename(lead: DashboardCrmLead) {

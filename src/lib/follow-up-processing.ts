@@ -1,4 +1,5 @@
 import { Resend } from "resend";
+import { getResendFromEmail } from "@/lib/notification-env";
 import { buildSolarReportFromSolarValues } from "@/lib/solar-report";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
 
@@ -6,7 +7,7 @@ type FollowUpRow = {
   id: string;
   lead_id: string;
   step_order: number;
-  channel: "email" | "sms";
+  channel: "email" | "manual";
   title: string;
   body: string;
   scheduled_for: string;
@@ -41,13 +42,7 @@ type ProcessResult = {
 };
 
 const resendApiKey = process.env.RESEND_API_KEY?.trim();
-const resendFromEmail = process.env.RESEND_FROM_EMAIL?.trim();
-const twilioAccountSid = process.env.TWILIO_ACCOUNT_SID?.trim();
-const twilioAuthToken = process.env.TWILIO_AUTH_TOKEN?.trim();
-const twilioFromNumber =
-  process.env.TWILIO_PHONE_NUMBER?.trim() ||
-  process.env.TWILIO_FROM_NUMBER?.trim();
-
+const resendFromEmail = getResendFromEmail();
 export async function markInitialFollowUpDelivered(leadId: string) {
   try {
     const supabase = getSupabaseAdminClient();
@@ -168,7 +163,7 @@ async function processSingleFollowUp(
     };
   }
 
-  const outcome = await sendFollowUpSms(lead, step);
+  const outcome = skipSmsFollowUp();
   await updateFollowUpStatus(
     supabase,
     step.id,
@@ -246,63 +241,11 @@ async function sendFollowUpEmail(
   }
 }
 
-async function sendFollowUpSms(
-  lead: LeadRow,
-  step: FollowUpRow
-): Promise<{ status: "sent" | "skipped" | "failed"; message: string }> {
-  if (!twilioAccountSid || !twilioAuthToken || !twilioFromNumber) {
-    return {
-      status: "skipped",
-      message: "SMS provider is not configured.",
-    };
-  }
-
-  const toNumber = normalizePhoneToE164(lead.phone);
-  if (!toNumber) {
-    return {
-      status: "skipped",
-      message: "Lead phone number could not be normalized for SMS delivery.",
-    };
-  }
-
-  try {
-    const body = new URLSearchParams({
-      From: twilioFromNumber,
-      To: toNumber,
-      Body: `${step.title}: ${step.body}`,
-    });
-
-    const response = await fetch(
-      `https://api.twilio.com/2010-04-01/Accounts/${twilioAccountSid}/Messages.json`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Basic ${Buffer.from(`${twilioAccountSid}:${twilioAuthToken}`).toString("base64")}`,
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body,
-      }
-    );
-
-    if (!response.ok) {
-      const payload = (await response.json().catch(() => ({}))) as { message?: string };
-      return {
-        status: "failed",
-        message: payload.message || "Unable to send SMS follow-up.",
-      };
-    }
-
-    return {
-      status: "sent",
-      message: "SMS follow-up sent.",
-    };
-  } catch (error) {
-    return {
-      status: "failed",
-      message:
-        error instanceof Error ? error.message : "Unexpected SMS follow-up error.",
-    };
-  }
+function skipSmsFollowUp(): { status: "skipped"; message: string } {
+  return {
+    status: "skipped",
+    message: "Automated text messaging is disabled. Use phone or email follow-up manually.",
+  };
 }
 
 async function updateFollowUpStatus(
@@ -321,22 +264,6 @@ async function updateFollowUpStatus(
       attempts,
     })
     .eq("id", followUpId);
-}
-
-function normalizePhoneToE164(phone: string) {
-  const digits = phone.replace(/\D/g, "");
-
-  if (!digits) return "";
-  if (digits.length === 10) {
-    return `+1${digits}`;
-  }
-  if (digits.length === 11 && digits.startsWith("1")) {
-    return `+${digits}`;
-  }
-  if (digits.startsWith("+")) {
-    return phone;
-  }
-  return `+${digits}`;
 }
 
 function money(value: number) {

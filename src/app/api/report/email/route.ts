@@ -16,7 +16,8 @@ type ReportEmailBody = {
 };
 
 const resendApiKey = process.env.RESEND_API_KEY;
-const resendFromEmail = process.env.RESEND_FROM_EMAIL;
+const resendFromEmail =
+  process.env.FROM_EMAIL || process.env.RESEND_FROM_EMAIL || "reports@solartelligence.com";
 
 export async function POST(request: Request) {
   try {
@@ -150,7 +151,7 @@ export async function POST(request: Request) {
       html,
       attachments: [
         {
-          filename: "arizona-solar-ai-report.pdf",
+          filename: "solartelligence-report.pdf",
           content: pdfBuffer,
           contentType: "application/pdf",
         },

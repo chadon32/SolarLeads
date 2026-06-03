@@ -14,6 +14,8 @@ import { SolarAnalysis } from "@/components/solar-analysis";
 import { SolarReportDashboard, type DetailTab } from "@/components/solar-report-dashboard";
 import { formatDisplayAddress } from "@/lib/address-format";
 import { trackEvent } from "@/lib/analytics";
+import { APP_TAGLINE } from "@/lib/brand";
+import { APP_NAME } from "@/lib/brand";
 import {
   DEFAULT_BATTERY_OPTION_ID,
   getBatteryById,
@@ -139,7 +141,10 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
 
         if (ageHours > 48) {
           window.localStorage.removeItem("solarProgress");
-        } else if (parsed.address) {
+        } else if (
+          parsed.address &&
+          formatDisplayAddress(parsed.address) !== formatDisplayAddress(initialAddress)
+        ) {
           frame = window.requestAnimationFrame(() => {
             setSavedProgress(parsed);
             setShowReturnBanner(true);
@@ -164,7 +169,7 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
         window.cancelAnimationFrame(frame);
       }
     };
-  }, []);
+  }, [initialAddress]);
 
   useEffect(() => {
     const zip = extractArizonaZip(selectedAddress);
@@ -422,10 +427,10 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
             </span>
             <span className="min-w-0">
               <span className="block truncate text-[0.68rem] font-semibold uppercase tracking-[0.34em] text-white">
-                Arizona Solar AI
+                {APP_NAME}
               </span>
               <span className="hidden text-xs text-white/52 sm:block">
-                Solar site analysis for Arizona homeowners
+                {APP_TAGLINE}
               </span>
             </span>
           </a>
@@ -470,9 +475,9 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
               className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-3 text-sm font-semibold text-slate-950 shadow-[0_18px_55px_rgba(255,255,255,0.18)] transition hover:-translate-y-0.5 hover:bg-cyan-100 sm:px-5"
             >
               <span className="hidden sm:inline">
-                {hasValidAnalysis ? "Send My Full Report" : "Get My Free Estimate"}
+                {hasValidAnalysis ? "Send My Full Report" : "Analyze My Roof"}
               </span>
-              <span className="sm:hidden">{hasValidAnalysis ? "Send" : "Estimate"}</span>
+              <span className="sm:hidden">{hasValidAnalysis ? "Send" : "Analyze"}</span>
             </a>
           </div>
         </nav>
@@ -488,8 +493,8 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
                   <h1 className="mt-2 truncate text-xl font-semibold text-white md:text-2xl">
                     {formatDisplayAddress(selectedAddress)}
                   </h1>
-                  <p className="mt-1 text-sm text-white/58">
-                  {hasValidAnalysis
+                  <p className="mt-1 text-sm leading-6 text-white/64">
+                    {hasValidAnalysis
                       ? "Review the roof workspace below, then send the full PDF report."
                       : "Satellite imagery and Solar API roof data are loading."}
                   </p>
@@ -506,7 +511,7 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
                   <button
                     type="button"
                     onClick={openSendReportTab}
-                    className="inline-flex items-center justify-center rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:-translate-y-0.5 hover:bg-cyan-100"
+                    className="inline-flex min-h-11 items-center justify-center rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 shadow-[0_16px_45px_rgba(255,255,255,0.14)] transition hover:-translate-y-0.5 hover:bg-cyan-100"
                   >
                     Send My Full Report
                   </button>
@@ -609,7 +614,7 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
                     inputMode="decimal"
                   />
                 </span>
-                <span className="mt-1 block text-xs leading-5 text-white/45">
+                <span className="mt-1 block text-xs leading-5 text-white/58">
                   Used to tune savings estimates to your actual bill.
                 </span>
               </label>
@@ -662,9 +667,9 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
       {showAnalysis ? (
         <section
           id="solar-workspace"
-          className="analysis-section relative z-10 mx-auto w-full max-w-7xl px-5 pb-6 sm:px-7 md:px-10 lg:px-12"
+          className="analysis-section relative z-10 mx-auto w-full max-w-7xl px-5 pb-8 sm:px-7 md:px-10 lg:px-12"
         >
-          <div className="mb-4 flex flex-col justify-between gap-3 rounded-[1.4rem] border border-white/10 bg-slate-950/58 px-4 py-4 shadow-[0_16px_50px_rgba(2,8,20,0.3)] backdrop-blur-xl sm:flex-row sm:items-end">
+          <div className="mb-4 flex flex-col justify-between gap-4 rounded-[1.4rem] border border-white/10 bg-slate-950/62 px-4 py-4 shadow-[0_16px_50px_rgba(2,8,20,0.3)] backdrop-blur-xl sm:px-5 sm:flex-row sm:items-end">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-100/82">
                 {hasValidAnalysis ? "Preliminary roof model ready" : "Solar report loading"}
@@ -675,7 +680,7 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
               >
                 Roof analysis workspace
               </h2>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-white/60">
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-white/68">
                 {formatDisplayAddress(selectedAddress)}
               </p>
               {hasValidAnalysis ? (
@@ -702,16 +707,9 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
                       .then(() => setShareStatus("Link copied to clipboard!"))
                       .catch(() => setShareStatus(shareUrl));
                   }}
-                  className="inline-flex items-center justify-center rounded-full border border-white/12 bg-white/[0.06] px-5 py-3 text-sm font-semibold text-white transition hover:-translate-y-0.5 hover:bg-white/[0.1]"
+                  className="inline-flex min-h-11 items-center justify-center rounded-full border border-white/12 bg-white/[0.06] px-5 py-3 text-sm font-semibold text-white transition hover:-translate-y-0.5 hover:bg-white/[0.1]"
                 >
                   {shareStatus || "Share estimate"}
-                </button>
-                <button
-                  type="button"
-                  onClick={openSendReportTab}
-                  className="inline-flex items-center justify-center rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:-translate-y-0.5 hover:bg-cyan-100"
-                >
-                  Send My Full Report
                 </button>
               </div>
             ) : null}
@@ -719,7 +717,7 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
 
           <div className="grid gap-4 lg:grid-cols-12">
             <div id="rooftop-analysis" className={`${hasValidAnalysis ? "lg:col-span-7" : "lg:col-span-12"} scroll-mt-24`}>
-              <div className="overflow-hidden rounded-[1.5rem] border border-cyan-200/12 bg-slate-950/72 p-2 shadow-[0_22px_75px_rgba(0,0,0,0.38)] backdrop-blur-xl">
+              <div className="overflow-hidden rounded-[1.5rem] border border-cyan-200/14 bg-slate-950/78 p-2 shadow-[0_22px_75px_rgba(0,0,0,0.38)] backdrop-blur-xl sm:p-3">
                 <SolarAnalysis
                   key={selectedAddress}
                   address={selectedAddress}
@@ -920,7 +918,7 @@ function ProgressNav({
 
   return (
     <div
-      className={`fixed inset-x-0 top-0 z-50 hidden border-b border-white/10 bg-slate-950/88 px-5 py-2 shadow-[0_14px_42px_rgba(0,0,0,0.26)] backdrop-blur-xl transition-opacity duration-300 md:block ${
+      className={`print-static-ui fixed inset-x-0 top-0 z-50 hidden border-b border-white/10 bg-slate-950/88 px-5 py-2 shadow-[0_14px_42px_rgba(0,0,0,0.26)] backdrop-blur-xl transition-opacity duration-300 md:block ${
         show ? "opacity-100" : "pointer-events-none opacity-0"
       }`}
     >
@@ -954,7 +952,7 @@ function ReturnBanner({
   onRestore: () => void;
 }) {
   return (
-    <div className="fixed inset-x-4 bottom-4 z-[70] mx-auto flex max-w-5xl flex-col gap-3 rounded-[1.3rem] border border-cyan-200/18 bg-slate-950/92 px-4 py-3 text-sm text-white shadow-[0_24px_80px_rgba(0,0,0,0.42)] backdrop-blur-xl sm:flex-row sm:items-center sm:justify-between">
+    <div className="print-static-ui fixed inset-x-4 bottom-4 z-[70] mx-auto flex max-w-5xl flex-col gap-3 rounded-[1.3rem] border border-cyan-200/18 bg-slate-950/92 px-4 py-3 text-sm text-white shadow-[0_24px_80px_rgba(0,0,0,0.42)] backdrop-blur-xl sm:flex-row sm:items-center sm:justify-between">
       <p className="leading-6 text-white/72">
         Welcome back. Your estimate for{" "}
         <span className="font-semibold text-white">
@@ -1021,33 +1019,33 @@ function SectionIntro({
 function OptionalTrustSections() {
   return (
     <section className="relative z-10 mx-auto w-full max-w-7xl px-5 pb-8 sm:px-7 md:px-10 lg:px-12">
-      <div className="liquid-glass rounded-[1.5rem] p-3 shadow-[0_18px_60px_rgba(0,0,0,0.3)] sm:p-4">
-        <div id="how-it-works" className="border-b border-white/10 pb-3">
-          <div className="rounded-[1rem] px-3 py-3 text-left">
+      <div className="liquid-glass rounded-[1.5rem] p-4 shadow-[0_18px_60px_rgba(0,0,0,0.3)] sm:p-5">
+        <div id="how-it-works" className="border-b border-white/10 pb-5">
+          <div className="rounded-[1rem] px-2 py-3 text-left sm:px-3">
             <span className="block text-xs font-semibold uppercase tracking-[0.28em] text-cyan-100/82">
               Why it works
             </span>
-            <span className="mt-1 block text-lg font-semibold text-white">
+            <span className="mt-2 block text-xl font-semibold text-white">
               Roof, layout, and estimate without the pressure
             </span>
           </div>
-          <div className="grid gap-3 px-3 pb-3 pt-2 lg:grid-cols-3">
+          <div className="grid gap-3 px-2 pt-2 sm:px-3 lg:grid-cols-3">
             {featureCards.map((card) => (
               <FeatureCard key={card.title} title={card.title} copy={card.copy} />
             ))}
           </div>
         </div>
 
-        <div id="reviews" className="pt-3">
-          <div className="rounded-[1rem] px-3 py-3 text-left">
+        <div id="reviews" className="pt-5">
+          <div className="rounded-[1rem] px-2 py-3 text-left sm:px-3">
             <span className="block text-xs font-semibold uppercase tracking-[0.28em] text-cyan-100/82">
               Homeowner reviews
             </span>
-            <span className="mt-1 block text-lg font-semibold text-white">
+            <span className="mt-2 block text-xl font-semibold text-white">
               What Arizona homeowners are saying
             </span>
           </div>
-          <div className="grid snap-x snap-mandatory gap-3 overflow-x-auto px-3 pb-3 pt-2 lg:grid-cols-3 lg:overflow-visible">
+          <div className="grid gap-3 px-2 pt-2 sm:px-3 lg:grid-cols-3">
             {testimonials.map((item) => (
               <ReviewCard key={item.name} name={item.name} quote={item.quote} />
             ))}
@@ -1097,7 +1095,7 @@ const faqItems = [
 
 function TrustIndicatorRow() {
   return (
-    <div className="mx-3 mt-4 flex flex-wrap items-center justify-center gap-3 rounded-[1rem] border border-white/8 bg-white/[0.035] px-4 py-3 text-xs font-semibold text-white/48">
+    <div className="mx-2 mt-5 flex flex-wrap items-center justify-center gap-3 rounded-[1rem] border border-white/8 bg-white/[0.04] px-4 py-3 text-xs font-semibold text-white/62 sm:mx-3">
       <span>Powered by</span>
       <span className="rounded-full border border-cyan-200/18 bg-cyan-300/10 px-3 py-1 text-cyan-100">
         Google Solar API
@@ -1114,7 +1112,7 @@ function TrustIndicatorRow() {
 
 function FaqSection() {
   return (
-    <div className="mx-3 mt-4 rounded-[1.15rem] border border-white/8 bg-slate-950/34 p-3">
+    <div className="mx-2 mt-5 rounded-[1.15rem] border border-white/8 bg-slate-950/40 p-3 sm:mx-3">
       <div className="px-2 py-2">
         <p className="text-xs font-semibold uppercase tracking-[0.28em] text-cyan-100/82">
           Common questions
@@ -1131,7 +1129,7 @@ function FaqSection() {
               <span className="text-cyan-100 group-open:hidden">+</span>
               <span className="hidden text-cyan-100 group-open:inline">-</span>
             </summary>
-            <p className="mt-3 text-sm leading-6 text-white/58">{item.answer}</p>
+            <p className="mt-3 text-sm leading-6 text-white/66">{item.answer}</p>
           </details>
         ))}
       </div>
@@ -1141,8 +1139,8 @@ function FaqSection() {
 
 function ReportMiniMetric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-[0.85rem] border border-white/10 bg-black/24 px-3 py-2">
-      <p className="text-[0.54rem] font-semibold uppercase tracking-[0.18em] text-white/42">
+    <div className="rounded-[0.85rem] border border-white/10 bg-black/28 px-3 py-2">
+      <p className="text-[0.62rem] font-semibold uppercase tracking-[0.16em] text-white/55">
         {label}
       </p>
       <p className="mt-1 font-semibold text-white">{value}</p>
@@ -1195,7 +1193,7 @@ function extractArizonaZip(address: string) {
 
 function FeatureCard({ title, copy }: { title: string; copy: string }) {
   return (
-    <article className="liquid-glass rounded-[1.35rem] p-5 shadow-[0_18px_60px_rgba(0,0,0,0.3)]">
+    <article className="liquid-glass h-full rounded-[1.35rem] p-5 shadow-[0_18px_60px_rgba(0,0,0,0.3)]">
       <div className="mb-5 h-px w-20 bg-gradient-to-r from-cyan-200/80 to-transparent" />
       <h3 className="text-xl font-semibold tracking-tight text-white">{title}</h3>
       <p className="mt-3 text-sm leading-6 text-white/62">{copy}</p>
@@ -1205,7 +1203,7 @@ function FeatureCard({ title, copy }: { title: string; copy: string }) {
 
 function ReviewCard({ name, quote }: { name: string; quote: string }) {
   return (
-    <article className="liquid-glass min-w-[18rem] snap-start rounded-[1.25rem] p-4 shadow-[0_18px_60px_rgba(0,0,0,0.28)]">
+    <article className="liquid-glass h-full rounded-[1.25rem] p-4 shadow-[0_18px_60px_rgba(0,0,0,0.28)]">
       <div className="flex gap-1 text-amber-200">
         {Array.from({ length: 5 }).map((_, index) => (
           <Star

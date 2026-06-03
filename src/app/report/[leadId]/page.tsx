@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { cookies } from "next/headers";
 import { formatDisplayAddress } from "@/lib/address-format";
+import { APP_NAME } from "@/lib/brand";
 import {
   DASHBOARD_SESSION_COOKIE,
   verifyDashboardSessionCookie,
@@ -44,7 +45,7 @@ type ReportLead = {
 };
 
 export const metadata = {
-  title: "Solar Report | Arizona Solar AI",
+  title: `Solar Report | ${APP_NAME}`,
   description: "View and download a homeowner solar report.",
 };
 
@@ -129,17 +130,15 @@ export default async function ReportViewerPage({
     annualKwh > 0 && monthlyBill > 0
       ? Math.min(Math.round(((annualKwh * 0.13) / (monthlyBill * 12)) * 100), 100)
       : Number(lead.energy_offset_pct ?? report.annualEnergyOffset);
-  const solarScore = Number(lead.lead_score ?? lead.solar_suitability_score ?? 0);
-  const solarScoreLabel = lead.lead_score
-    ? (lead.lead_score_label || getLeadScoreLabel(solarScore)).toUpperCase()
-    : null;
+  const solarReadinessScore = Number(lead.solar_suitability_score ?? 0);
+  const solarReadinessLabel = getSolarReadinessLabel(solarReadinessScore);
 
   return (
     <ReportShell>
       <header className="flex flex-col justify-between gap-4 rounded-[1.4rem] border border-white/10 bg-white/[0.055] px-5 py-4 shadow-[0_18px_70px_rgba(2,8,20,0.32)] backdrop-blur-xl lg:flex-row lg:items-center">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.32em] text-cyan-300">
-            Arizona Solar AI
+            {APP_NAME}
           </p>
           <h1 className="mt-2 text-3xl font-semibold tracking-tight">
             Solar report for {lead.name || "homeowner"}
@@ -188,14 +187,14 @@ export default async function ReportViewerPage({
             <Metric label="Annual savings" value={formatMoney(annualSavings)} source="Modeled" />
             <Metric label="System size" value={`${formatDecimal(systemSizeKw)} kW`} source="Modeled" />
             <Metric label="Panel count" value={`${Math.round(panelCount || 0)}`} source="Solar API" />
-            <Metric label="Estimated ROI" value={`${formatDecimal(roiYears)} yrs`} source="Modeled" />
+            <Metric label="Estimated Payback" value={`${formatDecimal(roiYears)} yrs`} source="Modeled" />
             <Metric label="Energy offset" value={`${Math.round(energyOffset || 0)}%`} source="Modeled" />
             <Metric
-              label="Solar score"
+              label="Solar Readiness Score"
               value={
-                solarScore
-                  ? `${Math.round(solarScore)}/100${solarScoreLabel ? ` - ${solarScoreLabel}` : ""}`
-                  : "Preliminary"
+                solarReadinessScore
+                  ? `${Math.round(solarReadinessScore)}/100 - ${solarReadinessLabel}`
+                  : "Preliminary Estimate"
               }
               source="Estimated"
             />
@@ -270,7 +269,7 @@ function verifyReportPageAccess(
     return {
       ok: false,
       title: "Report links are not configured.",
-      body: "Please contact Arizona Solar AI for a fresh report link.",
+      body: `Please contact ${APP_NAME} for a fresh report link.`,
     };
   }
 
@@ -330,7 +329,7 @@ function ReportUnavailable({
         href="/"
         className="mt-6 inline-flex rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100"
       >
-        Back to Arizona Solar AI
+        Back to {APP_NAME}
       </Link>
     </section>
   );
@@ -374,10 +373,11 @@ function shouldRetryLegacySelect(message: string) {
   );
 }
 
-function getLeadScoreLabel(score: number) {
-  if (score >= 70) return "HOT LEAD";
-  if (score >= 45) return "WARM LEAD";
-  return "COLD LEAD";
+function getSolarReadinessLabel(score: number) {
+  if (score >= 85) return "Strong Candidate";
+  if (score >= 65) return "Good Candidate";
+  if (score >= 45) return "Preliminary Candidate";
+  return "Installer Verification Required";
 }
 
 function ReportShell({ children }: { children: React.ReactNode }) {

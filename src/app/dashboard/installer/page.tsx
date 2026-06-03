@@ -11,6 +11,7 @@ import {
   calculateLeadScore,
   normalizeLeadScoreLabel,
 } from "@/lib/lead-scoring";
+import { APP_NAME } from "@/lib/brand";
 import {
   DASHBOARD_SESSION_COOKIE,
   getDashboardAccessToken,
@@ -24,17 +25,17 @@ import { fmtAddr } from "@/lib/utils";
 
 export const metadata: Metadata = {
   title: {
-    absolute: "Installer Dashboard | Arizona Solar AI",
+    absolute: `Installer Dashboard | ${APP_NAME}`,
   },
   description:
     "Manage homeowner solar leads, prioritize hot prospects, and download reports.",
   openGraph: {
-    title: "Installer Dashboard | Arizona Solar AI",
+    title: `Installer Dashboard | ${APP_NAME}`,
     description:
       "Manage homeowner solar leads, prioritize hot prospects, and download reports.",
   },
   twitter: {
-    title: "Installer Dashboard | Arizona Solar AI",
+    title: `Installer Dashboard | ${APP_NAME}`,
     description:
       "Manage homeowner solar leads, prioritize hot prospects, and download reports.",
   },
@@ -180,7 +181,9 @@ export default async function InstallerDashboardPage({
   );
   const totalLeads = installerLeads.length;
   const hotLeads = installerLeads.filter(
-    (lead) => lead.leadScoreLabel === "Hot Lead"
+    (lead) =>
+      lead.leadScoreLabel === "Hot Lead" ||
+      lead.leadScoreLabel === "Premium Lead"
   ).length;
   const averageSavings = average(installerLeads.map((lead) => lead.annualSavings));
   const averageSolarScore = average(installerLeads.map((lead) => lead.solarScore));
@@ -523,16 +526,13 @@ function shouldRetryLegacySelect(message: string) {
 
 function isAutomationConnected() {
   const emailConnected = Boolean(
-    process.env.RESEND_API_KEY?.trim() && process.env.RESEND_FROM_EMAIL?.trim()
-  );
-  const smsConnected = Boolean(
-    process.env.TWILIO_ACCOUNT_SID?.trim() &&
-      process.env.TWILIO_AUTH_TOKEN?.trim() &&
-      (process.env.TWILIO_PHONE_NUMBER?.trim() ||
-        process.env.TWILIO_FROM_NUMBER?.trim())
+    process.env.RESEND_API_KEY?.trim() &&
+      (process.env.FROM_EMAIL?.trim() ||
+        process.env.RESEND_FROM_EMAIL?.trim() ||
+        "reports@solartelligence.com")
   );
 
-  return emailConnected || smsConnected;
+  return emailConnected;
 }
 
 function clamp(value: number, min: number, max: number) {

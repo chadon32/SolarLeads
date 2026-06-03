@@ -6,9 +6,11 @@ create table if not exists public.leads (
   address text not null,
   monthly_bill numeric(10, 2) not null,
   estimated_savings numeric(10, 2) not null,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
 
+alter table public.leads add column if not exists updated_at timestamptz not null default now();
 alter table public.leads add column if not exists panel_count integer;
 alter table public.leads add column if not exists system_size_kw numeric(10, 2);
 alter table public.leads add column if not exists annual_savings numeric(10, 2);
@@ -47,14 +49,19 @@ alter table public.leads add column if not exists quote_requested_at timestamptz
 alter table public.leads add column if not exists preferred_contact_method text;
 alter table public.leads add column if not exists best_time_to_contact text;
 alter table public.leads add column if not exists quote_notes text;
-alter table public.leads add column if not exists sms_sent_at timestamptz;
-alter table public.leads add column if not exists sms_consent boolean not null default false;
+alter table public.leads add column if not exists email_sent_at timestamptz;
+alter table public.leads add column if not exists email_error text;
+alter table public.leads add column if not exists notification_status text;
 alter table public.leads add column if not exists battery_added boolean not null default false;
 alter table public.leads add column if not exists battery_brand text;
 alter table public.leads add column if not exists battery_model text;
 alter table public.leads add column if not exists battery_cost integer;
 alter table public.leads add column if not exists referral_code text;
 alter table public.leads add column if not exists referred_by text;
+alter table public.leads add column if not exists report_pdf_url text;
+alter table public.leads add column if not exists normalized_email text;
+alter table public.leads add column if not exists normalized_phone text;
+alter table public.leads add column if not exists normalized_address text;
 
 alter table public.leads enable row level security;
 
@@ -66,6 +73,7 @@ drop policy if exists "Allow anon insert on leads" on public.leads;
 drop policy if exists "Allow anon select on leads" on public.leads;
 
 create index if not exists leads_created_at_idx on public.leads (created_at desc);
+create index if not exists leads_updated_at_idx on public.leads (updated_at desc);
 create index if not exists leads_status_idx on public.leads (status);
 create index if not exists leads_lead_score_idx on public.leads (lead_score desc);
 create index if not exists leads_utility_bill_uploaded_idx on public.leads (utility_bill_uploaded);
@@ -73,10 +81,21 @@ create index if not exists leads_follow_up_status_idx on public.leads (follow_up
 create index if not exists leads_next_follow_up_at_idx on public.leads (next_follow_up_at);
 create index if not exists leads_quote_requested_idx on public.leads (quote_requested, quote_requested_at desc);
 create index if not exists leads_referred_by_idx on public.leads (referred_by);
+create index if not exists leads_normalized_email_idx on public.leads (normalized_email);
+create index if not exists leads_normalized_phone_idx on public.leads (normalized_phone);
+create index if not exists leads_normalized_address_idx on public.leads (normalized_address);
 create unique index if not exists leads_referral_code_idx on public.leads (referral_code)
 where referral_code is not null;
 create unique index if not exists leads_dedupe_idx
 on public.leads (lower(email), lower(address), monthly_bill);
+
+-- Recommended after duplicate cleanup:
+-- create unique index if not exists leads_normalized_email_unique_idx
+-- on public.leads (normalized_email) where normalized_email is not null;
+-- create unique index if not exists leads_normalized_phone_unique_idx
+-- on public.leads (normalized_phone) where normalized_phone is not null;
+-- create unique index if not exists leads_normalized_address_unique_idx
+-- on public.leads (normalized_address) where normalized_address is not null;
 
 -- Optional private utility bill storage bucket.
 -- The app uploads with the Supabase service-role key through /api/utility-bills.

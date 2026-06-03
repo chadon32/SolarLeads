@@ -40,21 +40,33 @@ SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key_here
 SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key_here
 RESEND_API_KEY=your_resend_api_key_here
-RESEND_FROM_EMAIL=reports@yourdomain.com
-TWILIO_ACCOUNT_SID=your_twilio_account_sid_here
-TWILIO_AUTH_TOKEN=your_twilio_auth_token_here
-TWILIO_PHONE_NUMBER=+16025550123
-OWNER_PHONE_NUMBER=+16025550123
+FROM_EMAIL=reports@solartelligence.com
+RESEND_FROM_EMAIL=reports@solartelligence.com
+ADMIN_EMAIL=owner@yourdomain.com
 DASHBOARD_ACCESS_TOKEN=your_dashboard_token_here
 ```
 
-For Vercel, add the same values in the project environment settings. Keep `GOOGLE_MAPS_API_KEY`, `GOOGLE_PLACES_API_KEY`, `GOOGLE_SOLAR_API_KEY`, the service role key, report signing secret, rate limit secret, follow-up process secret, dashboard access token, and Twilio values server-side only. `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` is the browser key used only for rendering the satellite map overlays.
+For Vercel, add the same values in the project environment settings. Keep `GOOGLE_MAPS_API_KEY`, `GOOGLE_PLACES_API_KEY`, `GOOGLE_SOLAR_API_KEY`, the service role key, report signing secret, rate limit secret, follow-up process secret, dashboard access token, and Resend values server-side only. `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` is the browser key used only for rendering the satellite map overlays.
+
+Lead notifications are sent server-side after Supabase confirms a new lead. Resend sends the homeowner report email and the optional admin lead email. If `RESEND_API_KEY` is missing in development, the app logs the email payload and still lets the homeowner reach the success screen. `FROM_EMAIL` and `ADMIN_EMAIL` are preferred; `RESEND_FROM_EMAIL` and `OWNER_EMAIL` remain supported for existing deployments. `FROM_EMAIL` should point to a verified Resend sender such as `reports@solartelligence.com`.
+
+To verify production notifications without creating a lead, call the protected test endpoint with your dashboard token:
+
+```bash
+curl -X POST "https://your-domain.com/api/notifications/test?token=$DASHBOARD_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"channel":"email","testEmail":"you@example.com"}'
+```
+
+The response reports safe env status, whether email was attempted, the Resend message id, and sanitized provider errors. It never returns API keys. If email fails, check that `RESEND_API_KEY` is set in the Vercel Production environment, that `FROM_EMAIL`/`RESEND_FROM_EMAIL` is a verified Resend sender or verified domain, and that the deployment was redeployed after env changes. Inspect Vercel Function logs for `[notification-email:*]` and `[lead-notifications:*]` entries.
+
+For per-lead notification diagnostics, run the latest `supabase/leads.sql` migration so the `leads` table has `email_sent_at`, `email_error`, and `notification_status`.
 
 Production report links fail closed unless `REPORT_SIGNING_SECRET` is configured. The dashboard also fails closed in production unless `DASHBOARD_ACCESS_TOKEN` is configured, because it can expose homeowner lead data.
 
 Report PDF URLs are signed with `exp` and `token` query parameters when `REPORT_SIGNING_SECRET` is present. In production, `/api/report/pdf` and `/report/[leadId]` reject unsigned, expired, invalid, or misconfigured public report links. Dashboard admins can still view/download reports by using the protected dashboard URL with `DASHBOARD_ACCESS_TOKEN`.
 
-Dashboard unlock forms create a signed HttpOnly `azsa_dashboard_session` cookie so day-to-day admin access does not keep the token in the URL. Dashboard APIs also accept the token via `Authorization: Bearer <DASHBOARD_ACCESS_TOKEN>`, `x-dashboard-token`, or a `token` query parameter for automation/backward compatibility. This protects lead status changes, manual follow-up sends, dashboard SMS resends, utility bill viewing, and dashboard PDF downloads.
+Dashboard unlock forms create a signed HttpOnly `azsa_dashboard_session` cookie so day-to-day admin access does not keep the token in the URL. Dashboard APIs also accept the token via `Authorization: Bearer <DASHBOARD_ACCESS_TOKEN>`, `x-dashboard-token`, or a `token` query parameter for automation/backward compatibility. This protects lead status changes, manual follow-up sends, utility bill viewing, and dashboard PDF downloads.
 
 The rooftop analysis pipeline now uses Google Geocoding plus the Google Maps Platform Solar API by default. The analysis is live per address, so every selected rooftop pulls real Solar API values for panel count, roof area, pitch, and energy estimates.
 
@@ -77,6 +89,6 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
-Before deploying, make sure `GOOGLE_PLACES_API_KEY`, `GOOGLE_MAPS_API_KEY`, `GOOGLE_SOLAR_API_KEY`, `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`, `SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `REPORT_SIGNING_SECRET`, `DASHBOARD_ACCESS_TOKEN`, `RATE_LIMIT_SECRET`, `FOLLOW_UP_PROCESS_SECRET`, `TWILIO_*`, and any Resend variables are set in Vercel. `UTILITY_BILL_UPLOAD_SECRET` is recommended; if omitted, utility bill upload claims fall back to existing server-only secrets.
+Before deploying, make sure `GOOGLE_PLACES_API_KEY`, `GOOGLE_MAPS_API_KEY`, `GOOGLE_SOLAR_API_KEY`, `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`, `SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `REPORT_SIGNING_SECRET`, `DASHBOARD_ACCESS_TOKEN`, `RATE_LIMIT_SECRET`, `FOLLOW_UP_PROCESS_SECRET`, and any Resend variables are set in Vercel. `UTILITY_BILL_UPLOAD_SECRET` is recommended; if omitted, utility bill upload claims fall back to existing server-only secrets.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.

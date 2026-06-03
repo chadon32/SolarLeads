@@ -9,12 +9,16 @@ import { trackEvent } from "@/lib/analytics";
 import type { BatteryOption } from "@/lib/batteries";
 import { formatName } from "@/lib/name-format";
 import {
+  formatPhoneForDisplay,
+  isValidUsPhoneNumber,
+  normalizePhoneNumber,
+} from "@/lib/phone";
+import {
   getRoofAreaM2,
   getUsableAreaM2,
   type RoofAnalysis,
 } from "@/lib/roof-analysis";
 import { buildSolarMetrics } from "@/lib/solar-metrics";
-import { buildSolarReportFromSolarValues } from "@/lib/solar-report";
 import {
   getInverterOption,
   getPanelFit,
@@ -41,7 +45,10 @@ type FormValues = {
   email: string;
   phone: string;
   address: string;
+  electricBillRange: string;
   monthlyBill: string;
+  ownsHome: string;
+  solarTimeline: string;
   preferredContactMethod: string;
   bestTimeToContact: string;
   notes: string;
@@ -73,38 +80,43 @@ const emptyValues: FormValues = {
   email: "",
   phone: "",
   address: "",
+  electricBillRange: "$100–$200",
   monthlyBill: "",
+  ownsHome: "Own",
+  solarTimeline: "1–3 months",
   preferredContactMethod: "Phone",
   bestTimeToContact: "Afternoon",
   notes: "",
 };
 
+const electricBillRangeOptions = [
+  "Under $100",
+  "$100–$200",
+  "$200–$300",
+  "$300–$400",
+  "$400+",
+] as const;
+const electricBillRangeMonthlyValues: Record<string, number> = {
+  "Under $100": 75,
+  "$100–$200": 150,
+  "$200–$300": 250,
+  "$300–$400": 350,
+  "$400+": 450,
+};
+const homeOwnershipOptions = ["Own", "Rent"] as const;
+const solarTimelineOptions = [
+  "Just researching",
+  "3–6 months",
+  "1–3 months",
+  "ASAP",
+] as const;
 const contactMethodOptions = ["Phone", "Text", "Email"] as const;
 const bestTimeOptions = ["Morning", "Afternoon", "Evening", "Weekend"] as const;
 const utilityBillMimeTypes = ["application/pdf", "image/jpeg", "image/png"];
 const utilityBillMaxBytes = 10 * 1024 * 1024;
 
-function normalizePhone(value: string) {
-  return value.replace(/\D/g, "");
-}
-
-function formatPhoneDisplay(value: string) {
-  const digits = normalizePhone(value).slice(0, 10);
-  if (!digits) return "";
-  if (digits.length <= 3) return `(${digits}`;
-  if (digits.length <= 6) {
-    return `(${digits.slice(0, 3)})-${digits.slice(3)}`;
-  }
-  return `(${digits.slice(0, 3)})-${digits.slice(3, 6)}-${digits.slice(6)}`;
-}
-
 function isValidEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
-}
-
-function isValidPhone(value: string) {
-  const digits = normalizePhone(value);
-  return digits.length >= 10 && digits.length <= 15;
 }
 
 function formatMoney(value: number) {
@@ -115,13 +127,38 @@ function formatMoney(value: number) {
   }).format(value);
 }
 
+function getBillRangeByMonthlyBill(monthlyBill: number) {
+  if (monthlyBill < 100) return "Under $100";
+  if (monthlyBill <= 200) return "$100–$200";
+  if (monthlyBill <= 300) return "$200–$300";
+  if (monthlyBill <= 400) return "$300–$400";
+  return "$400+";
+}
+
+function getMonthlyBillFromRange(range: string) {
+  return electricBillRangeMonthlyValues[range] ?? 200;
+}
+
+function buildLeadNotes(values: FormValues) {
+  const context = [
+    `Home ownership: ${values.ownsHome}`,
+    `Solar timeline: ${values.solarTimeline}`,
+  ];
+  const notes = values.notes.trim();
+
+  return notes ? [...context, `Homeowner notes: ${notes}`].join("\n") : context.join("\n");
+}
+
 function buildFingerprint(values: FormValues) {
   return [
     values.name.trim().toLowerCase(),
     values.email.trim().toLowerCase(),
-    normalizePhone(values.phone),
+    normalizePhoneNumber(values.phone),
     values.address.trim().toLowerCase(),
+    values.electricBillRange.trim().toLowerCase(),
     values.monthlyBill.trim(),
+    values.ownsHome.trim().toLowerCase(),
+    values.solarTimeline.trim().toLowerCase(),
     values.preferredContactMethod.trim().toLowerCase(),
     values.bestTimeToContact.trim().toLowerCase(),
     values.notes.trim().toLowerCase(),
@@ -144,6 +181,7 @@ export function LeadCaptureForm({
   const [values, setValues] = useState<FormValues>({
     ...emptyValues,
     address: formatDisplayAddress(initialAddress),
+    electricBillRange: getBillRangeByMonthlyBill(initialMonthlyBill),
     monthlyBill: String(initialMonthlyBill),
   });
   const [errors, setErrors] = useState<Partial<Record<keyof FormValues, string>>>(
@@ -158,18 +196,19 @@ export function LeadCaptureForm({
   const [utilityBill, setUtilityBill] = useState<UtilityBillState>({
     status: "idle",
   });
-  const [smsConsent, setSmsConsent] = useState(true);
   const lastSubmittedFingerprint = useRef<string>("");
 
   useEffect(() => {
     const handle = window.requestAnimationFrame(() => {
       setValues((current) =>
         current.address === formatDisplayAddress(initialAddress) &&
-        current.monthlyBill === String(initialMonthlyBill)
+        current.monthlyBill === String(initialMonthlyBill) &&
+        current.electricBillRange === getBillRangeByMonthlyBill(initialMonthlyBill)
           ? current
           : {
               ...current,
               address: formatDisplayAddress(initialAddress),
+              electricBillRange: getBillRangeByMonthlyBill(initialMonthlyBill),
               monthlyBill: String(initialMonthlyBill),
             }
       );
@@ -214,8 +253,8 @@ export function LeadCaptureForm({
       nextErrors.email = "Enter a valid email address.";
     }
 
-    if (!isValidPhone(values.phone)) {
-      nextErrors.phone = "Enter a valid phone number with at least 10 digits.";
+    if (!isValidUsPhoneNumber(values.phone)) {
+      nextErrors.phone = "Enter a valid 10-digit US phone number.";
     }
 
     if (values.address.trim().length < 8) {
@@ -225,6 +264,18 @@ export function LeadCaptureForm({
     const monthly = Number(values.monthlyBill);
     if (!Number.isFinite(monthly) || monthly <= 0) {
       nextErrors.monthlyBill = "Enter your estimated monthly electric bill.";
+    }
+
+    if (!values.electricBillRange.trim()) {
+      nextErrors.electricBillRange = "Choose your average monthly electric bill.";
+    }
+
+    if (!values.ownsHome.trim()) {
+      nextErrors.ownsHome = "Choose whether you own or rent.";
+    }
+
+    if (!values.solarTimeline.trim()) {
+      nextErrors.solarTimeline = "Choose your solar timeline.";
     }
 
     if (!values.preferredContactMethod.trim()) {
@@ -337,6 +388,7 @@ export function LeadCaptureForm({
     if (!validate()) return;
 
     const monthlyBill = Number(values.monthlyBill);
+    const phoneForStorage = normalizePhoneNumber(values.phone);
     const formattedName = formatName(values.name);
     const baseMetrics = analysis?.validSite
       ? buildSolarMetrics(analysis, {
@@ -407,12 +459,15 @@ export function LeadCaptureForm({
         body: JSON.stringify({
           name: formattedName,
           email: values.email.trim(),
-          phone: values.phone.trim(),
+          phone: phoneForStorage,
           address: values.address.trim(),
+          electricBillRange: values.electricBillRange,
           monthlyBill,
+          ownsHome: values.ownsHome,
           preferredContactMethod: values.preferredContactMethod,
+          solarTimeline: values.solarTimeline,
           bestTimeToContact: values.bestTimeToContact,
-          notes: values.notes.trim(),
+          notes: buildLeadNotes(values),
           quoteRequested: true,
           panelCount: metrics.panelCount,
           systemSizeKw: metrics.systemKw,
@@ -442,7 +497,6 @@ export function LeadCaptureForm({
           selectedPanelBrand: selectedPanel?.brand,
           selectedPanelModel: selectedPanel?.model,
           selectedPanelWatts: selectedPanel?.watts,
-          smsConsent,
           systemCostBeforeIncentives: totalSystemCost || panelFit?.systemCost,
           federalTaxCredit: totalFederalTaxCredit || panelFit?.taxCredit,
           netSystemCost: totalNetSystemCost || panelFit?.netCost,
@@ -466,39 +520,7 @@ export function LeadCaptureForm({
         lead_id: payload.lead.id,
         panel_count: metrics.panelCount,
       });
-      const report = buildSolarReportFromSolarValues({
-        annualKwh: metrics.annualKwh,
-        annualSavings: metrics.annualSavings,
-        monthlyBill,
-        panelCount: metrics.panelCount,
-        systemKw: metrics.systemKw,
-      });
-
-      setMessage("Emailing your PDF report...");
-      console.info("[lead-sms-request]", {
-        consent: smsConsent,
-        leadId: payload.lead.id,
-      });
-
-      const smsRequest = fetch("/api/sms", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          leadId: payload.lead.id,
-          phone: values.phone.trim(),
-          phoneConsent: smsConsent,
-        }),
-      })
-        .then(async (smsResponse) => {
-          const smsResult = await smsResponse.json().catch(() => ({}));
-          console.info("[lead-sms-result]", smsResult);
-          return smsResult;
-        })
-        .catch((error) => {
-          console.warn("[lead-sms-result]", error);
-        });
+      setMessage("Preparing your confirmation...");
 
       await Promise.allSettled([
         fetch("/api/follow-ups", {
@@ -508,22 +530,6 @@ export function LeadCaptureForm({
           },
           body: JSON.stringify({ leadId: payload.lead.id }),
         }),
-        fetch("/api/report/email", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            leadId: payload.lead.id,
-            name: payload.lead.name,
-            email: payload.lead.email,
-            address: payload.lead.address,
-            monthlyBill,
-            report,
-            utilityBillUploaded: Boolean(payload.lead.utilityBillUploaded),
-          }),
-        }),
-        smsRequest,
       ]);
 
       const thankYouPayload = {
@@ -558,11 +564,11 @@ export function LeadCaptureForm({
   };
 
   return (
-    <div className="grid gap-6">
-      <div className="grid gap-6 lg:grid-cols-[1.05fr_0.95fr] lg:items-stretch">
+    <div className="grid gap-5">
+      <div className="grid gap-5 lg:grid-cols-[1.05fr_0.95fr] lg:items-stretch">
         <form
           onSubmit={handleSubmit}
-          className="glass-panel h-full rounded-[2rem] p-6 shadow-[0_24px_80px_rgba(2,8,20,0.4)]"
+          className="glass-panel h-full rounded-[1.6rem] p-4 shadow-[0_24px_80px_rgba(2,8,20,0.4)] sm:p-6"
         >
           <div className="flex items-start justify-between gap-4">
             <div>
@@ -603,29 +609,24 @@ export function LeadCaptureForm({
             <Field
               label="Phone"
               value={values.phone}
-              onChange={(value) => updateField("phone", formatPhoneDisplay(value))}
+              onChange={(value) => updateField("phone", formatPhoneForDisplay(value))}
               error={errors.phone}
               placeholder="Your phone number"
               type="tel"
               inputMode="tel"
               autoComplete="tel"
             />
-            <Field
-              label="Monthly bill"
-              value={values.monthlyBill}
+            <SelectField
+              label="Average monthly electric bill"
+              value={values.electricBillRange}
               onChange={(value) => {
-                updateField("monthlyBill", value);
-                const nextMonthlyBill = Number(value);
-                if (Number.isFinite(nextMonthlyBill) && nextMonthlyBill > 0) {
-                  onMonthlyBillChange?.(nextMonthlyBill);
-                }
+                updateField("electricBillRange", value);
+                const nextMonthlyBill = getMonthlyBillFromRange(value);
+                updateField("monthlyBill", String(nextMonthlyBill));
+                onMonthlyBillChange?.(nextMonthlyBill);
               }}
-              error={errors.monthlyBill}
-              placeholder="$ 200"
-              type="number"
-              inputMode="decimal"
-              prefix="$"
-              autoComplete="off"
+              options={electricBillRangeOptions}
+              error={errors.electricBillRange || errors.monthlyBill}
               helperText="Used to estimate the savings shown in your report."
             />
             <div className="sm:col-span-2">
@@ -640,20 +641,21 @@ export function LeadCaptureForm({
             </div>
           </div>
 
-          <label className="mt-4 flex items-start gap-3 rounded-[1rem] border border-white/8 bg-slate-950/30 px-4 py-3 text-sm leading-6 text-slate-300">
-            <input
-              type="checkbox"
-              checked={smsConsent}
-              onChange={(event) => setSmsConsent(event.target.checked)}
-              className="mt-1 h-4 w-4 rounded border-white/20 bg-slate-950 accent-cyan-300"
-            />
-            <span>
-              By providing your phone number, you agree to receive your solar
-              report and follow-up by text. Reply STOP to opt out.
-            </span>
-          </label>
-
           <div className="mt-4 grid gap-4 sm:grid-cols-2">
+            <SelectField
+              label="Owns home or rents"
+              value={values.ownsHome}
+              onChange={(value) => updateField("ownsHome", value)}
+              options={homeOwnershipOptions}
+              error={errors.ownsHome}
+            />
+            <SelectField
+              label="Solar timeline"
+              value={values.solarTimeline}
+              onChange={(value) => updateField("solarTimeline", value)}
+              options={solarTimelineOptions}
+              error={errors.solarTimeline}
+            />
             <SelectField
               label="Preferred contact method"
               value={values.preferredContactMethod}
@@ -687,14 +689,14 @@ export function LeadCaptureForm({
             No spam. Your report details are used to help licensed Arizona solar specialists prepare relevant quotes.
           </p>
 
-          <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="text-sm text-slate-400">
+          <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-center">
+            <div className="rounded-[1rem] border border-white/8 bg-slate-950/28 px-4 py-3 text-sm text-slate-300">
               Estimated annual savings:{" "}
               <span className="font-semibold text-white">
                 {estimatedSavings > 0 ? formatMoney(estimatedSavings) : "Run roof analysis first"}
               </span>
             </div>
-            <Button type="submit" disabled={status === "submitting"} className="px-6 py-3.5">
+            <Button type="submit" disabled={status === "submitting"} className="min-h-12 w-full px-6 py-3.5 sm:w-auto">
               {status === "submitting" ? (
                 <span className="inline-flex items-center gap-2">
                   <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-950/20 border-t-slate-950" />
@@ -707,7 +709,7 @@ export function LeadCaptureForm({
           </div>
 
           <div
-            className="mt-5 min-h-[3.5rem] rounded-[1.25rem] border border-white/8 bg-slate-950/35 px-4 py-3"
+            className="mt-5 min-h-[3.25rem] rounded-[1.05rem] border border-white/8 bg-slate-950/35 px-4 py-3"
             aria-live="polite"
           >
             <p
@@ -808,7 +810,7 @@ function Field({
 }: FieldProps) {
   return (
     <label className="block">
-      <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">
+      <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">
         {label}
       </span>
       <div className="relative">
@@ -824,7 +826,7 @@ function Field({
           placeholder={placeholder}
           inputMode={inputMode}
           autoComplete={autoComplete}
-          className={`w-full rounded-[1.2rem] border bg-slate-950/40 px-4 py-3 text-base text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/35 focus:bg-slate-950/65 ${
+          className={`min-h-12 w-full rounded-[1.05rem] border bg-slate-950/46 px-4 py-3 text-base text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/45 focus:bg-slate-950/68 ${
             prefix ? "pl-8" : ""
           } ${error ? "border-rose-400/50" : "border-white/10"}`}
         />
@@ -839,12 +841,14 @@ function Field({
 
 function SelectField({
   error,
+  helperText,
   label,
   onChange,
   options,
   value,
 }: {
   error?: string;
+  helperText?: string;
   label: string;
   onChange: (value: string) => void;
   options: readonly string[];
@@ -852,13 +856,13 @@ function SelectField({
 }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">
+      <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">
         {label}
       </span>
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className={`w-full rounded-[1.2rem] border bg-slate-950/40 px-4 py-3 text-base text-white outline-none transition focus:border-cyan-300/35 focus:bg-slate-950/65 ${
+        className={`min-h-12 w-full rounded-[1.05rem] border bg-slate-950/46 px-4 py-3 text-base text-white outline-none transition focus:border-cyan-300/45 focus:bg-slate-950/68 ${
           error ? "border-rose-400/50" : "border-white/10"
         }`}
       >
@@ -869,6 +873,9 @@ function SelectField({
         ))}
       </select>
       {error ? <p className="mt-2 text-sm text-rose-300">{error}</p> : null}
+      {!error && helperText ? (
+        <p className="mt-2 text-sm leading-6 text-slate-400">{helperText}</p>
+      ) : null}
     </label>
   );
 }
@@ -886,14 +893,14 @@ function TextAreaField({
 }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">
+      <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">
         {label}
       </span>
       <textarea
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
-        className="min-h-28 w-full resize-y rounded-[1.2rem] border border-white/10 bg-slate-950/40 px-4 py-3 text-base leading-7 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/35 focus:bg-slate-950/65"
+        className="min-h-28 w-full resize-y rounded-[1.05rem] border border-white/10 bg-slate-950/46 px-4 py-3 text-base leading-7 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/45 focus:bg-slate-950/68"
       />
     </label>
   );

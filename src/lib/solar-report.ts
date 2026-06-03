@@ -39,9 +39,10 @@ export function buildSolarReportFromSolarValues(values: SolarReportValues): Sola
       : systemKw > 0
         ? systemKw * 1000 * 2.75
         : 0;
+  const netEstimatedSystemCost = estimatedSystemCost * 0.7;
   const estimatedRoiYears =
     annualSavings > 0
-      ? Number((estimatedSystemCost / annualSavings).toFixed(1))
+      ? Number((netEstimatedSystemCost / annualSavings).toFixed(1))
       : 0;
   const annualImpactLbs = Math.round(annualKwh * 0.39 * 2.205);
   const annualHouseholdKwh =

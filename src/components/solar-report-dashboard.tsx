@@ -243,14 +243,6 @@ export function SolarReportDashboard({
           onSelectQuestion={setSelectedAdvisorQuestion}
         />
 
-        <button
-          type="button"
-          onClick={openSendReport}
-          className="inline-flex w-full items-center justify-center rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 shadow-[0_18px_55px_rgba(255,255,255,0.18)] transition hover:-translate-y-0.5 hover:bg-cyan-100"
-        >
-          Send My Full Report
-        </button>
-
         <DataProvenanceBlock />
       </aside>
 
@@ -261,7 +253,7 @@ export function SolarReportDashboard({
         <div
           role="tablist"
           aria-label="Solar report detail sections"
-          className="flex gap-2 overflow-x-auto rounded-full border border-white/10 bg-black/24 p-1"
+          className="flex gap-2 overflow-x-auto rounded-full border border-white/10 bg-black/28 p-1"
         >
           {detailTabs.map((tab) => (
             <button
@@ -270,7 +262,7 @@ export function SolarReportDashboard({
               type="button"
               aria-selected={activeTab === tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`shrink-0 rounded-full px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] transition ${
+              className={`shrink-0 rounded-full px-4 py-2.5 text-xs font-semibold uppercase tracking-[0.14em] transition ${
                 activeTab === tab.id
                   ? "bg-white text-slate-950"
                   : "text-white/58 hover:text-white"
@@ -540,9 +532,9 @@ function PanelsTab({
         >
           <span>
             <span className="block text-sm font-semibold text-white">
-              {showComparison ? "^ Hide comparison" : "v Compare all panels"}
+              {showComparison ? "Hide comparison" : "Compare all panels"}
             </span>
-            <span className="mt-1 block text-xs text-white/48">
+            <span className="mt-1 block text-xs text-white/62">
               Sorted by payback by default.
             </span>
           </span>
@@ -602,18 +594,18 @@ function PanelOptionCard({
     >
       <div className="absolute right-3 top-3 z-10 flex flex-col items-end gap-1.5">
         {isSelected ? (
-          <span className="rounded-full bg-cyan-200 px-2 py-1 text-[0.55rem] font-black uppercase tracking-[0.12em] text-slate-950">
-            ✓ Selected
+          <span className="rounded-full bg-cyan-200 px-2 py-1 text-[0.62rem] font-black uppercase tracking-[0.1em] text-slate-950">
+            Selected
           </span>
         ) : null}
         {fit.recommended ? (
-          <span className="rounded-full bg-emerald-300 px-2 py-1 text-[0.55rem] font-black uppercase tracking-[0.12em] text-slate-950">
-            ✓ Recommended
+          <span className="rounded-full bg-emerald-300 px-2 py-1 text-[0.62rem] font-black uppercase tracking-[0.1em] text-slate-950">
+            Recommended
           </span>
         ) : null}
         {!fit.fits ? (
-          <span className="rounded-full bg-slate-500/70 px-2 py-1 text-[0.55rem] font-black uppercase tracking-[0.12em] text-white">
-            ✗ Roof too small
+          <span className="rounded-full bg-slate-500/70 px-2 py-1 text-[0.62rem] font-black uppercase tracking-[0.1em] text-white">
+            Roof too small
           </span>
         ) : null}
       </div>
@@ -624,9 +616,9 @@ function PanelOptionCard({
           <h4 className="mt-1 line-clamp-2 text-base font-semibold text-white/88">
             {panel.model}
           </h4>
-          <p className="mt-1 line-clamp-2 text-xs leading-5 text-white/45">{panel.bestFor}</p>
+          <p className="mt-1 line-clamp-2 text-xs leading-5 text-white/58">{panel.bestFor}</p>
         </div>
-        <span className={`shrink-0 rounded-full border px-2 py-1 text-[0.54rem] font-bold uppercase tracking-[0.14em] ${getTierBadgeClass(panel.tier)}`}>
+        <span className={`shrink-0 rounded-full border px-2 py-1 text-[0.62rem] font-bold uppercase tracking-[0.12em] ${getTierBadgeClass(panel.tier)}`}>
           {getTierLabel(panel.tier)}
         </span>
       </div>
@@ -713,7 +705,7 @@ function getTierBadgeClass(tier: SolarPanel["tier"]) {
 function PanelSpec({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0 overflow-hidden rounded-[0.75rem] border border-white/8 bg-black/20 p-2">
-      <p className="text-[0.54rem] font-semibold uppercase tracking-[0.14em] text-white/40">
+      <p className="text-[0.62rem] font-semibold uppercase tracking-[0.12em] text-white/52">
         {label}
       </p>
       <p className="mt-1 truncate font-semibold text-white">{value}</p>
@@ -1041,8 +1033,8 @@ function PanelComparisonTable({
                   {header.label}
                   {sortKey === header.key
                     ? sortDirection === "asc"
-                      ? " ↑"
-                      : " ↓"
+                      ? " asc"
+                      : " desc"
                     : ""}
                 </button>
               </th>

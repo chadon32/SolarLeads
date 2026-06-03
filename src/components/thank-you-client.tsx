@@ -11,6 +11,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { formatDisplayAddress } from "@/lib/address-format";
+import { APP_NAME } from "@/lib/brand";
 
 type ThankYouPayload = {
   address?: string;
@@ -131,7 +132,7 @@ export function ThankYouClient() {
               <p className="mt-4 max-w-2xl text-base leading-7 text-slate-300">
                 {summary.quoteRequested
                   ? "Your request was received. A solar specialist can follow up with your report details."
-                  : "We emailed your personalized Arizona Solar AI proposal and saved the roof model summary for your next step."}
+                  : `We emailed your personalized ${APP_NAME} proposal and saved the roof model summary for your next step.`}
               </p>
               {summary.utilityBillUploaded ? (
                 <p className="mt-4 inline-flex rounded-full border border-emerald-300/18 bg-emerald-300/10 px-4 py-2 text-sm font-semibold text-emerald-100">

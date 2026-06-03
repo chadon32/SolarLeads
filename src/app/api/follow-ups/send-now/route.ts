@@ -25,7 +25,9 @@ type LeadRow = {
 
 const resendApiKey = process.env.RESEND_API_KEY?.trim();
 const resendFromEmail =
-  process.env.RESEND_FROM_EMAIL?.trim() || "Arizona Solar AI <onboarding@resend.dev>";
+  process.env.FROM_EMAIL?.trim() ||
+  process.env.RESEND_FROM_EMAIL?.trim() ||
+  "reports@solartelligence.com";
 
 export async function POST(request: Request) {
   try {
@@ -132,7 +134,7 @@ export async function POST(request: Request) {
 
 async function sendFollowUpIfConfigured(followUp: FollowUpRow, lead: LeadRow | null) {
   if (followUp.channel !== "email") {
-    return "Marked sent manually. SMS automation is not connected yet.";
+    return "Marked sent manually. Automated text messaging is disabled.";
   }
 
   if (!resendApiKey || !lead?.email) {

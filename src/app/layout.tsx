@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Manrope, Space_Grotesk } from "next/font/google";
 import { GoogleAnalytics } from "@/components/google-analytics";
+import { APP_CANONICAL_URL, APP_NAME, APP_TAGLINE } from "@/lib/brand";
 import "./globals.css";
 
 const display = Space_Grotesk({
@@ -18,13 +19,12 @@ export const metadata: Metadata = {
     process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"
   ),
   title: {
-    default: "Arizona Solar Savings Estimate",
-    template: "%s | Arizona Solar AI",
+    default: `${APP_NAME} | Solar Readiness Reports & Roof Analysis`,
+    template: `%s | ${APP_NAME}`,
   },
-  description:
-    "Enter your Arizona address to see satellite roof imagery, panel placement, and a personalized solar savings estimate.",
+  description: APP_TAGLINE,
   alternates: {
-    canonical: "https://solar-leads-psi.vercel.app/",
+    canonical: APP_CANONICAL_URL,
   },
   keywords: [
     "Arizona solar",
@@ -33,29 +33,27 @@ export const metadata: Metadata = {
     "address autocomplete",
     "AI solar report",
   ],
-  authors: [{ name: "Arizona Solar AI" }],
-  creator: "Arizona Solar AI",
-  publisher: "Arizona Solar AI",
+  authors: [{ name: APP_NAME }],
+  creator: APP_NAME,
+  publisher: APP_NAME,
   openGraph: {
     type: "website",
-    title: "Arizona Solar AI - Free roof solar estimate",
-    description:
-      "Enter your Arizona address to preview roof placement and modeled solar savings in under a minute.",
-    siteName: "Arizona Solar AI",
+    title: `${APP_NAME} - Solar readiness reports and roof analysis`,
+    description: APP_TAGLINE,
+    siteName: APP_NAME,
     images: [
       {
         url: "/opengraph-image",
         width: 1200,
         height: 630,
-        alt: "Arizona Solar AI - Free roof solar estimate",
+        alt: `${APP_NAME} - Solar readiness reports and roof analysis`,
       },
     ],
   },
   twitter: {
     card: "summary_large_image",
-    title: "Arizona Solar AI - Free roof solar estimate",
-    description:
-      "Enter your Arizona address to preview roof placement and modeled solar savings in under a minute.",
+    title: `${APP_NAME} - Solar readiness reports and roof analysis`,
+    description: APP_TAGLINE,
     images: ["/opengraph-image"],
   },
   robots: {

@@ -1,10 +1,19 @@
 import { NextResponse } from "next/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { Resend } from "resend";
-import { formatDisplayAddress } from "@/lib/address-format";
 import { calculateLeadScore } from "@/lib/lead-scoring";
+import {
+  normalizeAddress,
+  normalizeEmail,
+  normalizePhone,
+} from "@/lib/lead-normalization";
 import { formatName } from "@/lib/name-format";
-import { buildReportPdfPath } from "@/lib/report-access";
+import {
+  sendLeadNotifications,
+  type LeadNotificationSummary,
+  type NotificationResult,
+} from "@/lib/notifications";
+import { isValidUsPhoneNumber, normalizePhoneNumber } from "@/lib/phone";
+import { buildReportPdfUrl } from "@/lib/report-access";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { verifyUtilityBillUploadClaim } from "@/lib/utility-bill-claims";
 
@@ -17,7 +26,9 @@ type LeadBody = {
   preferredContactMethod?: string;
   quoteRequested?: boolean;
   address?: string;
+  electricBillRange?: string;
   monthlyBill?: number;
+  ownsHome?: string;
   panelCount?: number;
   systemSizeKw?: number;
   annualSavings?: number;
@@ -45,16 +56,17 @@ type LeadBody = {
   selectedPanelBrand?: string;
   selectedPanelModel?: string;
   selectedPanelWatts?: number;
-  smsConsent?: boolean;
+  solarTimeline?: string;
   systemCostBeforeIncentives?: number;
+};
+
+type ExistingLeadMatch = {
+  id: string;
+  referral_code?: string | null;
 };
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const resendApiKey = process.env.RESEND_API_KEY?.trim();
-const ownerEmail = process.env.OWNER_EMAIL?.trim();
-const resendFromEmail =
-  process.env.RESEND_FROM_EMAIL?.trim() || "Arizona Solar AI <onboarding@resend.dev>";
 
 export async function POST(request: Request) {
   try {
@@ -89,9 +101,10 @@ export async function POST(request: Request) {
 
     const body = (await request.json()) as LeadBody;
     const name = formatName(body.name);
-    const email = body.email?.trim().toLowerCase();
-    const phone = body.phone?.trim();
+    const email = normalizeEmail(body.email);
+    const phone = normalizePhone(body.phone);
     const address = body.address?.trim();
+    const normalizedAddress = normalizeAddress(address);
     const quoteRequested = Boolean(body.quoteRequested);
     const preferredContactMethod = toNullableText(body.preferredContactMethod);
     const bestTimeToContact = toNullableText(body.bestTimeToContact);
@@ -115,7 +128,6 @@ export async function POST(request: Request) {
       body.utilityBillUploaded && verifiedUtilityBillPath
     );
     const batteryAdded = Boolean(body.batteryAdded);
-    const referralCode = createReferralCode();
     const referredBy = toNullableText(body.referredBy)?.toUpperCase() ?? null;
     const utilityBillFilePath = utilityBillUploaded
       ? verifiedUtilityBillPath
@@ -142,23 +154,30 @@ export async function POST(request: Request) {
         : null;
     const leadScore = calculateLeadScore({
       annualSavings: estimatedSavings,
+      completedReportRequest: quoteRequested || pdfGenerated,
       email,
       energyOffsetPct: body.energyOffsetPct,
+      electricBillRange: body.electricBillRange,
       monthlyBill,
       name,
+      ownsHome: body.ownsHome,
       panelCount,
       pdfDownloaded,
       pdfGenerated,
       phone,
+      preferredContactMethod,
       quoteRequested,
       roofAreaM2: body.roofAreaSqm,
       selectedPanelBrand: body.selectedPanelBrand,
       selectedPanelModel: body.selectedPanelModel,
       selectedPanelWatts: body.selectedPanelWatts,
       solarSuitabilityScore: body.solarSuitabilityScore,
+      solarTimeline: body.solarTimeline,
       systemSizeKw: body.systemSizeKw,
       twentyYearSavings,
       utilityBillUploaded,
+      usableRoofAreaM2: body.usableAreaSqm,
+      validResidentialAddress: Boolean(address && address.length >= 8),
     });
 
     if (
@@ -166,9 +185,7 @@ export async function POST(request: Request) {
       name.length < 2 ||
       !email ||
       !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
-      !phone ||
-      phone.replace(/\D/g, "").length < 10 ||
-      phone.replace(/\D/g, "").length > 15 ||
+      !isValidUsPhoneNumber(phone) ||
       !address ||
       address.length < 8 ||
       !Number.isFinite(monthlyBill) ||
@@ -184,12 +201,30 @@ export async function POST(request: Request) {
       );
     }
 
+    if (!email || !phone) {
+      return NextResponse.json(
+        { message: "Missing normalized contact information." },
+        { status: 400 }
+      );
+    }
+
+    const safeEmail: string = email;
+    const safePhone: string = phone;
+
     const supabase = createClient(supabaseUrl, supabaseServiceRoleKey, {
       auth: {
         persistSession: false,
         autoRefreshToken: false,
       },
     });
+    const existingLead = await findExistingLeadMatch(supabase, {
+      address,
+      normalizedAddress,
+      normalizedEmail: email,
+      normalizedPhone: phone,
+    });
+    const referralCode = existingLead?.referral_code ?? createReferralCode();
+    const now = new Date().toISOString();
 
     const baseInsert = {
       name,
@@ -203,6 +238,7 @@ export async function POST(request: Request) {
     const extendedInsert = {
       ...baseInsert,
       status: leadStatus,
+      updated_at: now,
       panel_count: toNullableInteger(body.panelCount),
       system_size_kw: toNullableNumber(body.systemSizeKw),
       annual_savings: toNullableNumber(body.annualSavings),
@@ -242,11 +278,15 @@ export async function POST(request: Request) {
       quote_requested_at: quoteRequested ? new Date().toISOString() : null,
       referral_code: referralCode,
       referred_by: referredBy,
-      sms_consent: Boolean(body.smsConsent),
+      report_pdf_url: null,
       solar_suitability_score: toNullableInteger(body.solarSuitabilityScore),
       twenty_year_savings: twentyYearSavings,
       utility_bill_file_path: null,
       utility_bill_uploaded: utilityBillUploaded,
+      updated_at: now,
+      normalized_email: email,
+      normalized_phone: phone,
+      normalized_address: normalizedAddress,
     };
 
     console.info("[lead-insert]", {
@@ -274,56 +314,36 @@ export async function POST(request: Request) {
             "battery_brand",
             "battery_cost",
             "battery_model",
+            "normalized_address",
+            "normalized_email",
+            "normalized_phone",
             "referral_code",
             "referred_by",
-            "sms_consent",
+            "report_pdf_url",
             "utility_bill_file_path",
           ].includes(key)
       )
     );
-    let insertResult = await supabase
-      .from("leads")
-      .insert(scoredInsert)
-      .select("id, name, email, address, monthly_bill, estimated_savings")
-      .single();
+    const saveResult = existingLead
+      ? await updateLeadRecord(
+          supabase,
+          existingLead.id,
+          scoredInsert,
+          scoredInsertWithoutNewOptionalFields,
+          extendedInsert,
+          baseInsert
+        )
+      : await insertLeadRecord(
+          supabase,
+          scoredInsert,
+          scoredInsertWithoutNewOptionalFields,
+          extendedInsert,
+          baseInsert
+        );
 
-    if (
-      insertResult.error &&
-      shouldRetryLegacyInsert(insertResult.error.message)
-    ) {
-      insertResult = await supabase
-        .from("leads")
-        .insert(scoredInsertWithoutNewOptionalFields)
-        .select("id, name, email, address, monthly_bill, estimated_savings")
-        .single();
-    }
-
-    if (insertResult.error && shouldRetryLegacyInsert(insertResult.error.message)) {
-      insertResult = await supabase
-        .from("leads")
-        .insert(extendedInsert)
-        .select("id, name, email, address, monthly_bill, estimated_savings")
-        .single();
-    }
-
-    if (insertResult.error && shouldRetryLegacyInsert(insertResult.error.message)) {
-      insertResult = await supabase
-        .from("leads")
-        .insert(baseInsert)
-        .select("id, name, email, address, monthly_bill, estimated_savings")
-        .single();
-    }
-
-    const { data, error } = insertResult;
+    const { data, error } = saveResult;
 
     if (error) {
-      if (error.code === "23505") {
-        return NextResponse.json(
-          { message: "This lead was already submitted." },
-          { status: 409 }
-        );
-      }
-
       return NextResponse.json(
         { message: error.message || "Unable to save the lead." },
         { status: 500 }
@@ -340,32 +360,34 @@ export async function POST(request: Request) {
         : null;
     const utilityBillStored = Boolean(finalizedUtilityBillPath);
 
-    await sendOwnerLeadEmail({
+    const reportUrl = buildReportPdfUrl(data.id, {
+      absolute: true,
+      download: true,
+      raw: true,
+    });
+    await saveReportPdfUrl(supabase, data.id, reportUrl);
+    const notificationResults = await sendLeadNotifications({
       address,
+      adminReportUrl: reportUrl,
       annualSavings: estimatedSavings,
-      email,
+      electricBillRange: toNullableText(body.electricBillRange),
+      email: safeEmail,
+      leadId: data.id,
       leadScoreLabel: leadScore.label,
       leadScoreValue: leadScore.score,
       monthlyBill,
       name,
       panelCount,
-      phone,
-      roiYears,
-      selectedInverterType: toNullableText(body.selectedInverterType),
-      selectedPanelBrand: toNullableText(body.selectedPanelBrand),
-      selectedPanelModel: toNullableText(body.selectedPanelModel),
-      selectedPanelWatts: toNullableInteger(body.selectedPanelWatts),
-      batteryAdded,
-      batteryBrand: batteryAdded ? toNullableText(body.batteryBrand) : null,
-      batteryCost: batteryAdded ? toNullableInteger(body.batteryCost) : null,
-      batteryModel: batteryAdded ? toNullableText(body.batteryModel) : null,
-      systemSizeKw: toNullableNumber(body.systemSizeKw),
-      utilityBillUploaded: utilityBillStored,
-      bestTimeToContact,
+      phone: safePhone,
       preferredContactMethod,
-      quoteNotes,
-      quoteRequested,
+      reportUrl,
+      solarTimeline: toNullableText(body.solarTimeline),
+      systemSizeKw: toNullableNumber(body.systemSizeKw),
     });
+
+    await saveNotificationStatus(supabase, data.id, notificationResults);
+
+    console.info("[lead-notifications]", notificationResults);
 
     return NextResponse.json({
       lead: {
@@ -379,7 +401,8 @@ export async function POST(request: Request) {
         leadScoreLabel: leadScore.label,
         quoteRequested,
         referralCode,
-        reportUrl: buildReportPdfPath(data.id),
+        reportUrl,
+        updatedExisting: Boolean(existingLead),
         utilityBillUploaded: utilityBillStored,
       },
     });
@@ -466,6 +489,54 @@ async function markUtilityBillUnavailable(
   }
 }
 
+async function saveNotificationStatus(
+  supabase: SupabaseClient,
+  leadId: string,
+  results: LeadNotificationSummary
+) {
+  const notificationStatus = buildNotificationStatus(results);
+  const { error } = await supabase
+    .from("leads")
+    .update({
+      email_error: resultError(results.homeownerEmail),
+      email_sent_at: results.homeownerEmail.sentAt ?? null,
+      notification_status: notificationStatus,
+    })
+    .eq("id", leadId);
+
+  if (!error) {
+    return;
+  }
+
+  if (shouldRetryLegacyInsert(error.message)) {
+    console.warn("[lead-notification-status-skipped]", error.message);
+    return;
+  }
+
+  console.error("[lead-notification-status]", error.message);
+}
+
+function buildNotificationStatus(results: LeadNotificationSummary) {
+  const email = resultStatus(results.homeownerEmail);
+
+  if (email === "sent") return "homeowner_email_sent";
+  if (email === "skipped") return "homeowner_email_skipped";
+
+  return "homeowner_email_failed";
+}
+
+function resultStatus(result: NotificationResult) {
+  if (result.ok) return "sent";
+  if (result.skipped) return "skipped";
+  return "failed";
+}
+
+function resultError(result: NotificationResult) {
+  if (result.ok) return null;
+
+  return result.error ?? result.reason ?? null;
+}
+
 function resolveUtilityBillUploadPath(uploadClaim?: string) {
   const claim = verifyUtilityBillUploadClaim(uploadClaim);
 
@@ -478,107 +549,6 @@ function resolveUtilityBillUploadPath(uploadClaim?: string) {
   }
 
   return null;
-}
-
-async function sendOwnerLeadEmail({
-  address,
-  annualSavings,
-  bestTimeToContact,
-  email,
-  leadScoreLabel,
-  leadScoreValue,
-  monthlyBill,
-  name,
-  panelCount,
-  phone,
-  roiYears,
-  preferredContactMethod,
-  quoteNotes,
-  quoteRequested,
-  selectedInverterType,
-  selectedPanelBrand,
-  selectedPanelModel,
-  selectedPanelWatts,
-  batteryAdded,
-  batteryBrand,
-  batteryCost,
-  batteryModel,
-  systemSizeKw,
-  utilityBillUploaded,
-}: {
-  address: string;
-  annualSavings: number;
-  bestTimeToContact: string | null;
-  email: string;
-  leadScoreLabel: string;
-  leadScoreValue: number;
-  monthlyBill: number;
-  name: string;
-  panelCount: number;
-  phone: string;
-  roiYears: number | null;
-  preferredContactMethod: string | null;
-  quoteNotes: string | null;
-  quoteRequested: boolean;
-  selectedInverterType: string | null;
-  selectedPanelBrand: string | null;
-  selectedPanelModel: string | null;
-  selectedPanelWatts: number | null;
-  batteryAdded: boolean;
-  batteryBrand: string | null;
-  batteryCost: number | null;
-  batteryModel: string | null;
-  systemSizeKw: number | null;
-  utilityBillUploaded: boolean;
-}) {
-  if (!resendApiKey || !ownerEmail) {
-    return;
-  }
-
-  try {
-    const city = address.split(",").map((part) => part.trim())[1] || "Arizona";
-    const resend = new Resend(resendApiKey);
-
-    await resend.emails.send({
-      from: resendFromEmail,
-      to: ownerEmail,
-      subject: `New solar lead - ${name} in ${city}`,
-      text: [
-        `Lead type: ${quoteRequested ? "Quote requested" : "Report requested"}`,
-        `Name: ${name}`,
-        `Address: ${formatDisplayAddress(address)}`,
-        `Email: ${email}`,
-        `Phone: ${phone}`,
-        `Preferred contact: ${preferredContactMethod ?? "Unavailable"}`,
-        `Best time to contact: ${bestTimeToContact ?? "Unavailable"}`,
-        `Monthly bill: $${Math.round(monthlyBill)}`,
-        `Annual savings: $${Math.round(annualSavings)}`,
-        `System: ${systemSizeKw ?? "Unavailable"} kW / ${panelCount} panels`,
-        `Panel: ${
-          selectedPanelBrand && selectedPanelModel
-            ? `${selectedPanelBrand} ${selectedPanelModel} ${selectedPanelWatts ?? ""}W`.trim()
-            : "Unavailable"
-        }`,
-        `Utility bill: ${
-          utilityBillUploaded
-            ? "Uploaded for quote review"
-            : "Not uploaded"
-        }`,
-        `Battery: ${
-          batteryAdded && batteryBrand && batteryModel
-            ? `${batteryBrand} ${batteryModel} - $${batteryCost ?? 0}`
-            : "None"
-        }`,
-        `Inverter: ${selectedInverterType ?? "Unavailable"}`,
-        `Quote notes: ${quoteNotes ?? "None"}`,
-        `ROI: ${roiYears ?? "Unavailable"} years`,
-        `Lead score: ${leadScoreValue}/100 - ${leadScoreLabel}`,
-        `Submitted: ${new Date().toISOString()}`,
-      ].join("\n"),
-    });
-  } catch (error) {
-    console.error("[owner-lead-email]", error);
-  }
 }
 
 function toNullableNumber(value: unknown) {
@@ -597,6 +567,205 @@ function toNullableText(value: unknown) {
 
 function createReferralCode() {
   return Math.random().toString(36).slice(2, 8).toUpperCase();
+}
+
+async function insertLeadRecord(
+  supabase: SupabaseClient,
+  scoredInsert: Record<string, unknown>,
+  scoredInsertWithoutNewOptionalFields: Record<string, unknown>,
+  extendedInsert: Record<string, unknown>,
+  baseInsert: Record<string, unknown>
+) {
+  let result = await supabase
+    .from("leads")
+    .insert(scoredInsert)
+    .select("id, name, email, address, monthly_bill, estimated_savings")
+    .single();
+
+  if (result.error && shouldRetryLegacyInsert(result.error.message)) {
+    result = await supabase
+      .from("leads")
+      .insert(scoredInsertWithoutNewOptionalFields)
+      .select("id, name, email, address, monthly_bill, estimated_savings")
+      .single();
+  }
+
+  if (result.error && shouldRetryLegacyInsert(result.error.message)) {
+    result = await supabase
+      .from("leads")
+      .insert(extendedInsert)
+      .select("id, name, email, address, monthly_bill, estimated_savings")
+      .single();
+  }
+
+  if (result.error && shouldRetryLegacyInsert(result.error.message)) {
+    result = await supabase
+      .from("leads")
+      .insert(baseInsert)
+      .select("id, name, email, address, monthly_bill, estimated_savings")
+      .single();
+  }
+
+  return result;
+}
+
+async function updateLeadRecord(
+  supabase: SupabaseClient,
+  leadId: string,
+  scoredInsert: Record<string, unknown>,
+  scoredInsertWithoutNewOptionalFields: Record<string, unknown>,
+  extendedInsert: Record<string, unknown>,
+  baseInsert: Record<string, unknown>
+) {
+  let result = await supabase
+    .from("leads")
+    .update(scoredInsert)
+    .eq("id", leadId)
+    .select("id, name, email, address, monthly_bill, estimated_savings")
+    .single();
+
+  if (result.error && shouldRetryLegacyInsert(result.error.message)) {
+    result = await supabase
+      .from("leads")
+      .update(scoredInsertWithoutNewOptionalFields)
+      .eq("id", leadId)
+      .select("id, name, email, address, monthly_bill, estimated_savings")
+      .single();
+  }
+
+  if (result.error && shouldRetryLegacyInsert(result.error.message)) {
+    result = await supabase
+      .from("leads")
+      .update(extendedInsert)
+      .eq("id", leadId)
+      .select("id, name, email, address, monthly_bill, estimated_savings")
+      .single();
+  }
+
+  if (result.error && shouldRetryLegacyInsert(result.error.message)) {
+    result = await supabase
+      .from("leads")
+      .update(baseInsert)
+      .eq("id", leadId)
+      .select("id, name, email, address, monthly_bill, estimated_savings")
+      .single();
+  }
+
+  return result;
+}
+
+async function findExistingLeadMatch(
+  supabase: SupabaseClient,
+  identifiers: {
+    address?: string | null;
+    normalizedAddress?: string | null;
+    normalizedEmail?: string | null;
+    normalizedPhone?: string | null;
+  }
+): Promise<ExistingLeadMatch | null> {
+  const byEmail = await findLeadByIdentifier(
+    supabase,
+    "normalized_email",
+    identifiers.normalizedEmail ?? null,
+    "email",
+    identifiers.normalizedEmail ?? null
+  );
+
+  if (byEmail) {
+    return byEmail;
+  }
+
+  const byPhone = await findLeadByIdentifier(
+    supabase,
+    "normalized_phone",
+    identifiers.normalizedPhone ?? null,
+    "phone",
+    identifiers.normalizedPhone ?? null
+  );
+
+  if (byPhone) {
+    return byPhone;
+  }
+
+  return findLeadByIdentifier(
+    supabase,
+    "normalized_address",
+    identifiers.normalizedAddress ?? null,
+    "address",
+    identifiers.address?.trim() ?? null
+  );
+}
+
+async function findLeadByIdentifier(
+  supabase: SupabaseClient,
+  normalizedColumn: "normalized_email" | "normalized_phone" | "normalized_address",
+  normalizedValue: string | null,
+  legacyColumn: "email" | "phone" | "address",
+  legacyValue: string | null
+): Promise<ExistingLeadMatch | null> {
+  if (!normalizedValue && !legacyValue) {
+    return null;
+  }
+
+  const select = "id, referral_code, created_at";
+
+  if (normalizedValue) {
+    const normalizedResult = await supabase
+      .from("leads")
+      .select(select)
+      .eq(normalizedColumn, normalizedValue)
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+    if (!normalizedResult.error && normalizedResult.data?.length) {
+      return normalizedResult.data[0] as ExistingLeadMatch;
+    }
+
+    if (
+      normalizedResult.error &&
+      !shouldRetryLegacyInsert(normalizedResult.error.message)
+    ) {
+      console.warn("[lead-dedupe-normalized]", normalizedResult.error.message);
+    }
+  }
+
+  if (!legacyValue) {
+    return null;
+  }
+
+  const legacyResult = await supabase
+    .from("leads")
+    .select(select)
+    .eq(legacyColumn, legacyValue)
+    .order("created_at", { ascending: false })
+    .limit(1);
+
+  if (legacyResult.error) {
+    console.warn("[lead-dedupe-legacy]", legacyResult.error.message);
+    return null;
+  }
+
+  return (legacyResult.data?.[0] as ExistingLeadMatch | undefined) ?? null;
+}
+
+async function saveReportPdfUrl(
+  supabase: SupabaseClient,
+  leadId: string,
+  reportUrl: string
+) {
+  const { error } = await supabase
+    .from("leads")
+    .update({
+      report_pdf_url: reportUrl,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", leadId);
+
+  if (!error || shouldRetryLegacyInsert(error.message)) {
+    return;
+  }
+
+  console.warn("[lead-report-pdf-url]", error.message);
 }
 
 function shouldRetryLegacyInsert(message: string) {

@@ -1,4 +1,4 @@
-export type FollowUpChannel = "email" | "sms";
+export type FollowUpChannel = "email" | "manual";
 export type FollowUpStatus = "queued" | "sent" | "scheduled" | "failed" | "skipped";
 
 export type FollowUpStep = {
@@ -52,9 +52,9 @@ export function createFollowUpSequence({
     },
     {
       stepOrder: 2,
-      channel: "sms",
+      channel: "manual",
       title: "24-hour follow-up",
-      message: `Check in with a short reminder about the ${savingsCopy}.`,
+      message: `Call or email the homeowner with a short reminder about the ${savingsCopy}.`,
       scheduledFor: addDays(baseDate, 1).toISOString(),
       status: "queued",
     },

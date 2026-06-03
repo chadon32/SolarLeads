@@ -1197,8 +1197,12 @@ function LeadScoreBadge({
   score: number;
 }) {
   const color =
-    label === "Hot Lead"
+    label === "Premium Lead"
+      ? "border-fuchsia-300/30 bg-fuchsia-300/18 text-fuchsia-50"
+      : label === "Hot Lead"
       ? "border-rose-300/25 bg-rose-300/16 text-rose-50"
+      : label === "Qualified Lead"
+        ? "border-emerald-300/25 bg-emerald-300/16 text-emerald-50"
       : label === "Warm Lead"
         ? "border-amber-300/25 bg-amber-300/16 text-amber-50"
         : "border-slate-300/18 bg-white/[0.08] text-slate-200";
@@ -1537,7 +1541,7 @@ function getUpdatedFollowUpSteps(
   const status = action === "first-follow-up-due" ? "queued" : "sent";
   const existing = steps.find((step) => step.stepOrder === stepOrder);
   const updatedStep: InstallerFollowUpStep = {
-    channel: existing?.channel ?? (stepOrder === 2 ? "sms" : "email"),
+    channel: existing?.channel ?? (stepOrder === 2 ? "manual" : "email"),
     deliveryMessage:
       action === "first-follow-up-due"
         ? existing?.deliveryMessage ?? null

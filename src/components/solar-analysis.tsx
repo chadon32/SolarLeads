@@ -10,7 +10,7 @@ import {
   type RoofQualityTone,
 } from "@/lib/solar-advisor";
 import { trackEvent } from "@/lib/analytics";
-import { type RoofGeoBounds, type RoofAnalysis } from "@/lib/roof-analysis";
+import { insetPolygon, type RoofGeoBounds, type RoofAnalysis } from "@/lib/roof-analysis";
 import {
   buildSolarMetrics,
   ARIZONA_AVG_RATE_PER_KWH,
@@ -76,6 +76,14 @@ type LayerVisibility = {
   panels: boolean;
   roofPlanes: boolean;
   sunlight: boolean;
+};
+
+type RoofVisualizationMode = "high" | "medium" | "low";
+
+type RoofModelConfidence = {
+  mode: RoofVisualizationMode;
+  score: number;
+  message: string;
 };
 
 type AnalysisMetrics = {
@@ -195,6 +203,13 @@ const DISPLAY_PANEL_WIDTH_METERS = 1.0;
 const PANEL_MODULE_GAP_METERS = 0.2032;
 const PANEL_COLLISION_EPSILON_METERS = 0.01;
 const PANEL_VISUAL_INSET_METERS = -0.04;
+const ROOF_EDGE_SETBACK_METERS = 0.91;
+const PANEL_ROW_GAP_METERS = 0.28;
+const HIGH_CONFIDENCE_PANEL_THRESHOLD = 80;
+const MEDIUM_CONFIDENCE_PANEL_THRESHOLD = 50;
+const VISUAL_ROOF_INSET_PERCENT = 1.8;
+const VISUAL_SEGMENT_INSET_PERCENT = 2.6;
+const VISUAL_USABLE_INSET_PERCENT = 4.8;
 const MIN_PANEL_PIXEL_WIDTH = 14;
 const MIN_PANEL_PIXEL_HEIGHT = 8;
 const PANEL_PIXEL_PADDING = 2;
@@ -632,7 +647,7 @@ export function SolarAnalysis({
                 <CompactMapStat
                   label="Panel layout"
                   source="Solar API"
-                  value={`${metrics.selectedPanelCount} modules`}
+                  value={`Up to ${metrics.selectedPanelCount} panels`}
                 />
                 <CompactMapStat
                   label="System size"
@@ -655,14 +670,17 @@ export function SolarAnalysis({
                   value={`${metrics.roiYears.toFixed(1)} yrs`}
                 />
               </div>
+              <div className="mt-3">
+                <ConfidenceReadouts roofData={roofData} />
+              </div>
               <div className="mt-3 rounded-[1rem] border border-white/10 bg-slate-950/62 p-3 text-xs leading-5 text-slate-200">
                 <p>
-                  Panels are placed from available Solar API candidate points and adjusted
-                  for visual spacing, estimated setbacks, and overlap prevention.
+                  High-confidence models show a clean sample panel layout. Lower-confidence
+                  models show estimated capacity without exact panel placement.
                 </p>
                 <p className="mt-2 text-slate-400">
-                  Panels are prioritized on roof planes with stronger sunlight, cleaner
-                  geometry, and fewer placement conflicts.
+                  Final layout may vary after installer review, roof measurements,
+                  fire setbacks, and electrical design.
                 </p>
                 {roofData.rejectedPanelCandidateCount ? (
                   <p className="mt-2 text-amber-100">
@@ -715,12 +733,15 @@ export function SolarAnalysis({
                   Preliminary roof model ready
                 </h3>
                 <p className="mt-3 text-sm leading-7 text-slate-300">
-                  Roof geometry and usable solar area are tied to the Google Solar building record returned for this property. Final design requires installer confirmation.
+                  Roof geometry and usable solar area are tied to the Google Solar building record returned for this property. Exact panel placement is shown only when the model confidence is high.
                 </p>
                 <div className="mt-4 flex flex-wrap gap-2">
                   <Pill label={`${roofData.confidence} confidence`} tone="cyan" />
                   <Pill label={`${roofData.rooftopConfidenceScore}/100 rooftop score`} />
                   <Pill label={`${metrics.orientationLabel} orientation`} />
+                </div>
+                <div className="mt-4">
+                  <ConfidenceReadouts roofData={roofData} />
                 </div>
                 <p className="mt-4 text-sm leading-6 text-slate-400">
                   {notice ?? roofData.confidenceNote}
@@ -745,7 +766,7 @@ export function SolarAnalysis({
                   Turn this preliminary model into a confirmed proposal.
                 </h3>
                 <p className="mt-3 text-sm leading-7 text-slate-300">
-                  Save the roof geometry, accepted panel count, and modeled economics into a preliminary estimate for installer review.
+                  Save the roof geometry, estimated panel capacity, and modeled economics into a preliminary estimate for installer review.
                 </p>
                 <div className="mt-5 grid gap-3">
                   <ButtonLink href="#contact" variant="primary" className="w-full">
@@ -877,6 +898,10 @@ function ViewportCanvas({
     [cameraTarget]
   );
   const center = cameraTarget.center ?? property;
+  const roofModelConfidence = useMemo(
+    () => getRoofModelConfidence(roofData),
+    [roofData]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -1072,6 +1097,7 @@ function ViewportCanvas({
           ...createSolarPanelOverlays({
             googleApi,
             map: mapRef.current,
+            roofModelConfidence,
             roofData,
             selectedPanelCount,
           })
@@ -1123,6 +1149,7 @@ function ViewportCanvas({
     layerVisibility,
     mapsApiKey,
     roofData,
+    roofModelConfidence,
     selectedPanelCount,
     solarMaskUrl,
     property,
@@ -1151,13 +1178,18 @@ function ViewportCanvas({
           <LayerControl
             layerVisibility={layerVisibility}
             onLayerVisibilityChange={onLayerVisibilityChange}
+            roofModelConfidence={roofModelConfidence}
           />
           <MapEvidenceOverlay
             layerVisibility={layerVisibility}
-            panelCount={Math.min(selectedPanelCount, getMaxSelectablePanelCount(roofData))}
+            panelCapacity={getMaxSelectablePanelCount(roofData)}
+            renderedPanelCount={getRenderablePanelCount(roofData, selectedPanelCount)}
+            roofModelConfidence={roofModelConfidence}
             systemKw={
               Math.round(
-                ((Math.min(selectedPanelCount, getMaxSelectablePanelCount(roofData)) *
+                (((roofModelConfidence.mode === "high"
+                  ? getRenderablePanelCount(roofData, selectedPanelCount)
+                  : getMaxSelectablePanelCount(roofData)) *
                   (selectedPanel?.watts ?? STANDARD_PANEL_WATTS)) /
                   1000) *
                   10
@@ -1219,41 +1251,53 @@ function loadGoogleMapsApi(apiKey: string) {
 function LayerControl({
   layerVisibility,
   onLayerVisibilityChange,
+  roofModelConfidence,
 }: {
   layerVisibility: LayerVisibility;
   onLayerVisibilityChange: (next: LayerVisibility) => void;
+  roofModelConfidence: RoofModelConfidence;
 }) {
   const toggles: Array<{
     id: keyof LayerVisibility;
     label: string;
+    disabled?: boolean;
   }> = [
-    { id: "panels", label: "Panels" },
+    {
+      disabled: roofModelConfidence.mode !== "high",
+      id: "panels",
+      label: roofModelConfidence.mode === "high" ? "Panels" : "Exact panels",
+    },
     { id: "sunlight", label: "Sunlight quality" },
     { id: "roofPlanes", label: "Roof planes" },
   ];
 
   return (
-    <div className="pointer-events-auto absolute right-3 top-3 z-20 max-w-[calc(100%-1.5rem)] rounded-[0.9rem] border border-white/20 bg-slate-950/54 p-2 shadow-[0_10px_24px_rgba(2,8,20,0.22)] backdrop-blur-md">
-      <p className="px-1 text-[0.5rem] font-bold uppercase tracking-[0.22em] text-cyan-100/80">
+    <div className="pointer-events-auto absolute right-2 top-2 z-20 w-[9.75rem] max-w-[calc(100%-1rem)] rounded-[0.9rem] border border-white/20 bg-slate-950/68 p-2 shadow-[0_10px_24px_rgba(2,8,20,0.24)] backdrop-blur-md sm:right-3 sm:top-3 sm:w-auto">
+      <p className="px-1 text-[0.62rem] font-bold uppercase tracking-[0.18em] text-cyan-100/86">
         Layers
       </p>
       <div className="mt-2 grid gap-1.5">
         {toggles.map((toggle) => (
           <label
             key={toggle.id}
-            className="flex cursor-pointer items-center justify-between gap-3 rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1.5 text-[0.62rem] font-semibold text-white/80"
+            className={`flex items-center justify-between gap-2 rounded-full border border-white/10 px-2.5 py-2 text-[0.68rem] font-semibold ${
+              toggle.disabled
+                ? "cursor-not-allowed bg-white/[0.025] text-white/38"
+                : "cursor-pointer bg-white/[0.05] text-white/86"
+            }`}
           >
             <span>{toggle.label}</span>
             <input
               type="checkbox"
-              checked={layerVisibility[toggle.id]}
+              checked={toggle.disabled ? false : layerVisibility[toggle.id]}
+              disabled={toggle.disabled}
               onChange={(event) =>
                 onLayerVisibilityChange({
                   ...layerVisibility,
                   [toggle.id]: event.target.checked,
                 })
               }
-              className="h-3.5 w-3.5 accent-cyan-300"
+              className="h-4 w-4 shrink-0 accent-cyan-300"
             />
           </label>
         ))}
@@ -1264,36 +1308,48 @@ function LayerControl({
 
 function MapEvidenceOverlay({
   layerVisibility,
-  panelCount,
+  panelCapacity,
   panelLabel,
+  renderedPanelCount,
+  roofModelConfidence,
   systemKw,
 }: {
   layerVisibility: LayerVisibility;
-  panelCount: number;
+  panelCapacity: number;
   panelLabel?: string | null;
+  renderedPanelCount: number;
+  roofModelConfidence: RoofModelConfidence;
   systemKw: number;
 }) {
+  const panelBadge =
+    roofModelConfidence.mode === "high" && renderedPanelCount > 0
+      ? `${renderedPanelCount} panel sample layout \u00b7 ${systemKw.toFixed(1)} kW`
+      : `Estimated capacity: up to ${panelCapacity} panels \u00b7 ${systemKw.toFixed(1)} kW`;
+
   return (
     <>
-      <div className="pointer-events-none absolute left-3 top-3 z-10 flex max-w-[calc(100%-1.5rem)] flex-wrap items-center gap-1.5">
-        <span className="rounded-full border border-white/10 bg-slate-950/35 px-2.5 py-1.5 text-[0.58rem] font-semibold uppercase tracking-[0.16em] text-cyan-100/90 shadow-none backdrop-blur-[2px]">
+      <div className="pointer-events-none absolute left-2 top-2 z-10 flex max-w-[calc(100%-11rem)] flex-wrap items-center gap-1.5 sm:left-3 sm:top-3 sm:max-w-[calc(100%-1.5rem)]">
+        <span className="rounded-full border border-white/10 bg-slate-950/58 px-2.5 py-1.5 text-[0.66rem] font-semibold uppercase tracking-[0.12em] text-cyan-100/95 shadow-none backdrop-blur-[2px]">
           Google Solar API roof model
         </span>
-        <span className="rounded-full border border-white/10 bg-slate-950/55 px-2.5 py-1.5 text-[0.58rem] font-semibold uppercase tracking-[0.12em] text-white/90 shadow-none backdrop-blur-[2px]">
-          {panelCount} panels {"\u00b7"} {systemKw.toFixed(1)} kW
+        <span className="rounded-full border border-white/10 bg-slate-950/62 px-2.5 py-1.5 text-[0.66rem] font-semibold uppercase tracking-[0.1em] text-white/95 shadow-none backdrop-blur-[2px]">
+          {panelBadge}
+        </span>
+        <span className="hidden rounded-full border border-white/10 bg-slate-950/62 px-2.5 py-1.5 text-[0.66rem] font-semibold uppercase tracking-[0.1em] text-white/95 shadow-none backdrop-blur-[2px] sm:inline-flex">
+          Roof model confidence {roofModelConfidence.score}/100
         </span>
         {panelLabel ? (
-          <span className="rounded-full border border-white/10 bg-slate-950/55 px-2.5 py-1.5 text-[0.58rem] font-semibold uppercase tracking-[0.1em] text-white/90 shadow-none backdrop-blur-[2px]">
+          <span className="hidden rounded-full border border-white/10 bg-slate-950/62 px-2.5 py-1.5 text-[0.66rem] font-semibold uppercase tracking-[0.08em] text-white/95 shadow-none backdrop-blur-[2px] sm:inline-flex">
             {panelLabel}
           </span>
         ) : null}
       </div>
-      <div className="pointer-events-none absolute bottom-8 left-3 z-10 max-w-[min(15rem,calc(100%-1.5rem))] rounded-[0.85rem] border border-white/30 bg-white/68 p-2.5 text-[0.66rem] font-medium text-slate-900 shadow-[0_8px_18px_rgba(15,23,42,0.16)] backdrop-blur-md sm:bottom-3">
+      <div className="pointer-events-none absolute bottom-8 left-2 z-10 max-w-[min(16rem,calc(100%-1rem))] rounded-[0.85rem] border border-white/30 bg-white/76 p-2.5 text-[0.72rem] font-medium text-slate-900 shadow-[0_8px_18px_rgba(15,23,42,0.16)] backdrop-blur-md sm:bottom-3 sm:left-3">
         <div className="flex items-center justify-between gap-2 border-b border-slate-900/10 pb-1.5">
-          <p className="text-[0.5rem] font-bold uppercase tracking-[0.22em] text-slate-700">
+          <p className="text-[0.58rem] font-bold uppercase tracking-[0.18em] text-slate-700">
             Legend
           </p>
-          <span className="rounded-full bg-cyan-300/65 px-1.5 py-0.5 text-[0.46rem] font-bold uppercase tracking-[0.16em] text-slate-950">
+          <span className="rounded-full bg-cyan-300/65 px-1.5 py-0.5 text-[0.54rem] font-bold uppercase tracking-[0.12em] text-slate-950">
             Solar API
           </span>
         </div>
@@ -1301,7 +1357,7 @@ function MapEvidenceOverlay({
           {layerVisibility.roofPlanes ? (
             <>
               <LegendItem swatch="border border-cyan-500 bg-cyan-300/30" label="Roof plane - usable solar area" />
-              <LegendItem swatch="border border-amber-500 bg-amber-300/35" label="Setback - required edge buffer" />
+              <LegendItem swatch="border border-amber-500/70 bg-amber-300/15" label="Setback - required edge buffer" />
               <LegendItem swatch="bg-slate-700/70" label="Unavailable - shaded or obstructed" />
             </>
           ) : null}
@@ -1313,9 +1369,18 @@ function MapEvidenceOverlay({
             </>
           ) : null}
           {layerVisibility.panels ? (
-            <LegendItem swatch="border border-white bg-blue-500/75" label="Blue - accepted panels" />
+            roofModelConfidence.mode === "high" ? (
+              <LegendItem swatch="border border-white bg-blue-500/75" label="Blue - sample panel layout" />
+            ) : (
+              <LegendItem swatch="border border-slate-500 bg-slate-500/30" label="Panel placement requires installer verification" />
+            )
           ) : null}
         </div>
+        {roofModelConfidence.mode !== "high" ? (
+          <p className="mt-2 border-t border-slate-900/10 pt-2 text-[0.68rem] leading-4 text-slate-700">
+            {roofModelConfidence.message}
+          </p>
+        ) : null}
       </div>
     </>
   );
@@ -1561,7 +1626,11 @@ function createRoofFootprintOverlay({
   map: GoogleMapInstance;
   roofData: RoofAnalysis;
 }) {
-  const path = outlineToLatLngPath(googleApi, roofData.roofOutline, roofData.roofBounds);
+  const path = outlineToLatLngPath(
+    googleApi,
+    getVisualRoofOutline(roofData.roofOutline),
+    roofData.roofBounds
+  );
 
   if (path.length < 3) {
     return null;
@@ -1590,7 +1659,11 @@ function createRoofSegmentOverlays({
 }) {
   return roofData.roofSegments
     .map((segment, index) => {
-      const path = outlineToLatLngPath(googleApi, segment.outline, roofData.roofBounds);
+      const path = outlineToLatLngPath(
+        googleApi,
+        getVisualRoofOutline(segment.outline, VISUAL_SEGMENT_INSET_PERCENT),
+        roofData.roofBounds
+      );
 
       if (path.length < 3) {
         return null;
@@ -1599,12 +1672,12 @@ function createRoofSegmentOverlays({
       return new googleApi.maps.Polygon({
         clickable: false,
         fillColor: index === 0 ? "#38bdf8" : "#fbbf24",
-        fillOpacity: index === 0 ? 0.08 : 0.05,
+        fillOpacity: index === 0 ? 0.055 : 0.035,
         map,
         paths: path,
         strokeColor: index === 0 ? "#e0f2fe" : "#fde68a",
-        strokeOpacity: 0.72,
-        strokeWeight: 1,
+        strokeOpacity: 0.82,
+        strokeWeight: 1.25,
       });
     })
     .filter((overlay): overlay is GoogleMapOverlayInstance => Boolean(overlay));
@@ -1619,7 +1692,11 @@ function createSetbackOverlay({
   map: GoogleMapInstance;
   roofData: RoofAnalysis;
 }) {
-  const path = outlineToLatLngPath(googleApi, roofData.usableOutline, roofData.roofBounds);
+  const path = outlineToLatLngPath(
+    googleApi,
+    getVisualRoofOutline(roofData.usableOutline, VISUAL_USABLE_INSET_PERCENT),
+    roofData.roofBounds
+  );
 
   if (path.length < 3) {
     return null;
@@ -1631,8 +1708,8 @@ function createSetbackOverlay({
     map,
     paths: path,
     strokeColor: "#fbbf24",
-    strokeOpacity: 0.62,
-    strokeWeight: 1,
+    strokeOpacity: 0.32,
+    strokeWeight: 0.8,
   });
 }
 
@@ -1750,6 +1827,28 @@ function getSunlightQualityMapColors(tone: RoofQualityTone) {
 }
 
 function getRoofHeatmapClipPolygons(roofData: RoofAnalysis) {
+  const segmentOutlinePolygons = roofData.roofSegments
+    .map((segment) =>
+      outlineToLatLngPoints(
+        getVisualRoofOutline(segment.outline, VISUAL_SEGMENT_INSET_PERCENT),
+        roofData.roofBounds
+      )
+    )
+    .filter((polygon) => polygon.length >= 3);
+
+  if (segmentOutlinePolygons.length) {
+    return segmentOutlinePolygons;
+  }
+
+  const usablePolygon = outlineToLatLngPoints(
+    getVisualRoofOutline(roofData.usableOutline, VISUAL_USABLE_INSET_PERCENT),
+    roofData.roofBounds
+  );
+
+  if (usablePolygon.length >= 3) {
+    return [usablePolygon];
+  }
+
   const segmentBoundsPolygons = roofData.roofSegments
     .map((segment) => boundsToLatLngPoints(segment.bounds))
     .filter((polygon) => polygon.length >= 3);
@@ -1758,32 +1857,39 @@ function getRoofHeatmapClipPolygons(roofData: RoofAnalysis) {
     return segmentBoundsPolygons;
   }
 
-  const usablePolygon = outlineToLatLngPoints(
-    roofData.usableOutline,
+  const roofPolygon = outlineToLatLngPoints(
+    getVisualRoofOutline(roofData.roofOutline),
     roofData.roofBounds
   );
 
-  if (usablePolygon.length >= 3) {
-    return [usablePolygon];
-  }
-
-  const roofPolygon = outlineToLatLngPoints(roofData.roofOutline, roofData.roofBounds);
-
   return roofPolygon.length >= 3 ? [roofPolygon] : [];
+}
+
+function getVisualRoofOutline(
+  outline: RoofAnalysis["roofOutline"],
+  insetPercent = VISUAL_ROOF_INSET_PERCENT
+) {
+  return outline.length >= 3 ? insetPolygon(outline, insetPercent) : outline;
 }
 
 function createSolarPanelOverlays({
   googleApi,
   map,
+  roofModelConfidence,
   roofData,
   selectedPanelCount,
 }: {
   googleApi: GoogleMapsApi;
   map: GoogleMapInstance;
+  roofModelConfidence: RoofModelConfidence;
   roofData: RoofAnalysis;
   selectedPanelCount: number;
 }) {
-  const placements = buildProfessionalPanelLayout({
+  if (roofModelConfidence.mode !== "high") {
+    return [];
+  }
+
+  const placements = buildStoredAcceptedPanelPlacements({
     roofData,
     selectedPanelCount,
   });
@@ -2079,41 +2185,50 @@ type MeterPoint = {
   y: number;
 };
 
-function buildProfessionalPanelLayout({
+function getRenderablePanelCount(roofData: RoofAnalysis, selectedPanelCount: number) {
+  if (!shouldShowDetailedPanelPlacement(roofData)) {
+    return 0;
+  }
+
+  return Math.min(
+    Math.max(0, Math.round(selectedPanelCount)),
+    roofData.solarPanels.length
+  );
+}
+
+function buildStoredAcceptedPanelPlacements({
   roofData,
   selectedPanelCount,
 }: {
   roofData: RoofAnalysis;
   selectedPanelCount: number;
 }): PanelLayoutPlacement[] {
-  const targetCount = clampNumber(
-    selectedPanelCount,
-    0,
-    roofData.solarPanels.length
-  );
+  if (!shouldShowDetailedPanelPlacement(roofData)) {
+    return [];
+  }
+
   const origin =
     getRoofBoundsCenter(roofData.roofBounds) ??
     roofData.solarPanels[0]?.center ??
     null;
+  const targetCount = getRenderablePanelCount(roofData, selectedPanelCount);
 
   if (!origin || targetCount <= 0) {
     return [];
   }
 
-  const placedPanels: PanelLayoutPlacement[] = [];
-  const orderedPanels = getOrderedPanelCandidates(roofData);
+  const placements: PanelLayoutPlacement[] = [];
+  const orderedPanels = getOrderedPanelCandidates(roofData).slice(0, targetCount);
 
   for (const panel of orderedPanels) {
     const segment = roofData.roofSegments[panel.segmentIndex];
-    if (!isPanelCenterInRoofSegment(panel, roofData)) {
+
+    if (!segment || !segment.usable || !isValidLatLngPoint(panel.center)) {
       continue;
     }
 
-    const azimuth = Number.isFinite(panel.azimuthDeg)
-      ? panel.azimuthDeg
-      : segment?.azimuthDeg ?? roofData.primaryRoofAzimuth;
-    const rotationDeg = inferPanelRotationDeg(panel, orderedPanels, azimuth);
-    const boundary = getPanelBoundaryPolygon(panel, roofData);
+    const rotationDeg = normalizeDegrees(segment.azimuthDeg - 90);
+    const boundary = getSegmentUsableBoundary(segment, roofData);
     const displayPath = buildPanelCornerPoints({
       centerLat: panel.center.lat,
       centerLng: panel.center.lng,
@@ -2126,44 +2241,640 @@ function buildProfessionalPanelLayout({
 
     if (
       !isPanelInsideBoundary(displayPath, boundary) ||
-      !isPanelPathInsideBounds(displayPath, segment?.bounds ?? null)
+      !isPanelPathInsideBounds(displayPath, segment.bounds)
     ) {
       continue;
     }
 
-    const collisionPathMeters = buildPanelCornerPoints({
-      centerLat: panel.center.lat,
-      centerLng: panel.center.lng,
-      dimensionAdjustmentMeters: PANEL_MODULE_GAP_METERS,
-      orientation: panel.orientation,
-      panelHeightMeters: DISPLAY_PANEL_HEIGHT_METERS,
-      panelWidthMeters: DISPLAY_PANEL_WIDTH_METERS,
-      rotationDeg,
-    }).map((point) => latLngToLocalMeters(point, origin));
-    const hasCollision = placedPanels.some((placedPanel) =>
-      convexPolygonsOverlap(
-        collisionPathMeters,
-        placedPanel.collisionPathMeters,
-        PANEL_COLLISION_EPSILON_METERS
-      )
-    );
-
-    if (hasCollision) {
-      continue;
-    }
-
-    placedPanels.push({
-      collisionPathMeters,
+    placements.push({
+      collisionPathMeters: buildPanelCornerPoints({
+        centerLat: panel.center.lat,
+        centerLng: panel.center.lng,
+        dimensionAdjustmentMeters: PANEL_MODULE_GAP_METERS,
+        orientation: panel.orientation,
+        panelHeightMeters: DISPLAY_PANEL_HEIGHT_METERS,
+        panelWidthMeters: DISPLAY_PANEL_WIDTH_METERS,
+        rotationDeg,
+      }).map((point) => latLngToLocalMeters(point, origin)),
       displayPath,
       panel,
     });
+  }
 
+  return placements;
+}
+
+function buildProfessionalPanelLayout({
+  roofData,
+  selectedPanelCount,
+}: {
+  roofData: RoofAnalysis;
+  selectedPanelCount: number;
+}): PanelLayoutPlacement[] {
+  if (!shouldShowDetailedPanelPlacement(roofData)) {
+    return [];
+  }
+
+  const targetCount = clampNumber(
+    selectedPanelCount,
+    0,
+    getPanelLayoutCapacity(roofData)
+  );
+  const origin =
+    getRoofBoundsCenter(roofData.roofBounds) ??
+    roofData.solarPanels[0]?.center ??
+    null;
+
+  if (!origin || targetCount <= 0) {
+    return [];
+  }
+
+  const placedPanels: PanelLayoutPlacement[] = [];
+  const orderedPanels = getOrderedPanelCandidates(roofData);
+  const panelTargets = allocatePanelTargetsBySegment(roofData, targetCount);
+
+  for (const [segmentIndex, segmentTarget] of panelTargets) {
     if (placedPanels.length >= targetCount) {
       break;
     }
+
+    const segment = roofData.roofSegments[segmentIndex];
+    if (!segment || !segment.usable || segmentTarget <= 0) {
+      continue;
+    }
+
+    const segmentCandidates = orderedPanels.filter(
+      (panel) => panel.segmentIndex === segmentIndex
+    );
+    const segmentPlacements = buildRowBasedSegmentLayout({
+      origin,
+      placedPanels,
+      roofData,
+      segment,
+      segmentCandidates,
+      segmentIndex,
+      targetCount: Math.min(segmentTarget, targetCount - placedPanels.length),
+    });
+
+    placedPanels.push(...segmentPlacements);
   }
 
-  return placedPanels;
+  return placedPanels.slice(0, targetCount);
+}
+
+function shouldShowDetailedPanelPlacement(roofData: RoofAnalysis) {
+  return getRoofModelConfidence(roofData).mode === "high";
+}
+
+function shouldHidePanelPlacement(roofData: RoofAnalysis) {
+  return !shouldShowDetailedPanelPlacement(roofData);
+}
+
+function hasUsablePanelSegments(roofData: RoofAnalysis) {
+  const hasUsableSegments = roofData.roofSegments.some(
+    (segment) =>
+      segment.usable &&
+      segment.panelsFit > 0 &&
+      outlineToLatLngPoints(segment.outline, roofData.roofBounds).length >= 3
+  );
+
+  return hasUsableSegments;
+}
+
+function getRoofModelConfidence(roofData: RoofAnalysis): RoofModelConfidence {
+  if (!roofData.validSite || !roofData.rooftopDetected) {
+    return {
+      message: "Final panel placement requires installer verification.",
+      mode: "low",
+      score: 0,
+    };
+  }
+
+  const score = clampNumber(
+    Math.round(
+      getPolygonQualityScore(roofData) * 0.18 +
+        getRoofPlaneSizeScore(roofData) * 0.14 +
+        getRoofPlaneShapeScore(roofData) * 0.14 +
+        getPanelPlacementConsistencyScore(roofData) * 0.2 +
+        getAvailableUsableAreaScore(roofData) * 0.12 +
+        getObstructionConfidenceScore(roofData) * 0.1 +
+        getPanelRowAlignmentScore(roofData) * 0.16 +
+        clampNumber(roofData.rooftopConfidenceScore, 0, 100) * 0.12
+    ),
+    0,
+    100
+  );
+  const mode: RoofVisualizationMode =
+    score >= HIGH_CONFIDENCE_PANEL_THRESHOLD
+      ? "high"
+      : score >= MEDIUM_CONFIDENCE_PANEL_THRESHOLD
+        ? "medium"
+        : "low";
+
+  return {
+    message:
+      mode === "high"
+        ? "Clean panel layout rendered from high-confidence roof geometry."
+        : mode === "medium"
+          ? "Estimated capacity shown; final panel placement requires installer verification."
+          : "Final panel placement requires installer verification.",
+    mode,
+    score,
+  };
+}
+
+function getPolygonQualityScore(roofData: RoofAnalysis) {
+  let score = 0;
+
+  if (roofData.roofBounds) score += 22;
+  if (roofData.roofOutline.length >= 4) score += 28;
+  if (roofData.usableOutline.length >= 4) score += 18;
+  if (hasUsablePanelSegments(roofData)) score += 18;
+  if (roofData.source === "solar-api") score += 14;
+
+  return clampNumber(score, 0, 100);
+}
+
+function getRoofPlaneSizeScore(roofData: RoofAnalysis) {
+  const usableSegments = roofData.roofSegments.filter(
+    (segment) => segment.usable && segment.areaM2 > 0
+  );
+
+  if (!usableSegments.length) return 0;
+
+  const totalUsableSegmentArea = usableSegments.reduce(
+    (sum, segment) => sum + segment.areaM2,
+    0
+  );
+  const largestSegmentArea = Math.max(...usableSegments.map((segment) => segment.areaM2));
+  const areaScore = clampNumber((totalUsableSegmentArea / 70) * 62, 0, 62);
+  const largestPlaneScore = clampNumber((largestSegmentArea / 32) * 24, 0, 24);
+  const planeCountScore = clampNumber(usableSegments.length * 7, 0, 14);
+
+  return Math.round(areaScore + largestPlaneScore + planeCountScore);
+}
+
+function getRoofPlaneShapeScore(roofData: RoofAnalysis) {
+  const usableSegments = roofData.roofSegments.filter((segment) => segment.usable);
+
+  if (!usableSegments.length) return 0;
+
+  const scores = usableSegments.map((segment) => {
+    const outlinePoints = outlineToLatLngPoints(segment.outline, roofData.roofBounds);
+    const boundsPoints = boundsToLatLngPoints(segment.bounds);
+    const shapePoints = outlinePoints.length >= 3 ? outlinePoints : boundsPoints;
+
+    if (shapePoints.length < 3) return 20;
+
+    const localPoints = shapePoints.map((point) =>
+      latLngToLocalMeters(point, shapePoints[0])
+    );
+    const bounds = getMeterBounds(localPoints);
+    const width = Math.max(0, bounds.maxX - bounds.minX);
+    const height = Math.max(0, bounds.maxY - bounds.minY);
+    const aspect = Math.max(width, height) / Math.max(Math.min(width, height), 0.1);
+    const aspectScore = aspect <= 4 ? 44 : aspect <= 6 ? 30 : 16;
+    const vertexScore = shapePoints.length >= 4 && shapePoints.length <= 8 ? 34 : 22;
+    const areaScore = segment.areaM2 >= 12 ? 22 : 10;
+
+    return aspectScore + vertexScore + areaScore;
+  });
+
+  return Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length);
+}
+
+function getPanelPlacementConsistencyScore(roofData: RoofAnalysis) {
+  const panels = roofData.solarPanels;
+
+  if (!panels.length) {
+    return roofData.panelCount > 0 ? 46 : 0;
+  }
+
+  const bySegment = groupPanelsBySegment(panels);
+  const segmentScores = [...bySegment.entries()].map(([segmentIndex, segmentPanels]) => {
+    const segment = roofData.roofSegments[segmentIndex];
+
+    if (!segment || !segment.usable || !segmentPanels.length) return 0;
+
+    const dominantOrientation = getDominantPanelOrientation(segmentPanels);
+    const matchingOrientationPct =
+      segmentPanels.filter((panel) => panel.orientation === dominantOrientation).length /
+      segmentPanels.length;
+    const azimuthMatches = segmentPanels.filter(
+      (panel) => angularDistance(panel.azimuthDeg, segment.azimuthDeg) <= 18
+    ).length;
+    const rowIndexedPct =
+      segmentPanels.filter(
+        (panel) => panel.rowIndex !== null && panel.columnIndex !== null
+      ).length / segmentPanels.length;
+
+    return Math.round(
+      matchingOrientationPct * 36 +
+        (azimuthMatches / segmentPanels.length) * 32 +
+        rowIndexedPct * 32
+    );
+  });
+
+  if (!segmentScores.length) return 0;
+
+  return Math.round(segmentScores.reduce((sum, score) => sum + score, 0) / segmentScores.length);
+}
+
+function getAvailableUsableAreaScore(roofData: RoofAnalysis) {
+  const areaScore = clampNumber((roofData.usableRoofAreaM2 / 55) * 70, 0, 70);
+  const pctScore = clampNumber(roofData.usablePctRoof, 0, 100) * 0.3;
+
+  return Math.round(areaScore + pctScore);
+}
+
+function getObstructionConfidenceScore(roofData: RoofAnalysis) {
+  if (!roofData.obstructionOutlines.length) {
+    return roofData.source === "solar-api" ? 82 : 62;
+  }
+
+  const validObstructions = roofData.obstructionOutlines.filter(
+    (outline) => outlineToLatLngPoints(outline, roofData.roofBounds).length >= 3
+  ).length;
+  const validPct = validObstructions / roofData.obstructionOutlines.length;
+
+  return Math.round(48 + validPct * 42);
+}
+
+function getPanelRowAlignmentScore(roofData: RoofAnalysis) {
+  if (!hasUsablePanelSegments(roofData) || !roofData.roofBounds) {
+    return 0;
+  }
+
+  const capacity = getPanelLayoutCapacity(roofData);
+  const target = Math.min(
+    capacity,
+    Math.max(roofData.solarPanels.length, roofData.acceptedPanelCount ?? 0, roofData.panelCount)
+  );
+
+  if (target <= 0) return 0;
+
+  const origin = getRoofBoundsCenter(roofData.roofBounds) ?? roofData.solarPanels[0]?.center;
+
+  if (!origin) return 0;
+
+  const targetBySegment = allocatePanelTargetsBySegment(roofData, target);
+  let possibleRows = 0;
+  let possiblePanels = 0;
+
+  for (const [segmentIndex, segmentTarget] of targetBySegment) {
+    const segment = roofData.roofSegments[segmentIndex];
+    if (!segment || !segment.usable) continue;
+
+    const boundary = getSegmentUsableBoundary(segment, roofData);
+    if (boundary.length < 3) continue;
+
+    const rotationDeg = normalizeDegrees(segment.azimuthDeg - 90);
+    const axes = getPanelLayoutAxes(rotationDeg);
+    const localBoundary = boundary.map((point) => latLngToLocalMeters(point, origin));
+    const planeBounds = getMeterBounds(
+      localBoundary.map((point) => meterPointToPlaneCoords(point, axes))
+    );
+    const rowCapacity = buildCenteredAxisValues(
+      planeBounds.minY + ROOF_EDGE_SETBACK_METERS + DISPLAY_PANEL_HEIGHT_METERS / 2,
+      planeBounds.maxY - ROOF_EDGE_SETBACK_METERS - DISPLAY_PANEL_HEIGHT_METERS / 2,
+      DISPLAY_PANEL_HEIGHT_METERS + PANEL_ROW_GAP_METERS
+    ).length;
+    const colCapacity = buildCenteredAxisValues(
+      planeBounds.minX + ROOF_EDGE_SETBACK_METERS + DISPLAY_PANEL_WIDTH_METERS / 2,
+      planeBounds.maxX - ROOF_EDGE_SETBACK_METERS - DISPLAY_PANEL_WIDTH_METERS / 2,
+      DISPLAY_PANEL_WIDTH_METERS + PANEL_MODULE_GAP_METERS
+    ).length;
+
+    possibleRows += Math.max(0, rowCapacity);
+    possiblePanels += Math.max(0, rowCapacity * colCapacity, segmentTarget);
+  }
+
+  const panelFitScore = clampNumber((possiblePanels / Math.max(target, 1)) * 68, 0, 68);
+  const rowScore = clampNumber(possibleRows * 8, 0, 32);
+
+  return Math.round(panelFitScore + rowScore);
+}
+
+function groupPanelsBySegment(panels: RoofAnalysis["solarPanels"]) {
+  return panels.reduce<Map<number, RoofAnalysis["solarPanels"]>>((groups, panel) => {
+    const current = groups.get(panel.segmentIndex) ?? [];
+    current.push(panel);
+    groups.set(panel.segmentIndex, current);
+    return groups;
+  }, new Map());
+}
+
+function angularDistance(left: number, right: number) {
+  const delta = Math.abs(normalizeDegrees(left) - normalizeDegrees(right));
+  return Math.min(delta, 360 - delta);
+}
+
+function getPanelLayoutCapacity(roofData: RoofAnalysis) {
+  const segmentCapacity = roofData.roofSegments
+    .filter((segment) => segment.usable)
+    .reduce((sum, segment) => sum + Math.max(0, segment.panelsFit), 0);
+
+  return Math.max(
+    roofData.solarPanels.length,
+    roofData.acceptedPanelCount ?? 0,
+    roofData.panelCount,
+    segmentCapacity
+  );
+}
+
+function allocatePanelTargetsBySegment(roofData: RoofAnalysis, targetCount: number) {
+  const usableSegments = roofData.roofSegments
+    .map((segment, index) => ({
+      capacity: Math.max(
+        0,
+        segment.panelsFit || Math.floor(segment.areaM2 / 2.1)
+      ),
+      index,
+      segment,
+    }))
+    .filter((entry) => entry.segment.usable && entry.capacity > 0)
+    .sort(
+      (left, right) =>
+        right.capacity - left.capacity ||
+        right.segment.areaM2 - left.segment.areaM2 ||
+        left.index - right.index
+    );
+
+  if (!usableSegments.length || targetCount <= 0) {
+    return new Map<number, number>();
+  }
+
+  const totalCapacity = usableSegments.reduce(
+    (sum, entry) => sum + entry.capacity,
+    0
+  );
+  const allocations = usableSegments.map((entry) => {
+    const exactShare = (targetCount * entry.capacity) / Math.max(totalCapacity, 1);
+    const baseCount = Math.min(entry.capacity, Math.floor(exactShare));
+
+    return {
+      ...entry,
+      count: baseCount,
+      remainder: exactShare - baseCount,
+    };
+  });
+  let remaining = targetCount - allocations.reduce((sum, entry) => sum + entry.count, 0);
+
+  for (const entry of [...allocations].sort((left, right) => right.remainder - left.remainder)) {
+    if (remaining <= 0) {
+      break;
+    }
+
+    const add = Math.min(remaining, entry.capacity - entry.count);
+    entry.count += add;
+    remaining -= add;
+  }
+
+  return new Map(
+    allocations
+      .filter((entry) => entry.count > 0)
+      .map((entry) => [entry.index, entry.count])
+  );
+}
+
+function buildRowBasedSegmentLayout({
+  origin,
+  placedPanels,
+  roofData,
+  segment,
+  segmentCandidates,
+  segmentIndex,
+  targetCount,
+}: {
+  origin: LatLngPoint;
+  placedPanels: PanelLayoutPlacement[];
+  roofData: RoofAnalysis;
+  segment: RoofAnalysis["roofSegments"][number];
+  segmentCandidates: RoofAnalysis["solarPanels"];
+  segmentIndex: number;
+  targetCount: number;
+}) {
+  const boundary = getSegmentUsableBoundary(segment, roofData);
+
+  if (boundary.length < 3 || targetCount <= 0) {
+    return [];
+  }
+
+  const rotationDeg = normalizeDegrees(segment.azimuthDeg - 90);
+  const orientation = getDominantPanelOrientation(segmentCandidates);
+  const panelWidth =
+    orientation === "LANDSCAPE" ? DISPLAY_PANEL_HEIGHT_METERS : DISPLAY_PANEL_WIDTH_METERS;
+  const panelHeight =
+    orientation === "LANDSCAPE" ? DISPLAY_PANEL_WIDTH_METERS : DISPLAY_PANEL_HEIGHT_METERS;
+  const axes = getPanelLayoutAxes(rotationDeg);
+  const localBoundary = boundary.map((point) => latLngToLocalMeters(point, origin));
+  const planePoints = localBoundary.map((point) =>
+    meterPointToPlaneCoords(point, axes)
+  );
+  const planeBounds = getMeterBounds(planePoints);
+  const uStep = panelWidth + PANEL_MODULE_GAP_METERS;
+  const vStep = panelHeight + PANEL_ROW_GAP_METERS;
+  const minU = planeBounds.minX + ROOF_EDGE_SETBACK_METERS + panelWidth / 2;
+  const maxU = planeBounds.maxX - ROOF_EDGE_SETBACK_METERS - panelWidth / 2;
+  const minV = planeBounds.minY + ROOF_EDGE_SETBACK_METERS + panelHeight / 2;
+  const maxV = planeBounds.maxY - ROOF_EDGE_SETBACK_METERS - panelHeight / 2;
+  const placements: PanelLayoutPlacement[] = [];
+  const energyPerPanel = getSegmentEnergyPerPanel(segmentCandidates, roofData);
+
+  if (maxU <= minU || maxV <= minV) {
+    return placements;
+  }
+
+  const rowValues = buildCenteredAxisValues(minV, maxV, vStep);
+
+  rowValues.forEach((v, rowIndex) => {
+    if (placements.length >= targetCount) {
+      return;
+    }
+
+    const columnValues = buildCenteredAxisValues(minU, maxU, uStep);
+
+    columnValues.forEach((u, columnIndex) => {
+      if (placements.length >= targetCount) {
+        return;
+      }
+
+      const centerMeters = planeCoordsToMeterPoint({ x: u, y: v }, axes);
+      const center = localMetersToLatLng(centerMeters, origin);
+      const panel = {
+        center,
+        orientation,
+        azimuthDeg: segment.azimuthDeg,
+        rowIndex,
+        columnIndex,
+        yearlyEnergyDcKwh: energyPerPanel,
+        segmentIndex,
+      } satisfies RoofAnalysis["solarPanels"][number];
+      const displayPath = buildPanelCornerPoints({
+        centerLat: center.lat,
+        centerLng: center.lng,
+        dimensionAdjustmentMeters: PANEL_VISUAL_INSET_METERS,
+        orientation,
+        panelHeightMeters: DISPLAY_PANEL_HEIGHT_METERS,
+        panelWidthMeters: DISPLAY_PANEL_WIDTH_METERS,
+        rotationDeg,
+      });
+
+      if (
+        !isPanelInsideBoundary(displayPath, boundary) ||
+        !isPanelPathInsideBounds(displayPath, segment.bounds)
+      ) {
+        return;
+      }
+
+      const collisionPathMeters = buildPanelCornerPoints({
+        centerLat: center.lat,
+        centerLng: center.lng,
+        dimensionAdjustmentMeters: PANEL_MODULE_GAP_METERS,
+        orientation,
+        panelHeightMeters: DISPLAY_PANEL_HEIGHT_METERS,
+        panelWidthMeters: DISPLAY_PANEL_WIDTH_METERS,
+        rotationDeg,
+      }).map((point) => latLngToLocalMeters(point, origin));
+      const hasCollision = [...placedPanels, ...placements].some((placedPanel) =>
+        convexPolygonsOverlap(
+          collisionPathMeters,
+          placedPanel.collisionPathMeters,
+          PANEL_COLLISION_EPSILON_METERS
+        )
+      );
+
+      if (hasCollision || panelOverlapsObstruction(displayPath, roofData)) {
+        return;
+      }
+
+      placements.push({
+        collisionPathMeters,
+        displayPath,
+        panel,
+      });
+    });
+  });
+
+  return placements;
+}
+
+function getSegmentUsableBoundary(
+  segment: RoofAnalysis["roofSegments"][number],
+  roofData: RoofAnalysis
+) {
+  const segmentPolygon = outlineToLatLngPoints(
+    getVisualRoofOutline(segment.outline, VISUAL_SEGMENT_INSET_PERCENT),
+    roofData.roofBounds
+  );
+
+  if (segmentPolygon.length >= 3) {
+    return segmentPolygon;
+  }
+
+  const boundsPolygon = boundsToLatLngPoints(segment.bounds);
+
+  if (boundsPolygon.length >= 3) {
+    return boundsPolygon;
+  }
+
+  return outlineToLatLngPoints(roofData.usableOutline, roofData.roofBounds);
+}
+
+function getDominantPanelOrientation(panels: RoofAnalysis["solarPanels"]) {
+  const landscapeCount = panels.filter(
+    (panel) => panel.orientation === "LANDSCAPE"
+  ).length;
+
+  return landscapeCount > panels.length / 2 ? "LANDSCAPE" : "PORTRAIT";
+}
+
+function getPanelLayoutAxes(rotationDeg: number) {
+  const rotation = (rotationDeg * Math.PI) / 180;
+
+  return {
+    u: { x: Math.cos(rotation), y: -Math.sin(rotation) },
+    v: { x: Math.sin(rotation), y: Math.cos(rotation) },
+  };
+}
+
+function meterPointToPlaneCoords(
+  point: MeterPoint,
+  axes: ReturnType<typeof getPanelLayoutAxes>
+) {
+  return {
+    x: point.x * axes.u.x + point.y * axes.u.y,
+    y: point.x * axes.v.x + point.y * axes.v.y,
+  };
+}
+
+function planeCoordsToMeterPoint(
+  point: MeterPoint,
+  axes: ReturnType<typeof getPanelLayoutAxes>
+) {
+  return {
+    x: point.x * axes.u.x + point.y * axes.v.x,
+    y: point.x * axes.u.y + point.y * axes.v.y,
+  };
+}
+
+function getMeterBounds(points: MeterPoint[]) {
+  return points.reduce(
+    (bounds, point) => ({
+      maxX: Math.max(bounds.maxX, point.x),
+      maxY: Math.max(bounds.maxY, point.y),
+      minX: Math.min(bounds.minX, point.x),
+      minY: Math.min(bounds.minY, point.y),
+    }),
+    {
+      maxX: Number.NEGATIVE_INFINITY,
+      maxY: Number.NEGATIVE_INFINITY,
+      minX: Number.POSITIVE_INFINITY,
+      minY: Number.POSITIVE_INFINITY,
+    }
+  );
+}
+
+function buildCenteredAxisValues(min: number, max: number, step: number) {
+  const span = Math.max(0, max - min);
+  const count = Math.max(1, Math.floor(span / step) + 1);
+  const usedSpan = (count - 1) * step;
+  const start = min + (span - usedSpan) / 2;
+
+  return Array.from({ length: count }, (_, index) => start + index * step);
+}
+
+function getSegmentEnergyPerPanel(
+  panels: RoofAnalysis["solarPanels"],
+  roofData: RoofAnalysis
+) {
+  const values = panels
+    .map((panel) => panel.yearlyEnergyDcKwh)
+    .filter((value) => Number.isFinite(value) && value > 0);
+
+  if (values.length) {
+    return values.reduce((sum, value) => sum + value, 0) / values.length;
+  }
+
+  return roofData.annualKwh / Math.max(roofData.panelCount, 1);
+}
+
+function panelOverlapsObstruction(
+  panelPath: LatLngPoint[],
+  roofData: RoofAnalysis
+) {
+  return roofData.obstructionOutlines.some((outline) => {
+    const obstruction = outlineToLatLngPoints(outline, roofData.roofBounds);
+
+    if (obstruction.length < 3) {
+      return false;
+    }
+
+    return (
+      panelPath.some((point) => isLatLngPointInPolygon(point, obstruction)) ||
+      obstruction.some((point) => isLatLngPointInPolygon(point, panelPath))
+    );
+  });
 }
 
 function buildAcceptedPanelAnalysis(analysis: RoofAnalysis): RoofAnalysis {
@@ -2173,15 +2884,20 @@ function buildAcceptedPanelAnalysis(analysis: RoofAnalysis): RoofAnalysis {
     analysis.panelCount
   );
 
-  if (!analysis.validSite || !analysis.solarPanels.length) {
+  if (
+    !analysis.validSite ||
+    !analysis.solarPanels.length ||
+    shouldHidePanelPlacement(analysis)
+  ) {
     return {
       ...analysis,
-      acceptedPanelCount: analysis.panelCount,
+      acceptedPanelCount: 0,
       originalPanelCandidateCount,
       rejectedPanelCandidateCount: Math.max(
         0,
         originalPanelCandidateCount - analysis.panelCount
       ),
+      solarPanels: [],
     };
   }
 
@@ -2200,13 +2916,9 @@ function buildAcceptedPanelAnalysis(analysis: RoofAnalysis): RoofAnalysis {
     return {
       ...analysis,
       acceptedPanelCount: 0,
-      annualKwh: 0,
-      annualSavingsUSD: 0,
       originalPanelCandidateCount,
-      panelCount: 0,
       rejectedPanelCandidateCount,
       solarPanels: [],
-      systemKw: 0,
     };
   }
 
@@ -2307,18 +3019,18 @@ function getPanelBoundaryPolygon(
   roofData: RoofAnalysis
 ) {
   const segment = roofData.roofSegments[panel.segmentIndex];
-  const segmentBoundsPolygon = boundsToLatLngPoints(segment?.bounds ?? null);
-
-  if (segmentBoundsPolygon.length >= 3) {
-    return segmentBoundsPolygon;
-  }
-
   const segmentPolygon = segment
     ? outlineToLatLngPoints(segment.outline, roofData.roofBounds)
     : [];
 
   if (segmentPolygon.length >= 3) {
     return segmentPolygon;
+  }
+
+  const segmentBoundsPolygon = boundsToLatLngPoints(segment?.bounds ?? null);
+
+  if (segmentBoundsPolygon.length >= 3) {
+    return segmentBoundsPolygon;
   }
 
   const usablePolygon = outlineToLatLngPoints(
@@ -2427,6 +3139,17 @@ function latLngToLocalMeters(point: LatLngPoint, origin: LatLngPoint): MeterPoin
   return {
     x: (point.lng - origin.lng) * metersPerDegreeLng,
     y: (point.lat - origin.lat) * metersPerDegreeLat,
+  };
+}
+
+function localMetersToLatLng(point: MeterPoint, origin: LatLngPoint): LatLngPoint {
+  const metersPerDegreeLat = 111_320;
+  const metersPerDegreeLng =
+    metersPerDegreeLat * Math.max(Math.cos((origin.lat * Math.PI) / 180), 0.01);
+
+  return {
+    lat: origin.lat + point.y / metersPerDegreeLat,
+    lng: origin.lng + point.x / metersPerDegreeLng,
   };
 }
 
@@ -3384,6 +4107,117 @@ function SummaryMetric({
   );
 }
 
+function ConfidenceReadouts({ roofData }: { roofData: RoofAnalysis }) {
+  const readouts = getVisualizationConfidenceReadouts(roofData);
+
+  return (
+    <div className="grid gap-2 rounded-[1rem] border border-white/8 bg-slate-950/34 p-3">
+      {readouts.map((readout) => (
+        <div
+          key={readout.label}
+          className="flex items-center justify-between gap-3 text-xs"
+        >
+          <span className="text-slate-400">{readout.label}</span>
+          <span
+            className={`rounded-full border px-2.5 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.16em] ${getConfidenceToneClass(
+              readout.level
+            )}`}
+          >
+            {readout.level} · {readout.score}/100
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function getVisualizationConfidenceReadouts(roofData: RoofAnalysis) {
+  const roofModelConfidence = getRoofModelConfidence(roofData);
+  const roofDetectionScore = clampNumber(
+    Math.round(roofData.rooftopConfidenceScore),
+    0,
+    100
+  );
+  const solarModelScore = getSolarModelConfidenceScore(roofData);
+  const geometryScore = getGeometryConfidenceScore(roofData);
+
+  return [
+    {
+      label: "Roof Model Confidence",
+      level: getConfidenceLevel(roofModelConfidence.score),
+      score: roofModelConfidence.score,
+    },
+    {
+      label: "Roof Detection Confidence",
+      level: getConfidenceLevel(roofDetectionScore),
+      score: roofDetectionScore,
+    },
+    {
+      label: "Solar Model Confidence",
+      level: getConfidenceLevel(solarModelScore),
+      score: solarModelScore,
+    },
+    {
+      label: "Geometry Confidence",
+      level: getConfidenceLevel(geometryScore),
+      score: geometryScore,
+    },
+  ];
+}
+
+function getSolarModelConfidenceScore(roofData: RoofAnalysis) {
+  let score = roofData.source === "solar-api" ? 42 : roofData.source === "vision-api" ? 26 : 14;
+
+  if (roofData.solarPanelConfigs.length) score += 16;
+  if (roofData.annualSunlightHours > 0) score += 14;
+  if (roofData.roofSegments.length >= 2) score += 10;
+  if (roofData.solarPanels.length > 0) score += 10;
+  if (roofData.usableRoofAreaM2 > 0) score += 8;
+
+  return clampNumber(Math.round(score), 0, 100);
+}
+
+function getGeometryConfidenceScore(roofData: RoofAnalysis) {
+  const usableSegmentCount = roofData.roofSegments.filter(
+    (segment) =>
+      segment.usable &&
+      outlineToLatLngPoints(segment.outline, roofData.roofBounds).length >= 3
+  ).length;
+  const acceptedCount = roofData.acceptedPanelCount ?? roofData.solarPanels.length;
+  const expectedCount = Math.max(roofData.panelCount, acceptedCount, 1);
+  const acceptedRatio = Math.min(1, acceptedCount / expectedCount);
+  let score = 0;
+
+  if (roofData.roofBounds) score += 18;
+  if (roofData.roofOutline.length >= 4) score += 16;
+  score += Math.min(24, usableSegmentCount * 8);
+  score += Math.round(acceptedRatio * 22);
+  if (roofData.confidence === "high") score += 14;
+  else if (roofData.confidence === "medium") score += 8;
+  if (getRoofModelConfidence(roofData).mode === "high") score += 8;
+
+  return clampNumber(Math.round(score), 0, 100);
+}
+
+function getConfidenceLevel(score: number) {
+  if (score >= 82) return "High";
+  if (score >= 64) return "Good";
+  if (score >= 45) return "Moderate";
+  return "Limited";
+}
+
+function getConfidenceToneClass(level: string) {
+  if (level === "High" || level === "Good") {
+    return "border-emerald-300/18 bg-emerald-300/10 text-emerald-100";
+  }
+
+  if (level === "Moderate") {
+    return "border-amber-300/18 bg-amber-300/10 text-amber-100";
+  }
+
+  return "border-rose-300/18 bg-rose-300/10 text-rose-100";
+}
+
 function RoofStatsPanel({
   roofData,
   metrics,
@@ -3402,7 +4236,7 @@ function RoofStatsPanel({
             Roof stats
           </p>
           <p className="mt-2 text-sm leading-6 text-slate-300">
-            Solar API roof measurements with the current accepted panel count.
+            Solar API roof measurements with the current estimated panel capacity.
           </p>
         </div>
         <div className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.22em] text-slate-300">
@@ -3418,7 +4252,7 @@ function RoofStatsPanel({
         <MetricRow label="Annual sunlight" source="Solar API" value={`${metrics.annualSunlightHours.toLocaleString()} hrs`} />
         <MetricRow label="Average roof pitch" source="Solar API" value={`${metrics.averageRoofPitch.toFixed(1)} deg`} />
         <MetricRow label="Primary orientation" source="Solar API" value={metrics.orientationLabel} />
-        <MetricRow label="Panel count" source="Solar API" value={`${metrics.selectedPanelCount}`} />
+        <MetricRow label="Estimated capacity" source="Solar API" value={`Up to ${metrics.selectedPanelCount} panels`} />
         <MetricRow label="Rooftop score" source="Solar API" value={`${roofData.rooftopConfidenceScore}/100`} />
         <MetricRow label="Estimated payback" source="Modeled" value={`${metrics.roiYears.toFixed(1)} yrs`} />
       </div>
