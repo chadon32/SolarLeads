@@ -1,5 +1,18 @@
 import { NextResponse } from "next/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import {
+  DAY_MS,
+  HOUR_MS,
+  isHoneypotFilled,
+  isLikelyBotAddress,
+  isRequestTooLarge,
+  isTooFastSubmission,
+  logAbuseSignal,
+  maintenanceModeResponse,
+  payloadTooLargeResponse,
+  rateLimitResponse,
+  verifyTurnstileToken,
+} from "@/lib/abuse-protection";
 import { calculateLeadScore } from "@/lib/lead-scoring";
 import {
   normalizeAddress,
@@ -25,6 +38,8 @@ type LeadBody = {
   name?: string;
   email?: string;
   phone?: string;
+  companyWebsite?: string;
+  formStartedAt?: number;
   bestTimeToContact?: string;
   notes?: string;
   preferredContactMethod?: string;
@@ -63,6 +78,8 @@ type LeadBody = {
   selectedPanelWatts?: number;
   solarTimeline?: string;
   systemCostBeforeIncentives?: number;
+  turnstileToken?: string;
+  website?: string;
 };
 
 type ExistingLeadMatch = {
@@ -75,22 +92,34 @@ const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 export async function POST(request: Request) {
   try {
-    const rateLimit = await enforceRateLimit({
+    const maintenance = maintenanceModeResponse();
+
+    if (maintenance) {
+      return maintenance;
+    }
+
+    if (isRequestTooLarge(request, 1024 * 1024)) {
+      logAbuseSignal(request, "lead-payload-too-large", {
+        route: "api:leads",
+      });
+      return payloadTooLargeResponse("The lead request is too large.");
+    }
+
+    const ipLimit = await enforceRateLimit({
       request,
       route: "api:leads",
-      limit: 8,
-      windowMs: 60_000,
+      limit: 100,
+      windowMs: HOUR_MS,
     });
 
-    if (!rateLimit.allowed) {
-      return NextResponse.json(
-        { message: "Too many lead submissions. Please try again in a minute." },
-        {
-          status: 429,
-          headers: {
-            "Retry-After": rateLimit.retryAfterSeconds.toString(),
-          },
-        }
+    if (!ipLimit.allowed) {
+      logAbuseSignal(request, "lead-rate-limited", {
+        route: "api:leads",
+        window: "hour",
+      });
+      return rateLimitResponse(
+        "Too many report requests. Please try again later.",
+        ipLimit.retryAfterSeconds
       );
     }
 
@@ -104,7 +133,40 @@ export async function POST(request: Request) {
       );
     }
 
-    const body = (await request.json()) as LeadBody;
+    const body = (await request.json().catch(() => ({}))) as LeadBody;
+
+    if (isHoneypotFilled(body.website, body.companyWebsite)) {
+      logAbuseSignal(request, "lead-honeypot-filled", {
+        route: "api:leads",
+      });
+      return NextResponse.json({
+        message: "Your request was received.",
+        skipped: true,
+      });
+    }
+
+    if (isTooFastSubmission(body.formStartedAt)) {
+      logAbuseSignal(request, "lead-too-fast", {
+        route: "api:leads",
+      });
+      return NextResponse.json(
+        { message: "Please review the form and try again." },
+        { status: 400 }
+      );
+    }
+
+    const turnstile = await verifyTurnstileToken({
+      request,
+      token: body.turnstileToken,
+    });
+
+    if (!turnstile.ok) {
+      logAbuseSignal(request, "lead-turnstile-failed", {
+        route: "api:leads",
+      });
+      return NextResponse.json({ message: turnstile.message }, { status: 403 });
+    }
+
     const name = formatName(body.name);
     const email = normalizeEmail(body.email);
     const phone = normalizePhone(body.phone);
@@ -193,7 +255,7 @@ export async function POST(request: Request) {
       !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
       !isValidUsPhoneNumber(phone) ||
       !address ||
-      address.length < 8 ||
+      isLikelyBotAddress(address) ||
       !Number.isFinite(monthlyBill) ||
       monthlyBill <= 0 ||
       !Number.isFinite(panelCount) ||
@@ -216,6 +278,36 @@ export async function POST(request: Request) {
 
     const safeEmail: string = email;
     const safePhone: string = phone;
+
+    const contactLimits = [
+      { key: `email:${safeEmail}`, label: "email" },
+      { key: `phone:${safePhone}`, label: "phone" },
+      ...(normalizedAddress
+        ? [{ key: `address:${normalizedAddress}`, label: "address" }]
+        : []),
+    ];
+
+    for (const limitTarget of contactLimits) {
+      const contactLimit = await enforceRateLimit({
+        key: limitTarget.key,
+        request,
+        route: `api:leads:${limitTarget.label}`,
+        limit: limitTarget.label === "address" ? 8 : 5,
+        windowMs: DAY_MS,
+      });
+
+      if (!contactLimit.allowed) {
+        logAbuseSignal(request, "lead-contact-rate-limited", {
+          normalizedAddress,
+          route: "api:leads",
+          target: limitTarget.label,
+        });
+        return rateLimitResponse(
+          "Too many report requests for this contact information today.",
+          contactLimit.retryAfterSeconds
+        );
+      }
+    }
 
     const supabase = createClient(supabaseUrl, supabaseServiceRoleKey, {
       auth: {
@@ -374,24 +466,40 @@ export async function POST(request: Request) {
       raw: true,
     });
     await saveReportPdfUrl(supabase, data.id, reportUrl);
-    const notificationResults = await sendLeadNotifications({
-      address,
-      adminReportUrl: reportUrl,
-      annualSavings: estimatedSavings,
-      electricBillRange: toNullableText(body.electricBillRange),
-      email: safeEmail,
-      leadId: data.id,
-      leadScoreLabel: leadScore.label,
-      leadScoreValue: leadScore.score,
-      monthlyBill,
-      name,
-      panelCount,
-      phone: safePhone,
-      preferredContactMethod,
-      reportUrl,
-      solarTimeline: toNullableText(body.solarTimeline),
-      systemSizeKw: toNullableNumber(body.systemSizeKw),
+    const notificationLimit = await enforceRateLimit({
+      key: `lead:${data.id}`,
+      request,
+      route: "api:leads:notifications",
+      limit: 2,
+      windowMs: DAY_MS,
     });
+    const notificationResults = notificationLimit.allowed
+      ? await sendLeadNotifications({
+          address,
+          adminReportUrl: reportUrl,
+          annualSavings: estimatedSavings,
+          electricBillRange: toNullableText(body.electricBillRange),
+          email: safeEmail,
+          leadId: data.id,
+          leadScoreLabel: leadScore.label,
+          leadScoreValue: leadScore.score,
+          monthlyBill,
+          name,
+          panelCount,
+          phone: safePhone,
+          preferredContactMethod,
+          reportUrl,
+          solarTimeline: toNullableText(body.solarTimeline),
+          systemSizeKw: toNullableNumber(body.systemSizeKw),
+        })
+      : buildSkippedNotificationSummary("notification_rate_limited");
+
+    if (!notificationLimit.allowed) {
+      logAbuseSignal(request, "lead-notification-rate-limited", {
+        leadId: data.id,
+        route: "api:leads",
+      });
+    }
 
     await saveNotificationStatus(supabase, data.id, notificationResults);
 
@@ -531,6 +639,21 @@ function buildNotificationStatus(results: LeadNotificationSummary) {
   if (email === "skipped") return "homeowner_email_skipped";
 
   return "homeowner_email_failed";
+}
+
+function buildSkippedNotificationSummary(reason: string): LeadNotificationSummary {
+  return {
+    adminEmail: {
+      ok: false,
+      reason,
+      skipped: true,
+    },
+    homeownerEmail: {
+      ok: false,
+      reason,
+      skipped: true,
+    },
+  };
 }
 
 function resultStatus(result: NotificationResult) {

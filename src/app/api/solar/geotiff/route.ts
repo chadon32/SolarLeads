@@ -1,12 +1,37 @@
 import { NextResponse } from "next/server";
+import {
+  disabledFeatureResponse,
+  isKillSwitchEnabled,
+  rateLimitResponse,
+} from "@/lib/abuse-protection";
+import { enforceRateLimit } from "@/lib/rate-limit";
 
 const GOOGLE_SOLAR_KEY =
   process.env.GOOGLE_SOLAR_API_KEY ??
-  process.env.NEXT_PUBLIC_GOOGLE_SOLAR_API_KEY ??
   process.env.GOOGLE_MAPS_API_KEY;
 
 export async function GET(request: Request) {
   try {
+    const rateLimit = await enforceRateLimit({
+      request,
+      route: "api:solar-geotiff",
+      limit: 20,
+      windowMs: 60 * 60 * 1000,
+    });
+
+    if (!rateLimit.allowed) {
+      return rateLimitResponse(
+        "Too many Solar GeoTIFF requests. Please try again shortly.",
+        rateLimit.retryAfterSeconds
+      );
+    }
+
+    if (isKillSwitchEnabled("DISABLE_SOLAR_API_CALLS")) {
+      return disabledFeatureResponse(
+        "Solar data layers are temporarily unavailable."
+      );
+    }
+
     if (!GOOGLE_SOLAR_KEY) {
       return NextResponse.json(
         { message: "Google Solar API key is not configured." },

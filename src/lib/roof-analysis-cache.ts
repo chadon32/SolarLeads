@@ -1,8 +1,10 @@
 import { normalizeRoofAnalysis, type RoofAnalysis } from "@/lib/roof-analysis";
+import { normalizeAddress } from "@/lib/lead-normalization";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
 
 const CACHE_TABLE = "roof_analysis_cache";
 const ANALYSIS_VERSION = 12;
+const CACHE_TTL_MS = Number(process.env.ROOF_ANALYSIS_CACHE_TTL_DAYS ?? 30) * 24 * 60 * 60 * 1000;
 
 type CacheLookupParams = {
   address: string;
@@ -29,7 +31,7 @@ export async function getCachedRoofAnalysis(
     const addressKey = buildRoofAnalysisCacheKey(params);
     const { data, error } = await client
       .from(CACHE_TABLE)
-      .select("analysis, analysis_version")
+      .select("analysis, analysis_version, expires_at")
       .eq("address_key", addressKey)
       .maybeSingle();
 
@@ -41,7 +43,54 @@ export async function getCachedRoofAnalysis(
       return null;
     }
 
+    if (isExpired(data.expires_at)) {
+      return null;
+    }
+
     return normalizeRoofAnalysis(data.analysis, params.fallback);
+  } catch {
+    return null;
+  }
+}
+
+export async function getCachedRoofAnalysisByAddress(
+  address: string
+): Promise<RoofAnalysis | null> {
+  const normalizedAddress = normalizeAddress(address);
+
+  if (!normalizedAddress) {
+    return null;
+  }
+
+  try {
+    const client = getSupabaseAdminClient();
+    let result = await client
+      .from(CACHE_TABLE)
+      .select("address, lat, lng, analysis, analysis_version, expires_at")
+      .eq("normalized_address", normalizedAddress)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (result.error && isMissingColumnError(result.error.message)) {
+      result = await client
+        .from(CACHE_TABLE)
+        .select("address, lat, lng, analysis, analysis_version, expires_at")
+        .ilike("address", address.trim())
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+    }
+
+    if (result.error || !result.data || result.data.analysis_version !== ANALYSIS_VERSION) {
+      return null;
+    }
+
+    if (isExpired(result.data.expires_at)) {
+      return null;
+    }
+
+    return normalizeRoofAnalysis(result.data.analysis, result.data.analysis);
   } catch {
     return null;
   }
@@ -56,22 +105,63 @@ export async function saveCachedRoofAnalysis(params: {
   try {
     const client = getSupabaseAdminClient();
     const addressKey = buildRoofAnalysisCacheKey(params);
+    const now = Date.now();
+    const expiresAt = new Date(now + CACHE_TTL_MS).toISOString();
+    const row = {
+      address_key: addressKey,
+      address: params.address,
+      normalized_address: normalizeAddress(params.address),
+      lat: params.lat,
+      lng: params.lng,
+      analysis_version: ANALYSIS_VERSION,
+      analysis: params.analysis,
+      expires_at: expiresAt,
+      updated_at: new Date(now).toISOString(),
+    };
 
-    await client.from(CACHE_TABLE).upsert(
-      {
+    const result = await client.from(CACHE_TABLE).upsert(row, {
+      onConflict: "address_key",
+    });
+
+    if (result.error && isMissingColumnError(result.error.message)) {
+      const legacyRow = {
         address_key: addressKey,
         address: params.address,
         lat: params.lat,
         lng: params.lng,
         analysis_version: ANALYSIS_VERSION,
         analysis: params.analysis,
-        updated_at: new Date().toISOString(),
-      },
-      {
-        onConflict: "address_key",
-      }
-    );
+        updated_at: new Date(now).toISOString(),
+      };
+
+      await client.from(CACHE_TABLE).upsert(
+        legacyRow,
+        {
+          onConflict: "address_key",
+        }
+      );
+    }
   } catch {
     // Cache writes are best-effort. Analysis should still succeed without persistence.
   }
+}
+
+function isExpired(value?: string | null) {
+  if (!value) {
+    return false;
+  }
+
+  const expiresAt = new Date(value).getTime();
+
+  return Number.isFinite(expiresAt) && expiresAt <= Date.now();
+}
+
+function isMissingColumnError(message: string) {
+  const normalized = message.toLowerCase();
+
+  return (
+    normalized.includes("column") ||
+    normalized.includes("schema cache") ||
+    normalized.includes("could not find")
+  );
 }

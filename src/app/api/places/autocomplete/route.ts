@@ -1,4 +1,11 @@
 import { NextResponse } from "next/server";
+import {
+  isRequestTooLarge,
+  logAbuseSignal,
+  maintenanceModeResponse,
+  payloadTooLargeResponse,
+  rateLimitResponse,
+} from "@/lib/abuse-protection";
 import { enforceRateLimit } from "@/lib/rate-limit";
 
 type PlaceSuggestion = {
@@ -23,22 +30,30 @@ const googlePlacesKey =
 
 export async function POST(request: Request) {
   try {
+    const maintenance = maintenanceModeResponse();
+
+    if (maintenance) {
+      return maintenance;
+    }
+
+    if (isRequestTooLarge(request, 8 * 1024)) {
+      logAbuseSignal(request, "places-autocomplete-payload-too-large", {
+        route: "api:places-autocomplete",
+      });
+      return payloadTooLargeResponse("The address lookup request is too large.");
+    }
+
     const rateLimit = await enforceRateLimit({
       request,
       route: "api:places-autocomplete",
-      limit: 60,
+      limit: 40,
       windowMs: 60_000,
     });
 
     if (!rateLimit.allowed) {
-      return NextResponse.json(
-        { message: "Too many address lookups. Please pause and try again." },
-        {
-          status: 429,
-          headers: {
-            "Retry-After": rateLimit.retryAfterSeconds.toString(),
-          },
-        }
+      return rateLimitResponse(
+        "Too many address lookups. Please pause and try again.",
+        rateLimit.retryAfterSeconds
       );
     }
 

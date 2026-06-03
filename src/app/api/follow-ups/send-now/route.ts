@@ -1,5 +1,13 @@
 import { NextResponse } from "next/server";
 import { Resend } from "resend";
+import {
+  disabledFeatureResponse,
+  isKillSwitchEnabled,
+  isRequestTooLarge,
+  logAbuseSignal,
+  payloadTooLargeResponse,
+  rateLimitResponse,
+} from "@/lib/abuse-protection";
 import { requireDashboardAuth } from "@/lib/dashboard-auth";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
@@ -37,6 +45,19 @@ export async function POST(request: Request) {
       return authError;
     }
 
+    if (isRequestTooLarge(request, 16 * 1024)) {
+      logAbuseSignal(request, "follow-up-send-now-payload-too-large", {
+        route: "api:follow-ups:send-now",
+      });
+      return payloadTooLargeResponse("The follow-up request is too large.");
+    }
+
+    if (isKillSwitchEnabled("DISABLE_EMAIL_SENDING")) {
+      return disabledFeatureResponse(
+        "Email sending is temporarily disabled."
+      );
+    }
+
     const rateLimit = await enforceRateLimit({
       request,
       route: "api:follow-ups:send-now",
@@ -45,18 +66,13 @@ export async function POST(request: Request) {
     });
 
     if (!rateLimit.allowed) {
-      return NextResponse.json(
-        { message: "Too many follow-up sends. Please try again shortly." },
-        {
-          status: 429,
-          headers: {
-            "Retry-After": rateLimit.retryAfterSeconds.toString(),
-          },
-        }
+      return rateLimitResponse(
+        "Too many follow-up sends. Please try again shortly.",
+        rateLimit.retryAfterSeconds
       );
     }
 
-    const body = (await request.json()) as SendNowBody;
+    const body = (await request.json().catch(() => ({}))) as SendNowBody;
 
     if (!body.followUpId) {
       return NextResponse.json({ message: "Missing followUpId." }, { status: 400 });

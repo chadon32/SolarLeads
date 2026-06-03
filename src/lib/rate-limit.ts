@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
 
 type RateLimitInput = {
+  key?: string | null;
   request: Request;
   route: string;
   limit: number;
@@ -20,7 +21,7 @@ type RateLimitResult =
       retryAfterSeconds: number;
     };
 
-function getClientIp(request: Request) {
+export function getClientIp(request: Request) {
   const forwarded = request.headers.get("x-forwarded-for");
   const realIp = request.headers.get("x-real-ip");
   const cfIp = request.headers.get("cf-connecting-ip");
@@ -30,12 +31,15 @@ function getClientIp(request: Request) {
   return raw.split(",")[0]?.trim().toLowerCase() || "unknown";
 }
 
-function hashRateLimitKey(route: string, ip: string) {
+function hashRateLimitKey(route: string, identifier: string) {
   const secret = process.env.RATE_LIMIT_SECRET?.trim() ?? "dev-rate-limit-secret";
-  return createHash("sha256").update(`${secret}:${route}:${ip}`).digest("hex");
+  return createHash("sha256")
+    .update(`${secret}:${route}:${identifier}`)
+    .digest("hex");
 }
 
 export async function enforceRateLimit({
+  key,
   request,
   route,
   limit,
@@ -44,7 +48,8 @@ export async function enforceRateLimit({
   try {
     const supabase = getSupabaseAdminClient();
     const ip = getClientIp(request);
-    const keyHash = hashRateLimitKey(route, ip);
+    const identifier = key?.trim() || `ip:${ip}`;
+    const keyHash = hashRateLimitKey(route, identifier);
     const cutoff = new Date(Date.now() - windowMs).toISOString();
 
     const { count, error } = await supabase

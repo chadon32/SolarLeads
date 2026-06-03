@@ -34,6 +34,14 @@ import {
   verifyReportSignature,
 } from "@/lib/report-access";
 import {
+  DAY_MS,
+  disabledFeatureResponse,
+  isKillSwitchEnabled,
+  logAbuseSignal,
+  maintenanceModeResponse,
+  rateLimitResponse,
+} from "@/lib/abuse-protection";
+import {
   buildRoofAnalysisStaticMapUrl,
   getRoofAnalysisViewport,
   type RoofViewportPoint,
@@ -189,6 +197,12 @@ type RoofImageViewport = {
 
 export async function GET(request: Request) {
   try {
+    const maintenance = maintenanceModeResponse();
+
+    if (maintenance) {
+      return maintenance;
+    }
+
     const rateLimit = await enforceRateLimit({
       request,
       route: "api:report-pdf",
@@ -238,6 +252,35 @@ export async function GET(request: Request) {
               });
 
       return NextResponse.redirect(new URL(viewerPath, request.url));
+    }
+
+    if (isKillSwitchEnabled("DISABLE_PDF_GENERATION")) {
+      logAbuseSignal(request, "pdf-generation-disabled", {
+        leadId,
+        route: "api:report-pdf",
+      });
+      return disabledFeatureResponse(
+        "Report PDF generation is temporarily unavailable. Please try again shortly."
+      );
+    }
+
+    const leadPdfLimit = await enforceRateLimit({
+      key: `lead:${leadId}`,
+      request,
+      route: "api:report-pdf:lead",
+      limit: 3,
+      windowMs: DAY_MS,
+    });
+
+    if (!leadPdfLimit.allowed) {
+      logAbuseSignal(request, "pdf-generation-rate-limited", {
+        leadId,
+        route: "api:report-pdf",
+      });
+      return rateLimitResponse(
+        "This report has reached its daily PDF generation limit.",
+        leadPdfLimit.retryAfterSeconds
+      );
     }
 
     const supabase = getSupabaseAdminClient();
@@ -444,6 +487,15 @@ async function loadBestReportSnapshotForPdf(
         source: "cache",
       });
       return cachedSnapshot;
+    }
+
+    if (isKillSwitchEnabled("DISABLE_SOLAR_API_CALLS")) {
+      console.info("[pdf-roof-snapshot]", {
+        leadId: lead.id,
+        paidApiCalled: false,
+        source: "solar-api-disabled",
+      });
+      return storedSnapshot ?? cachedSnapshot;
     }
 
     const insights = await fetchSolarBuildingInsights(lat, lng);
@@ -3318,9 +3370,7 @@ function createColors() {
 }
 
 async function loadRoofImage(pdf: PDFDocument, proposal: ProposalData) {
-  const mapsKey =
-    process.env.GOOGLE_MAPS_API_KEY?.trim() ||
-    process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY?.trim();
+  const mapsKey = process.env.GOOGLE_MAPS_API_KEY?.trim();
   const emptyAsset = { image: null, viewport: null } satisfies {
     image: PDFImage | null;
     viewport: RoofImageViewport | null;

@@ -1,15 +1,40 @@
 import { NextResponse } from "next/server";
 import {
+  HOUR_MS,
+  isRequestTooLarge,
+  payloadTooLargeResponse,
+  rateLimitResponse,
+} from "@/lib/abuse-protection";
+import {
   DASHBOARD_SESSION_COOKIE,
   createDashboardSessionCookieValue,
   getDashboardSessionCookieOptions,
   verifyDashboardToken,
 } from "@/lib/dashboard-auth";
+import { enforceRateLimit } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
+  if (isRequestTooLarge(request, 16 * 1024)) {
+    return payloadTooLargeResponse("Dashboard session payload is too large.");
+  }
+
+  const limit = await enforceRateLimit({
+    request,
+    route: "api:dashboard-session",
+    limit: 10,
+    windowMs: HOUR_MS,
+  });
+
+  if (!limit.allowed) {
+    return rateLimitResponse(
+      "Too many dashboard access attempts. Please wait and try again.",
+      limit.retryAfterSeconds
+    );
+  }
+
   const contentType = request.headers.get("content-type") ?? "";
   const acceptsJson = request.headers
     .get("accept")

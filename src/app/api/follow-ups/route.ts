@@ -1,5 +1,13 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
+import {
+  DAY_MS,
+  isRequestTooLarge,
+  logAbuseSignal,
+  maintenanceModeResponse,
+  payloadTooLargeResponse,
+  rateLimitResponse,
+} from "@/lib/abuse-protection";
 import { createFollowUpSequence } from "@/lib/follow-ups";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { markInitialFollowUpDelivered } from "@/lib/follow-up-processing";
@@ -10,6 +18,19 @@ type FollowUpBody = {
 
 export async function POST(request: Request) {
   try {
+    const maintenance = maintenanceModeResponse();
+
+    if (maintenance) {
+      return maintenance;
+    }
+
+    if (isRequestTooLarge(request, 16 * 1024)) {
+      logAbuseSignal(request, "follow-ups-payload-too-large", {
+        route: "api:follow-ups",
+      });
+      return payloadTooLargeResponse("The follow-up request is too large.");
+    }
+
     const rateLimit = await enforceRateLimit({
       request,
       route: "api:follow-ups",
@@ -29,12 +50,31 @@ export async function POST(request: Request) {
       );
     }
 
-    const body = (await request.json()) as FollowUpBody;
+    const body = (await request.json().catch(() => ({}))) as FollowUpBody;
 
     if (!body.leadId) {
       return NextResponse.json(
         { message: "Missing leadId." },
         { status: 400 }
+      );
+    }
+
+    const leadLimit = await enforceRateLimit({
+      key: `lead:${body.leadId}`,
+      request,
+      route: "api:follow-ups:lead",
+      limit: 2,
+      windowMs: DAY_MS,
+    });
+
+    if (!leadLimit.allowed) {
+      logAbuseSignal(request, "follow-ups-lead-rate-limited", {
+        leadId: body.leadId,
+        route: "api:follow-ups",
+      });
+      return rateLimitResponse(
+        "Follow-ups have already been scheduled for this report.",
+        leadLimit.retryAfterSeconds
       );
     }
 

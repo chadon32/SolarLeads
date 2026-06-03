@@ -2,6 +2,7 @@
 
 import type { ChangeEvent, FormEvent, InputHTMLAttributes } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import Script from "next/script";
 import { FileCheck2, UploadCloud } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatDisplayAddress } from "@/lib/address-format";
@@ -77,6 +78,12 @@ type UtilityBillState = {
   uploadClaim?: string;
 };
 
+declare global {
+  interface Window {
+    onSolartelligenceTurnstile?: (token: string) => void;
+  }
+}
+
 const emptyValues: FormValues = {
   name: "",
   email: "",
@@ -116,6 +123,7 @@ const contactMethodOptions = ["Phone", "Text", "Email"] as const;
 const bestTimeOptions = ["Morning", "Afternoon", "Evening", "Weekend"] as const;
 const utilityBillMimeTypes = ["application/pdf", "image/jpeg", "image/png"];
 const utilityBillMaxBytes = 10 * 1024 * 1024;
+const turnstileSiteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
 
 function isValidEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
@@ -198,7 +206,20 @@ export function LeadCaptureForm({
   const [utilityBill, setUtilityBill] = useState<UtilityBillState>({
     status: "idle",
   });
+  const [honeypot, setHoneypot] = useState("");
+  const [turnstileToken, setTurnstileToken] = useState("");
+  const formStartedAt = useRef(Date.now());
   const lastSubmittedFingerprint = useRef<string>("");
+
+  useEffect(() => {
+    window.onSolartelligenceTurnstile = (token: string) => {
+      setTurnstileToken(token);
+    };
+
+    return () => {
+      delete window.onSolartelligenceTurnstile;
+    };
+  }, []);
 
   useEffect(() => {
     const handle = window.requestAnimationFrame(() => {
@@ -339,6 +360,9 @@ export function LeadCaptureForm({
     try {
       const formData = new FormData();
       formData.append("bill", file);
+      formData.append("address", values.address);
+      formData.append("email", values.email);
+      formData.append("phone", values.phone);
 
       const response = await fetch("/api/utility-bills", {
         method: "POST",
@@ -472,6 +496,8 @@ export function LeadCaptureForm({
           name: formattedName,
           email: values.email.trim(),
           phone: phoneForStorage,
+          companyWebsite: honeypot,
+          formStartedAt: formStartedAt.current,
           address: values.address.trim(),
           electricBillRange: values.electricBillRange,
           monthlyBill,
@@ -514,6 +540,8 @@ export function LeadCaptureForm({
           federalTaxCredit: totalFederalTaxCredit || panelFit?.taxCredit,
           netSystemCost: totalNetSystemCost || panelFit?.netCost,
           selectedInverterType,
+          turnstileToken,
+          website: honeypot,
         }),
       });
 
@@ -578,6 +606,12 @@ export function LeadCaptureForm({
 
   return (
     <div className="grid gap-5">
+      {turnstileSiteKey ? (
+        <Script
+          src="https://challenges.cloudflare.com/turnstile/v0/api.js"
+          strategy="afterInteractive"
+        />
+      ) : null}
       <div className="grid gap-5 lg:grid-cols-[1.05fr_0.95fr] lg:items-stretch">
         <form
           onSubmit={handleSubmit}
@@ -602,6 +636,18 @@ export function LeadCaptureForm({
           </div>
 
           <div className="mt-6 grid gap-4 sm:grid-cols-2">
+            <div aria-hidden="true" className="hidden">
+              <label>
+                Website
+                <input
+                  autoComplete="off"
+                  tabIndex={-1}
+                  type="text"
+                  value={honeypot}
+                  onChange={(event) => setHoneypot(event.target.value)}
+                />
+              </label>
+            </div>
             <Field
               label="Name"
               value={values.name}
@@ -697,6 +743,17 @@ export function LeadCaptureForm({
             state={utilityBill}
             onChange={handleUtilityBillChange}
           />
+
+          {turnstileSiteKey ? (
+            <div className="mt-4 flex justify-center">
+              <div
+                className="cf-turnstile"
+                data-callback="onSolartelligenceTurnstile"
+                data-sitekey={turnstileSiteKey}
+                data-theme="dark"
+              />
+            </div>
+          ) : null}
 
           <p className="mt-6 text-center text-sm leading-6 text-slate-400">
             {APP_PRIVACY_COPY}

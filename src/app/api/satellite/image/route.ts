@@ -1,26 +1,42 @@
 import { NextResponse } from "next/server";
+import { DAY_MS, maintenanceModeResponse, rateLimitResponse } from "@/lib/abuse-protection";
 import { enforceRateLimit } from "@/lib/rate-limit";
 
 const MAPS_KEY = process.env.GOOGLE_MAPS_API_KEY;
 
 export async function GET(request: Request) {
   try {
+    const maintenance = maintenanceModeResponse();
+
+    if (maintenance) {
+      return maintenance;
+    }
+
     const rateLimit = await enforceRateLimit({
       request,
       route: "api:satellite-image",
-      limit: 60,
-      windowMs: 60_000,
+      limit: 20,
+      windowMs: 10 * 60_000,
     });
 
     if (!rateLimit.allowed) {
-      return NextResponse.json(
-        { message: "Too many satellite image requests. Please try again soon." },
-        {
-          status: 429,
-          headers: {
-            "Retry-After": rateLimit.retryAfterSeconds.toString(),
-          },
-        }
+      return rateLimitResponse(
+        "Too many satellite image requests. Please try again soon.",
+        rateLimit.retryAfterSeconds
+      );
+    }
+
+    const dailyLimit = await enforceRateLimit({
+      request,
+      route: "api:satellite-image:day",
+      limit: 80,
+      windowMs: DAY_MS,
+    });
+
+    if (!dailyLimit.allowed) {
+      return rateLimitResponse(
+        "Daily satellite image limit reached. Please try again tomorrow.",
+        dailyLimit.retryAfterSeconds
       );
     }
 

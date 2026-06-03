@@ -1,5 +1,13 @@
 import { NextResponse } from "next/server";
 import { buildFallbackRoofAnalysis } from "@/lib/roof-analysis";
+import {
+  DAY_MS,
+  isLikelyBotAddress,
+  isRequestTooLarge,
+  maintenanceModeResponse,
+  payloadTooLargeResponse,
+  rateLimitResponse,
+} from "@/lib/abuse-protection";
 import { enforceRateLimit } from "@/lib/rate-limit";
 
 type GeocodeResponse = {
@@ -33,22 +41,41 @@ const MAPS_KEY = process.env.GOOGLE_MAPS_API_KEY;
 
 export async function POST(request: Request) {
   try {
+    const maintenance = maintenanceModeResponse();
+
+    if (maintenance) {
+      return maintenance;
+    }
+
+    if (isRequestTooLarge(request, 16 * 1024)) {
+      return payloadTooLargeResponse("The satellite preview request is too large.");
+    }
+
     const rateLimit = await enforceRateLimit({
       request,
       route: "api:satellite-preview",
-      limit: 30,
-      windowMs: 60_000,
+      limit: 10,
+      windowMs: 10 * 60_000,
     });
 
     if (!rateLimit.allowed) {
-      return NextResponse.json(
-        { message: "Too many roof scans. Please try again shortly." },
-        {
-          status: 429,
-          headers: {
-            "Retry-After": rateLimit.retryAfterSeconds.toString(),
-          },
-        }
+      return rateLimitResponse(
+        "Too many roof scans. Please try again shortly.",
+        rateLimit.retryAfterSeconds
+      );
+    }
+
+    const dailyLimit = await enforceRateLimit({
+      request,
+      route: "api:satellite-preview:day",
+      limit: 30,
+      windowMs: DAY_MS,
+    });
+
+    if (!dailyLimit.allowed) {
+      return rateLimitResponse(
+        "Daily roof scan limit reached. Please try again tomorrow.",
+        dailyLimit.retryAfterSeconds
       );
     }
 
@@ -62,9 +89,9 @@ export async function POST(request: Request) {
     const body = (await request.json().catch(() => ({}))) as { address?: string };
     const address = body.address?.trim();
 
-    if (!address || address.length < 5) {
+    if (!address || isLikelyBotAddress(address)) {
       return NextResponse.json(
-        { message: "Enter a valid address." },
+        { message: "Enter a complete residential street address." },
         { status: 400 }
       );
     }

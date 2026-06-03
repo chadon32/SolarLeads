@@ -1,4 +1,5 @@
 import { Resend } from "resend";
+import { isKillSwitchEnabled } from "@/lib/abuse-protection";
 import { getResendFromEmail } from "@/lib/notification-env";
 import { buildSolarReportFromSolarValues } from "@/lib/solar-report";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
@@ -182,6 +183,13 @@ async function sendFollowUpEmail(
   lead: LeadRow,
   step: FollowUpRow
 ): Promise<{ status: "sent" | "skipped" | "failed"; message: string }> {
+  if (isKillSwitchEnabled("DISABLE_EMAIL_SENDING")) {
+    return {
+      status: "skipped",
+      message: "Email sending is disabled by DISABLE_EMAIL_SENDING.",
+    };
+  }
+
   if (!resendApiKey || !resendFromEmail) {
     return {
       status: "skipped",

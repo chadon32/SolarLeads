@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { maintenanceModeResponse, rateLimitResponse } from "@/lib/abuse-protection";
+import { enforceRateLimit } from "@/lib/rate-limit";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
 
 const AZ_SOLAR_RATES: Record<string, number> = {
@@ -99,6 +101,23 @@ const AZ_SOLAR_RATES: Record<string, number> = {
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
+  const maintenance = maintenanceModeResponse();
+  if (maintenance) return maintenance;
+
+  const limit = await enforceRateLimit({
+    request,
+    route: "api:neighborhood",
+    limit: 60,
+    windowMs: 60 * 1000,
+  });
+
+  if (!limit.allowed) {
+    return rateLimitResponse(
+      "Neighborhood estimates are temporarily limited. Please wait and try again.",
+      limit.retryAfterSeconds
+    );
+  }
+
   const zip = request.nextUrl.searchParams.get("zip")?.trim() ?? "";
   const totalEstimateCount = await getTotalEstimateCount();
 

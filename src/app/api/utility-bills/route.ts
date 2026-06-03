@@ -1,5 +1,19 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import {
+  DAY_MS,
+  HOUR_MS,
+  isRequestTooLarge,
+  logAbuseSignal,
+  maintenanceModeResponse,
+  payloadTooLargeResponse,
+  rateLimitResponse,
+} from "@/lib/abuse-protection";
+import {
+  normalizeAddress,
+  normalizeEmail,
+  normalizePhone,
+} from "@/lib/lead-normalization";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { createUtilityBillUploadClaim } from "@/lib/utility-bill-claims";
 
@@ -11,22 +25,34 @@ const maxFileSizeBytes = 10 * 1024 * 1024;
 
 export async function POST(request: Request) {
   try {
+    const maintenance = maintenanceModeResponse();
+
+    if (maintenance) {
+      return maintenance;
+    }
+
+    if (isRequestTooLarge(request, maxFileSizeBytes + 1024 * 1024)) {
+      logAbuseSignal(request, "utility-bill-payload-too-large", {
+        route: "api:utility-bills",
+      });
+      return payloadTooLargeResponse("Utility bill uploads must be 10MB or smaller.");
+    }
+
     const rateLimit = await enforceRateLimit({
       request,
       route: "api:utility-bills",
-      limit: 10,
-      windowMs: 60_000,
+      limit: 6,
+      windowMs: HOUR_MS,
     });
 
     if (!rateLimit.allowed) {
-      return NextResponse.json(
-        { message: "Too many utility bill uploads. Please try again shortly." },
-        {
-          status: 429,
-          headers: {
-            "Retry-After": rateLimit.retryAfterSeconds.toString(),
-          },
-        }
+      logAbuseSignal(request, "utility-bill-rate-limited", {
+        route: "api:utility-bills",
+        window: "hour",
+      });
+      return rateLimitResponse(
+        "Too many utility bill uploads. Please try again shortly.",
+        rateLimit.retryAfterSeconds
       );
     }
 
@@ -46,6 +72,37 @@ export async function POST(request: Request) {
 
     const formData = await request.formData();
     const file = formData.get("bill");
+    const normalizedAddress = normalizeAddress(String(formData.get("address") ?? ""));
+    const normalizedEmail = normalizeEmail(String(formData.get("email") ?? ""));
+    const normalizedPhone = normalizePhone(String(formData.get("phone") ?? ""));
+
+    const uploadTargets = [
+      normalizedEmail ? { key: `email:${normalizedEmail}`, label: "email" } : null,
+      normalizedPhone ? { key: `phone:${normalizedPhone}`, label: "phone" } : null,
+      normalizedAddress ? { key: `address:${normalizedAddress}`, label: "address" } : null,
+    ].filter(Boolean) as Array<{ key: string; label: string }>;
+
+    for (const target of uploadTargets) {
+      const uploadLimit = await enforceRateLimit({
+        key: target.key,
+        request,
+        route: `api:utility-bills:${target.label}`,
+        limit: 2,
+        windowMs: DAY_MS,
+      });
+
+      if (!uploadLimit.allowed) {
+        logAbuseSignal(request, "utility-bill-contact-rate-limited", {
+          normalizedAddress,
+          route: "api:utility-bills",
+          target: target.label,
+        });
+        return rateLimitResponse(
+          "Too many utility bill uploads for this report today.",
+          uploadLimit.retryAfterSeconds
+        );
+      }
+    }
 
     if (!isUploadFile(file)) {
       return NextResponse.json(

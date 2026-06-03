@@ -2,6 +2,17 @@ import { NextResponse } from "next/server";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { Resend } from "resend";
 import type { SolarReport } from "@/lib/solar-report";
+import {
+  DAY_MS,
+  disabledFeatureResponse,
+  isKillSwitchEnabled,
+  isRequestTooLarge,
+  logAbuseSignal,
+  maintenanceModeResponse,
+  payloadTooLargeResponse,
+  rateLimitResponse,
+} from "@/lib/abuse-protection";
+import { normalizeEmail } from "@/lib/lead-normalization";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { buildReportPdfUrl } from "@/lib/report-access";
 
@@ -21,22 +32,42 @@ const resendFromEmail =
 
 export async function POST(request: Request) {
   try {
+    const maintenance = maintenanceModeResponse();
+
+    if (maintenance) {
+      return maintenance;
+    }
+
+    if (isRequestTooLarge(request, 256 * 1024)) {
+      logAbuseSignal(request, "report-email-payload-too-large", {
+        route: "api:report-email",
+      });
+      return payloadTooLargeResponse("The report email request is too large.");
+    }
+
     const rateLimit = await enforceRateLimit({
       request,
       route: "api:report-email",
-      limit: 10,
-      windowMs: 60_000,
+      limit: 5,
+      windowMs: 60 * 60 * 1000,
     });
 
     if (!rateLimit.allowed) {
-      return NextResponse.json(
-        { message: "Too many report emails. Please try again soon." },
-        {
-          status: 429,
-          headers: {
-            "Retry-After": rateLimit.retryAfterSeconds.toString(),
-          },
-        }
+      logAbuseSignal(request, "report-email-rate-limited", {
+        route: "api:report-email",
+      });
+      return rateLimitResponse(
+        "Too many report emails. Please try again soon.",
+        rateLimit.retryAfterSeconds
+      );
+    }
+
+    if (isKillSwitchEnabled("DISABLE_EMAIL_SENDING")) {
+      logAbuseSignal(request, "report-email-disabled", {
+        route: "api:report-email",
+      });
+      return disabledFeatureResponse(
+        "Email sending is temporarily unavailable. Your report can still be viewed online."
       );
     }
 
@@ -50,7 +81,28 @@ export async function POST(request: Request) {
       );
     }
 
-    const body = (await request.json()) as ReportEmailBody;
+    const body = (await request.json().catch(() => ({}))) as ReportEmailBody;
+    const normalizedEmail = normalizeEmail(body.email);
+
+    if (normalizedEmail) {
+      const emailLimit = await enforceRateLimit({
+        key: `email:${normalizedEmail}`,
+        request,
+        route: "api:report-email:email",
+        limit: 5,
+        windowMs: DAY_MS,
+      });
+
+      if (!emailLimit.allowed) {
+        logAbuseSignal(request, "report-email-recipient-rate-limited", {
+          route: "api:report-email",
+        });
+        return rateLimitResponse(
+          "Too many report emails for this recipient today.",
+          emailLimit.retryAfterSeconds
+        );
+      }
+    }
 
     if (
       !body.email ||

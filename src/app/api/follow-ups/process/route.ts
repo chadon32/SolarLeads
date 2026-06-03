@@ -1,6 +1,14 @@
 import { NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
+import {
+  HOUR_MS,
+  isRequestTooLarge,
+  maintenanceModeResponse,
+  payloadTooLargeResponse,
+  rateLimitResponse,
+} from "@/lib/abuse-protection";
 import { processDueFollowUps } from "@/lib/follow-up-processing";
+import { enforceRateLimit } from "@/lib/rate-limit";
 
 function isAuthorized(request: Request) {
   const configuredSecret = process.env.FOLLOW_UP_PROCESS_SECRET?.trim();
@@ -41,8 +49,29 @@ function safeSecretEquals(provided: string | null | undefined, expected: string)
 }
 
 async function processRequest(request: Request) {
+  const maintenance = maintenanceModeResponse();
+  if (maintenance) return maintenance;
+
+  if (request.method === "POST" && isRequestTooLarge(request, 8 * 1024)) {
+    return payloadTooLargeResponse("Follow-up process payload is too large.");
+  }
+
   if (!isAuthorized(request)) {
     return NextResponse.json({ message: "Unauthorized." }, { status: 401 });
+  }
+
+  const limit = await enforceRateLimit({
+    request,
+    route: "api:follow-ups-process",
+    limit: 10,
+    windowMs: HOUR_MS,
+  });
+
+  if (!limit.allowed) {
+    return rateLimitResponse(
+      "Follow-up processing is temporarily limited. Please wait and try again.",
+      limit.retryAfterSeconds
+    );
   }
 
   const result = await processDueFollowUps();

@@ -1,4 +1,5 @@
 import { Resend } from "resend";
+import { isKillSwitchEnabled } from "@/lib/abuse-protection";
 import { formatDisplayAddress } from "@/lib/address-format";
 import { APP_EMAIL_SENDER_NAME, APP_NAME } from "@/lib/brand";
 import {
@@ -179,6 +180,14 @@ async function sendEmail({
   const resendFromEmail = getResendFromEmail();
 
   console.info("[notification-email:attempt]", { kind, to });
+
+  if (isKillSwitchEnabled("DISABLE_EMAIL_SENDING")) {
+    console.info("[notification-email:skipped]", {
+      kind,
+      reason: "email_disabled",
+    });
+    return { ok: false, reason: "email_disabled", skipped: true };
+  }
 
   if (!resendApiKey) {
     console.info("[notification-email-dev]", { kind, subject, text, to });

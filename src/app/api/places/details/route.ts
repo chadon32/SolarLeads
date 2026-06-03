@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { maintenanceModeResponse, rateLimitResponse } from "@/lib/abuse-protection";
 import { enforceRateLimit } from "@/lib/rate-limit";
 
 const googlePlacesKey =
@@ -6,22 +7,23 @@ const googlePlacesKey =
 
 export async function GET(request: Request) {
   try {
+    const maintenance = maintenanceModeResponse();
+
+    if (maintenance) {
+      return maintenance;
+    }
+
     const rateLimit = await enforceRateLimit({
       request,
       route: "api:places-details",
-      limit: 60,
+      limit: 40,
       windowMs: 60_000,
     });
 
     if (!rateLimit.allowed) {
-      return NextResponse.json(
-        { message: "Too many address lookups. Please pause and try again." },
-        {
-          status: 429,
-          headers: {
-            "Retry-After": rateLimit.retryAfterSeconds.toString(),
-          },
-        }
+      return rateLimitResponse(
+        "Too many address lookups. Please pause and try again.",
+        rateLimit.retryAfterSeconds
       );
     }
 

@@ -1,4 +1,11 @@
 import { NextResponse } from "next/server";
+import {
+  DAY_MS,
+  disabledFeatureResponse,
+  isKillSwitchEnabled,
+  logAbuseSignal,
+  rateLimitResponse,
+} from "@/lib/abuse-protection";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { fetchSolarDataLayers } from "@/lib/google-solar";
 
@@ -7,19 +14,37 @@ export async function GET(request: Request) {
     const rateLimit = await enforceRateLimit({
       request,
       route: "api:solar-data-layers",
-      limit: 24,
-      windowMs: 60_000,
+      limit: 10,
+      windowMs: 10 * 60_000,
     });
 
     if (!rateLimit.allowed) {
-      return NextResponse.json(
-        { message: "Too many irradiance requests. Please try again shortly." },
-        {
-          status: 429,
-          headers: {
-            "Retry-After": rateLimit.retryAfterSeconds.toString(),
-          },
-        }
+      return rateLimitResponse(
+        "Too many irradiance requests. Please try again shortly.",
+        rateLimit.retryAfterSeconds
+      );
+    }
+
+    const dailyLimit = await enforceRateLimit({
+      request,
+      route: "api:solar-data-layers:day",
+      limit: 30,
+      windowMs: DAY_MS,
+    });
+
+    if (!dailyLimit.allowed) {
+      return rateLimitResponse(
+        "Daily irradiance request limit reached. Please try again tomorrow.",
+        dailyLimit.retryAfterSeconds
+      );
+    }
+
+    if (isKillSwitchEnabled("DISABLE_SOLAR_API_CALLS")) {
+      logAbuseSignal(request, "solar-data-layers-disabled", {
+        route: "api:solar-data-layers",
+      });
+      return disabledFeatureResponse(
+        "Solar data layers are temporarily unavailable."
       );
     }
 

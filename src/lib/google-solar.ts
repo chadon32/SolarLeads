@@ -15,7 +15,6 @@ import {
 const GOOGLE_MAPS_KEY = process.env.GOOGLE_MAPS_API_KEY;
 const GOOGLE_SOLAR_KEY =
   process.env.GOOGLE_SOLAR_API_KEY ??
-  process.env.NEXT_PUBLIC_GOOGLE_SOLAR_API_KEY ??
   process.env.GOOGLE_MAPS_API_KEY;
 
 const AZ_RATE_PER_KWH = 0.13;
