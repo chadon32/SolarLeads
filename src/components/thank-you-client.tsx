@@ -270,14 +270,14 @@ export function ThankYouClient() {
             {summary.referralCode ? (
               <section className="rounded-[1.5rem] border border-emerald-300/14 bg-emerald-300/[0.055] p-5">
                 <p className="text-xs font-semibold uppercase tracking-[0.3em] text-emerald-100">
-                  Referral program
+                  Share Your Report
                 </p>
                 <h2 className="mt-3 text-2xl font-semibold text-white">
-                  Know a neighbor thinking about solar?
+                  Know someone curious about solar?
                 </h2>
                 <p className="mt-2 text-sm leading-6 text-slate-300">
-                  Share your link. When they submit their estimate, you both get
-                  recognized in our referral program.
+                  Share your report link so friends, family, or neighbors can
+                  check their home&apos;s solar potential too.
                 </p>
                 <div className="mt-4 rounded-[1rem] border border-white/10 bg-slate-950/45 p-3">
                   <p className="break-all text-sm font-semibold text-white">
@@ -349,13 +349,13 @@ export function ThankYouClient() {
                     </button>
                   </div>
                   <p className="mt-3 text-xs leading-5 text-slate-400">
-                    Sharing your referral link: when a friend submits their
-                    estimate, both of you get recognized in our referral program.
+                    Share this link with anyone interested in seeing their home&apos;s
+                    solar potential.
                   </p>
                 </>
               ) : (
                 <p className="mt-3 text-sm leading-6 text-slate-400">
-                  Your referral link will appear here when the report data is loaded.
+                  Your share link will appear here when the report data is loaded.
                 </p>
               )}
             </section>

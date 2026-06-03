@@ -19,6 +19,7 @@ import {
   getUsableAreaM2,
   type RoofAnalysis,
 } from "@/lib/roof-analysis";
+import { buildSolarReportSnapshot } from "@/lib/report-snapshot";
 import { buildSolarMetrics } from "@/lib/solar-metrics";
 import {
   getInverterOption,
@@ -434,6 +435,16 @@ export function LeadCaptureForm({
       return;
     }
 
+    const reportSnapshot = buildSolarReportSnapshot({
+      activePanelCount,
+      address: values.address.trim(),
+      analysis,
+      lat,
+      lng,
+      metrics,
+      monthlyBill,
+    });
+
     if (utilityBill.status === "uploading") {
       setStatus("error");
       setMessage("Your utility bill is still uploading. Please wait a moment or submit without it.");
@@ -481,6 +492,7 @@ export function LeadCaptureForm({
           roofAreaSqm: getRoofAreaM2(analysis),
           usableAreaSqm: getUsableAreaM2(analysis),
           roofPitchDegrees: metrics.avgPitchDeg,
+          reportSnapshot,
           lat,
           lng,
           pdfGenerated: true,

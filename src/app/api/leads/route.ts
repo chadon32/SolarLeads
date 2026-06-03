@@ -13,6 +13,10 @@ import {
   type NotificationResult,
 } from "@/lib/notifications";
 import { isValidUsPhoneNumber, normalizePhoneNumber } from "@/lib/phone";
+import {
+  normalizeSolarReportSnapshot,
+  type SolarReportSnapshot,
+} from "@/lib/report-snapshot";
 import { buildReportPdfUrl } from "@/lib/report-access";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { verifyUtilityBillUploadClaim } from "@/lib/utility-bill-claims";
@@ -43,6 +47,7 @@ type LeadBody = {
   roofAreaSqm?: number;
   usableAreaSqm?: number;
   roofPitchDegrees?: number;
+  reportSnapshot?: SolarReportSnapshot;
   lat?: number;
   lng?: number;
   batteryAdded?: boolean;
@@ -114,6 +119,7 @@ export async function POST(request: Request) {
     const panelCount = Number(body.panelCount);
     const selectedPanelWatts = Number(body.selectedPanelWatts);
     const netSystemCost = Number(body.netSystemCost);
+    const reportSnapshot = normalizeSolarReportSnapshot(body.reportSnapshot);
     const twentyYearSavings =
       toNullableNumber(body.twentyYearSavings) ??
       (Number.isFinite(annualSavingsOverride) && annualSavingsOverride > 0
@@ -278,6 +284,7 @@ export async function POST(request: Request) {
       quote_requested_at: quoteRequested ? new Date().toISOString() : null,
       referral_code: referralCode,
       referred_by: referredBy,
+      report_snapshot: reportSnapshot,
       report_pdf_url: null,
       solar_suitability_score: toNullableInteger(body.solarSuitabilityScore),
       twenty_year_savings: twentyYearSavings,
@@ -319,6 +326,7 @@ export async function POST(request: Request) {
             "normalized_phone",
             "referral_code",
             "referred_by",
+            "report_snapshot",
             "report_pdf_url",
             "utility_bill_file_path",
           ].includes(key)

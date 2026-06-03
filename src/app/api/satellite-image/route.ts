@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import {
+  buildRoofAnalysisStaticMapUrl,
+  getRoofAnalysisViewport,
+} from "@/lib/roof-analysis-viewport";
 
 const mapsKey = process.env.GOOGLE_MAPS_API_KEY;
 
@@ -42,20 +46,27 @@ export async function GET(request: Request) {
       );
     }
 
-    const satelliteUrl = new URL("https://maps.googleapis.com/maps/api/staticmap");
-    const zoom = 20;
+    const viewport = getRoofAnalysisViewport({
+      fallbackCenter: { lat, lng },
+      points: [{ lat, lng }],
+    });
     const size = 640;
-    satelliteUrl.searchParams.set("center", `${lat},${lng}`);
-    satelliteUrl.searchParams.set("zoom", String(zoom));
-    satelliteUrl.searchParams.set("size", `${size}x${size}`);
-    satelliteUrl.searchParams.set("scale", "1");
-    satelliteUrl.searchParams.set("maptype", "satellite");
-    satelliteUrl.searchParams.set("format", "jpg-baseline");
-    satelliteUrl.searchParams.append(
-      "style",
-      "feature:all|element:labels|visibility:off"
-    );
-    satelliteUrl.searchParams.set("key", mapsKey);
+    const satelliteUrl = buildRoofAnalysisStaticMapUrl({
+      apiKey: mapsKey,
+      format: "jpg-baseline",
+      height: size,
+      scale: 1,
+      viewport,
+      width: size,
+    });
+    const zoom = viewport.staticMapZoom;
+
+    if (!satelliteUrl) {
+      return NextResponse.json(
+        { message: "lat and lng are required." },
+        { status: 400 }
+      );
+    }
 
     const imageResponse = await fetch(satelliteUrl, {
       headers: {

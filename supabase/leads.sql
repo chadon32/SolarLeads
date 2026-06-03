@@ -59,6 +59,7 @@ alter table public.leads add column if not exists battery_cost integer;
 alter table public.leads add column if not exists referral_code text;
 alter table public.leads add column if not exists referred_by text;
 alter table public.leads add column if not exists report_pdf_url text;
+alter table public.leads add column if not exists report_snapshot jsonb;
 alter table public.leads add column if not exists normalized_email text;
 alter table public.leads add column if not exists normalized_phone text;
 alter table public.leads add column if not exists normalized_address text;

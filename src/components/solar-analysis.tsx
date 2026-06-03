@@ -5,6 +5,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ButtonLink } from "@/components/ui/button";
 import { formatDisplayAddress } from "@/lib/address-format";
 import {
+  getGoogleBoundsLiteral,
+  getRoofAnalysisViewport,
+} from "@/lib/roof-analysis-viewport";
+import {
   calculateSunlightQuality,
   getRoofQualityLabel,
   type RoofQualityTone,
@@ -191,11 +195,14 @@ const viewModes: Array<{ id: ViewMode; label: string }> = [
   { id: "overview", label: "Overview" },
   { id: "irradiance", label: "Sunlight" },
 ];
-const defaultLayerVisibility: LayerVisibility = {
-  panels: true,
-  roofPlanes: true,
-  sunlight: false,
-};
+
+function getInitialRoofAnalysisLayers(): LayerVisibility {
+  return {
+    panels: true,
+    roofPlanes: true,
+    sunlight: false,
+  };
+}
 
 const dsmPlaneExtractionCache = new Map<string, Promise<DsmPlaneExtraction | null>>();
 const DISPLAY_PANEL_HEIGHT_METERS = 1.7;
@@ -238,7 +245,7 @@ export function SolarAnalysis({
   const [errorMessage, setErrorMessage] = useState<string>("");
   const [viewMode, setViewMode] = useState<ViewMode>("overview");
   const [layerVisibility, setLayerVisibility] = useState<LayerVisibility>(
-    defaultLayerVisibility
+    getInitialRoofAnalysisLayers
   );
   const selectedPanelCount = activePanelCount ?? 0;
   const setSelectedPanelCount = useCallback(
@@ -276,6 +283,8 @@ export function SolarAnalysis({
         setResolvedProperty(null);
         setNotice(null);
         setErrorMessage("");
+        setViewMode("overview");
+        setLayerVisibility(getInitialRoofAnalysisLayers());
         onAnalysisChange?.(null);
       });
 
@@ -284,6 +293,9 @@ export function SolarAnalysis({
 
     const controller = new AbortController();
     let cancelled = false;
+
+    setViewMode("overview");
+    setLayerVisibility(getInitialRoofAnalysisLayers());
 
     const runAnalysis = async () => {
       try {
@@ -888,6 +900,7 @@ function ViewportCanvas({
   const overlayRunRef = useRef(0);
   const cameraFitTimeoutRef = useRef<number | null>(null);
   const cameraFitKeyRef = useRef<string | null>(null);
+  const [mapReady, setMapReady] = useState(false);
   const mapsApiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
   const cameraTarget = useMemo(
     () => buildRoofMapFitTarget({ property, roofData }),
@@ -920,7 +933,7 @@ function ViewportCanvas({
         mapElementRef.current.replaceChildren();
         mapRef.current = new googleApi.maps.Map(mapElementRef.current, {
           center,
-          zoom: 20,
+          zoom: cameraTarget.zoom,
           tilt: 0,
           mapTypeId: googleApi.maps.MapTypeId.SATELLITE,
           disableDefaultUI: true,
@@ -935,21 +948,10 @@ function ViewportCanvas({
       }
 
       mapRef.current.setCenter(center);
-      mapRef.current.setZoom(20);
+      mapRef.current.setZoom(cameraTarget.zoom);
       mapRef.current.setTilt(0);
       mapRef.current.setMapTypeId(googleApi.maps.MapTypeId.SATELLITE);
-
-      if (cameraFitTimeoutRef.current !== null) {
-        window.clearTimeout(cameraFitTimeoutRef.current);
-        cameraFitTimeoutRef.current = null;
-      }
-
-      cameraFitTimeoutRef.current = fitMapToRoofTarget({
-        map: mapRef.current,
-        padding: getMapFitPadding(mapElementRef.current),
-        target: cameraTarget,
-      });
-      cameraFitKeyRef.current = cameraTargetKey;
+      setMapReady(true);
     };
 
     void setupMap();
@@ -960,6 +962,7 @@ function ViewportCanvas({
         window.clearTimeout(cameraFitTimeoutRef.current);
         cameraFitTimeoutRef.current = null;
       }
+      setMapReady(false);
     };
   }, [cameraTarget, cameraTargetKey, center, mapsApiKey]);
 
@@ -973,6 +976,7 @@ function ViewportCanvas({
       overlayRefs.current = [];
       mapRef.current = null;
       mapElementRef.current?.replaceChildren();
+      setMapReady(false);
     };
   }, []);
 
@@ -980,7 +984,7 @@ function ViewportCanvas({
     let cancelled = false;
 
     const drawOverlays = async () => {
-      if (!mapRef.current || !mapsApiKey) {
+      if (!mapReady || !mapRef.current || !mapsApiKey) {
         return;
       }
 
@@ -1147,6 +1151,7 @@ function ViewportCanvas({
     annualFluxUrl,
     dsmUrl,
     layerVisibility,
+    mapReady,
     mapsApiKey,
     roofData,
     roofModelConfidence,
@@ -1261,11 +1266,15 @@ function LayerControl({
     id: keyof LayerVisibility;
     label: string;
     disabled?: boolean;
+    helper?: string;
   }> = [
     {
-      disabled: roofModelConfidence.mode !== "high",
       id: "panels",
-      label: roofModelConfidence.mode === "high" ? "Panels" : "Exact panels",
+      label: "Panels",
+      helper:
+        roofModelConfidence.mode === "high"
+          ? undefined
+          : "Estimated capacity view",
     },
     { id: "sunlight", label: "Sunlight quality" },
     { id: "roofPlanes", label: "Roof planes" },
@@ -1289,7 +1298,7 @@ function LayerControl({
             <span>{toggle.label}</span>
             <input
               type="checkbox"
-              checked={toggle.disabled ? false : layerVisibility[toggle.id]}
+              checked={layerVisibility[toggle.id]}
               disabled={toggle.disabled}
               onChange={(event) =>
                 onLayerVisibilityChange({
@@ -1302,6 +1311,11 @@ function LayerControl({
           </label>
         ))}
       </div>
+      {toggles.some((toggle) => toggle.helper) ? (
+        <p className="mt-2 px-1 text-[0.58rem] leading-4 text-white/58">
+          {toggles.find((toggle) => toggle.helper)?.helper}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -1408,6 +1422,7 @@ function clearGoogleOverlays(overlays: GoogleMapOverlayInstance[]) {
 type RoofMapFitTarget = {
   bounds: RoofGeoBounds | null;
   center: LatLngPoint | null;
+  zoom: number;
 };
 
 function fitMapToRoofTarget({
@@ -1419,7 +1434,7 @@ function fitMapToRoofTarget({
   padding: number;
   target: RoofMapFitTarget;
 }) {
-  const boundsLiteral = getBoundsLiteral(target.bounds);
+  const boundsLiteral = getGoogleBoundsLiteral(target.bounds);
 
   if (boundsLiteral && map.fitBounds) {
     map.fitBounds(boundsLiteral, padding);
@@ -1429,24 +1444,28 @@ function fitMapToRoofTarget({
         map.setCenter(target.center);
       }
 
-      map.setZoom(20);
+      const currentZoom = map.getZoom?.();
+      const framedZoom = Number.isFinite(currentZoom)
+        ? clampNumber(currentZoom ?? target.zoom, target.zoom, 21)
+        : target.zoom;
+      map.setZoom(framedZoom);
     }, 180);
   }
 
   if (target.center) {
     map.setCenter(target.center);
   }
-  map.setZoom(20);
+  map.setZoom(target.zoom);
 
   return null;
 }
 
 function getMapFitPadding(element: HTMLElement | null) {
   if (!element) {
-    return 80;
+    return 56;
   }
 
-  return element.clientWidth >= 768 ? 104 : 52;
+  return element.clientWidth >= 768 ? 72 : 40;
 }
 
 function getRoofMapFitTargetKey(target: RoofMapFitTarget) {
@@ -1470,14 +1489,20 @@ function buildRoofMapFitTarget({
   property: ResolvedProperty | null;
   roofData: RoofAnalysis;
 }): RoofMapFitTarget {
-  const buildingPoints = [
-    ...outlineToLatLngPoints(roofData.roofOutline, roofData.roofBounds),
-    ...boundsToLatLngPoints(roofData.roofBounds),
-  ];
-  const segmentPoints = roofData.roofSegments.flatMap((segment) => [
-    ...outlineToLatLngPoints(segment.outline, roofData.roofBounds),
-    ...boundsToLatLngPoints(segment.bounds),
-  ]);
+  const buildingPoints = getRoofAnalysisBounds({
+    includePanels: false,
+    property,
+    roofData,
+  });
+  const segmentPoints = roofData.roofSegments.flatMap((segment) => {
+    const outlinePoints = outlineToLatLngPoints(segment.outline, roofData.roofBounds);
+
+    if (outlinePoints.length >= 3) {
+      return outlinePoints;
+    }
+
+    return boundsToLatLngPoints(segment.bounds);
+  });
   const panelPoints = roofData.solarPanels.flatMap((panel) =>
     buildPanelCornerLatLngPoints({
       panel,
@@ -1505,21 +1530,72 @@ function buildRoofMapFitTarget({
     return {
       bounds: null,
       center: property,
+      zoom: 20,
     };
   }
 
-  const bounds = expandGeoBoundsByMeters(
-    latLngPointsToBounds(allPoints),
-    getPropertyContextMeters(allPoints)
-  );
+  const viewport = getRoofAnalysisViewport({
+    fallbackCenter: property,
+    points: allPoints,
+  });
 
   return {
-    bounds,
+    bounds: viewport.bounds,
     center:
-      getRoofBoundsCenter(roofData.roofBounds) ??
       getLatLngCentroid(centroidSource.filter(isValidLatLngPoint)) ??
-      getRoofBoundsCenter(bounds),
+      viewport.center ??
+      getRoofBoundsCenter(roofData.roofBounds),
+    zoom: viewport.staticMapZoom,
   };
+}
+
+function getRoofAnalysisBounds({
+  includePanels,
+  property,
+  roofData,
+}: {
+  includePanels: boolean;
+  property: ResolvedProperty | null;
+  roofData: RoofAnalysis;
+}) {
+  const roofOutlinePoints = outlineToLatLngPoints(
+    getVisualRoofOutline(roofData.roofOutline),
+    roofData.roofBounds
+  );
+  const usableOutlinePoints = outlineToLatLngPoints(
+    roofData.usableOutline.length >= 3
+      ? insetPolygon(roofData.usableOutline, VISUAL_USABLE_INSET_PERCENT * 0.45)
+      : roofData.usableOutline,
+    roofData.roofBounds
+  );
+  const usableSegmentPoints = roofData.roofSegments.flatMap((segment) =>
+    segment.usable
+      ? outlineToLatLngPoints(segment.outline, roofData.roofBounds)
+      : []
+  );
+  const panelPoints = includePanels
+    ? roofData.solarPanels.flatMap((panel) =>
+        buildPanelCornerLatLngPoints({
+          panel,
+          panels: roofData.solarPanels,
+          roofData,
+        })
+      )
+    : [];
+  const fallbackPoints = roofOutlinePoints.length
+    ? []
+    : [
+        ...boundsToLatLngPoints(roofData.roofBounds),
+        ...(property ? [property] : []),
+      ];
+
+  return [
+    ...roofOutlinePoints,
+    ...usableOutlinePoints,
+    ...usableSegmentPoints,
+    ...panelPoints,
+    ...fallbackPoints,
+  ].filter(isValidLatLngPoint);
 }
 
 function buildPanelCornerLatLngPoints({
@@ -1599,7 +1675,7 @@ function createRoofBoundsOverlay(
   bounds: RoofGeoBounds | null,
   map: GoogleMapInstance
 ) {
-  const boundsLiteral = getBoundsLiteral(bounds);
+  const boundsLiteral = getGoogleBoundsLiteral(bounds);
   if (!boundsLiteral) {
     return null;
   }
@@ -1921,8 +1997,22 @@ function createSolarPanelVisualOverlay({
   container.style.inset = "0";
   container.style.pointerEvents = "none";
   container.style.zIndex = "34";
+  let retryCount = 0;
+  let retryTimer: number | null = null;
 
   const overlay = new googleApi.maps.OverlayView();
+
+  const scheduleProjectionRetry = () => {
+    if (retryCount >= 18 || retryTimer !== null) {
+      return;
+    }
+
+    retryCount += 1;
+    retryTimer = window.setTimeout(() => {
+      retryTimer = null;
+      overlay.draw();
+    }, 120);
+  };
 
   overlay.onAdd = function onAdd() {
     this.getPanes()?.overlayLayer?.appendChild(container);
@@ -1931,6 +2021,7 @@ function createSolarPanelVisualOverlay({
   overlay.draw = function draw() {
     const projection = this.getProjection();
     container.replaceChildren();
+    let renderedPanels = 0;
 
     placements.forEach((placement, index) => {
       const centerPixel = projection.fromLatLngToDivPixel(
@@ -2008,10 +2099,19 @@ function createSolarPanelVisualOverlay({
       `;
       panelNode.dataset.panelIndex = String(index);
       container.appendChild(panelNode);
+      renderedPanels += 1;
     });
+
+    if (renderedPanels === 0 && placements.length > 0) {
+      scheduleProjectionRetry();
+    }
   };
 
   overlay.onRemove = function onRemove() {
+    if (retryTimer !== null) {
+      window.clearTimeout(retryTimer);
+      retryTimer = null;
+    }
     container.remove();
   };
 
@@ -3881,47 +3981,6 @@ function latLngPointsToBounds(points: LatLngPoint[]): RoofGeoBounds {
   };
 }
 
-function expandGeoBoundsByMeters(
-  bounds: RoofGeoBounds,
-  meters: number
-): RoofGeoBounds {
-  const centerLat = (bounds.northeast.lat + bounds.southwest.lat) / 2;
-  const metersPerDegreeLat = 111_320;
-  const metersPerDegreeLng =
-    metersPerDegreeLat * Math.max(Math.cos((centerLat * Math.PI) / 180), 0.01);
-  const latPadding = meters / metersPerDegreeLat;
-  const lngPadding = meters / metersPerDegreeLng;
-
-  return {
-    northeast: {
-      lat: bounds.northeast.lat + latPadding,
-      lng: bounds.northeast.lng + lngPadding,
-    },
-    southwest: {
-      lat: bounds.southwest.lat - latPadding,
-      lng: bounds.southwest.lng - lngPadding,
-    },
-  };
-}
-
-function getPropertyContextMeters(points: LatLngPoint[]) {
-  if (points.length < 2) {
-    return 12;
-  }
-
-  const bounds = latLngPointsToBounds(points);
-  const centerLat = (bounds.northeast.lat + bounds.southwest.lat) / 2;
-  const metersPerDegreeLat = 111_320;
-  const metersPerDegreeLng =
-    metersPerDegreeLat * Math.max(Math.cos((centerLat * Math.PI) / 180), 0.01);
-  const latSpanMeters =
-    Math.abs(bounds.northeast.lat - bounds.southwest.lat) * metersPerDegreeLat;
-  const lngSpanMeters =
-    Math.abs(bounds.northeast.lng - bounds.southwest.lng) * metersPerDegreeLng;
-
-  return clampNumber(Math.max(latSpanMeters, lngSpanMeters) * 0.22, 5, 12);
-}
-
 function getLatLngCentroid(points: LatLngPoint[]) {
   const validPoints = points.filter(isValidLatLngPoint);
 
@@ -3947,19 +4006,6 @@ function isValidLatLngPoint(point: LatLngPoint | null | undefined): point is Lat
       Math.abs(point.lat) <= 90 &&
       Math.abs(point.lng) <= 180
   );
-}
-
-function getBoundsLiteral(bounds: RoofGeoBounds | null) {
-  if (!bounds) {
-    return null;
-  }
-
-  return {
-    north: bounds.northeast.lat,
-    south: bounds.southwest.lat,
-    east: bounds.northeast.lng,
-    west: bounds.southwest.lng,
-  };
 }
 
 function getRoofBoundsCenter(bounds: RoofGeoBounds | null) {
