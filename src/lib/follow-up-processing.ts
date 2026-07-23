@@ -28,6 +28,8 @@ type LeadRow = {
   annual_energy_kwh?: number | null;
   panel_count?: number | null;
   system_size_kw?: number | null;
+  installer_contact_consent?: boolean | null;
+  marketing_email_consent?: boolean | null;
 };
 
 type ProcessResult = {
@@ -113,7 +115,7 @@ async function processSingleFollowUp(
 ) {
   const { data: lead, error: leadError } = await supabase
     .from("leads")
-    .select("id, name, email, phone, address, monthly_bill, estimated_savings, annual_savings, annual_energy_kwh, panel_count, system_size_kw")
+    .select("id, name, email, phone, address, monthly_bill, estimated_savings, annual_savings, annual_energy_kwh, panel_count, system_size_kw, installer_contact_consent, marketing_email_consent")
     .eq("id", step.lead_id)
     .single<LeadRow>();
 
@@ -149,6 +151,22 @@ async function processSingleFollowUp(
   }
 
   if (step.channel === "email") {
+    if (!lead.marketing_email_consent) {
+      const message = "Automated follow-up skipped: marketing email consent was not recorded.";
+      await updateFollowUpStatus(
+        supabase,
+        step.id,
+        "skipped",
+        message,
+        (step.attempts ?? 0) + 1
+      );
+      return {
+        followUpId: step.id,
+        status: "skipped" as const,
+        message,
+      };
+    }
+
     const outcome = await sendFollowUpEmail(lead, step);
     await updateFollowUpStatus(
       supabase,
@@ -216,7 +234,7 @@ async function sendFollowUpEmail(
         step.body,
         "",
         `Estimated annual savings: ${money(report.annualSavings)}`,
-        `Estimated ROI: ${report.estimatedRoiYears} years`,
+        `Estimated payback: ${report.estimatedRoiYears} years`,
       ].join("\n"),
       html: `
         <div style="font-family:Inter,Arial,sans-serif;color:#e5eefb;background:#05070b;padding:32px;">

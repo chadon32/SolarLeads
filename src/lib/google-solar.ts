@@ -1,3 +1,4 @@
+import "server-only";
 import {
   buildInvalidRoofAnalysis,
   insetPolygon,
@@ -11,15 +12,31 @@ import {
   type SolarPanelPlacement,
   type ShadingRisk,
 } from "@/lib/roof-analysis";
+import {
+  isArizonaAddressComponents,
+  isArizonaCoordinate,
+  looksLikeArizonaAddress,
+} from "@/lib/arizona-address";
+import {
+  ARIZONA_AVG_RATE_PER_KWH,
+  getRecommendedPanelCountForTarget,
+  getTargetAnnualUsageKwh,
+} from "@/lib/solar-metrics";
+import { selectPrimaryBuildingSegments } from "@/lib/building-filter";
+import { buildPanelPolygonPath, normalizeDegrees } from "@/lib/panel-geometry";
+import { regularizeSolarPanels } from "@/lib/panel-layout";
 
 const GOOGLE_MAPS_KEY = process.env.GOOGLE_MAPS_API_KEY;
 const GOOGLE_SOLAR_KEY =
   process.env.GOOGLE_SOLAR_API_KEY ??
   process.env.GOOGLE_MAPS_API_KEY;
 
-const AZ_RATE_PER_KWH = 0.13;
-
 export type GeocodedAddress = {
+  addressComponents?: Array<{
+    long_name?: string;
+    short_name?: string;
+    types?: string[];
+  }>;
   formattedAddress: string;
   lat: number;
   lng: number;
@@ -151,10 +168,15 @@ export async function geocodeAddress(
   const response = await fetch(geocodeUrl, {
     headers: { Accept: "application/json" },
     cache: "no-store",
-    signal,
+    signal: withRequestTimeout(signal),
   });
   const payload = (await response.json().catch(() => ({}))) as {
     results?: Array<{
+      address_components?: Array<{
+        long_name?: string;
+        short_name?: string;
+        types?: string[];
+      }>;
       formatted_address?: string;
       partial_match?: boolean;
       geometry?: {
@@ -185,6 +207,7 @@ export async function geocodeAddress(
   }
 
   return {
+    addressComponents: result.address_components,
     formattedAddress: result.formatted_address ?? address,
     lat: Number(location.lat),
     lng: Number(location.lng),
@@ -209,6 +232,14 @@ export function validateGeocodedResidentialSite(geocoded: GeocodedAddress) {
   const hasResidentialAddressSignal = geocoded.types.some((type) =>
     ["street_address", "premise"].includes(type)
   );
+
+  if (
+    !isArizonaCoordinate(geocoded.lat, geocoded.lng) ||
+    (!isArizonaAddressComponents(geocoded.addressComponents) &&
+      !looksLikeArizonaAddress(geocoded.formattedAddress))
+  ) {
+    return "Solartelligence currently supports residential properties in Arizona only.";
+  }
 
   if (geocoded.locationType === "APPROXIMATE") {
     return "This location is too approximate for rooftop analysis. Please choose a full residential address.";
@@ -241,7 +272,7 @@ export async function fetchSolarBuildingInsights(
   const response = await fetch(url, {
     headers: { Accept: "application/json" },
     cache: "no-store",
-    signal,
+    signal: withRequestTimeout(signal),
   });
 
   const payload = (await response.json().catch(() => ({}))) as SolarBuildingInsights & {
@@ -281,7 +312,7 @@ export async function fetchSolarDataLayers(
   const response = await fetch(url, {
     headers: { Accept: "application/json" },
     cache: "no-store",
-    signal,
+    signal: withRequestTimeout(signal),
   });
 
   const payload = (await response.json().catch(() => ({}))) as SolarDataLayers & {
@@ -300,6 +331,17 @@ export function buildSolarRoofAnalysis(params: {
   lat: number;
   lng: number;
   insights: SolarBuildingInsights;
+  /**
+   * Segment indices judged (via terrain evidence) to sit on a structure
+   * detached from the queried building — excluded from the analysis.
+   */
+  detachedSegmentIndices?: Set<number>;
+  /**
+   * Raw panel-array indices to exclude — modules hanging past the roof edge
+   * (terrain far below their plane) or sitting over raised rooftop
+   * equipment (terrain far above their plane).
+   */
+  excludedPanelIndices?: Set<number>;
 }): RoofAnalysis {
   const solarPotential = params.insights.solarPotential;
 
@@ -313,23 +355,107 @@ export function buildSolarRoofAnalysis(params: {
     });
   }
 
+  // Keep API order: solarPanels[].segmentIndex indexes into this array.
+  const roofSegments = [...(solarPotential.roofSegmentStats ?? [])];
+  const allSolarPanels = (solarPotential.solarPanels ?? [])
+    .map((panel) => normalizeSolarPanel(panel, roofSegments))
+    // Modules over the roof edge or raised equipment (AC units, vents).
+    .filter(
+      (_, index) => !params.excludedPanelIndices?.has(index)
+    );
+
+  // For attached or closely-spaced homes the Solar API can span the
+  // neighbor's roof. Keep only the building at the queried address.
+  const segmentBoxes = roofSegments.flatMap((segment, index) => {
+    const sw = segment.boundingBox?.sw;
+    const ne = segment.boundingBox?.ne;
+    if (
+      !Number.isFinite(sw?.latitude) ||
+      !Number.isFinite(sw?.longitude) ||
+      !Number.isFinite(ne?.latitude) ||
+      !Number.isFinite(ne?.longitude)
+    ) {
+      return [];
+    }
+    return [
+      {
+        index,
+        north: Number(ne!.latitude),
+        south: Number(sw!.latitude),
+        east: Number(ne!.longitude),
+        west: Number(sw!.longitude),
+      },
+    ];
+  });
+  const primarySegmentIndices = selectPrimaryBuildingSegments({
+    boxes: segmentBoxes,
+    targetLat: params.lat,
+    targetLng: params.lng,
+  });
+  // Segments without a usable box cannot be excluded fairly.
+  roofSegments.forEach((_, index) => {
+    if (!segmentBoxes.some((box) => box.index === index)) {
+      primarySegmentIndices.add(index);
+    }
+  });
+  // Terrain-verified detachment (panel clusters split by a ground-level
+  // gap) overrides box adjacency — fused Solar API footprints have
+  // overlapping boxes across genuinely separate homes.
+  params.detachedSegmentIndices?.forEach((index) => {
+    primarySegmentIndices.delete(index);
+  });
+  const droppedNeighborSegments =
+    roofSegments.length - primarySegmentIndices.size;
+  const keptRoofSegments = roofSegments.filter((_, index) =>
+    primarySegmentIndices.has(index)
+  );
+  const solarPanels =
+    droppedNeighborSegments > 0
+      ? allSolarPanels.filter((panel) =>
+          primarySegmentIndices.has(panel.segmentIndex)
+        )
+      : allSolarPanels;
+
+  const segmentArea = (segment: RoofSegmentStats) =>
+    segment.stats?.areaMeters2 ?? segment.stats?.groundAreaMeters2 ?? 0;
+  const keptSegmentAreaM2 = keptRoofSegments.reduce(
+    (sum, segment) => sum + segmentArea(segment),
+    0
+  );
+  const totalSegmentAreaM2 = roofSegments.reduce(
+    (sum, segment) => sum + segmentArea(segment),
+    0
+  );
+  const keptAreaRatio =
+    droppedNeighborSegments > 0 && totalSegmentAreaM2 > 0
+      ? keptSegmentAreaM2 / totalSegmentAreaM2
+      : 1;
+
   const roofStats = solarPotential.wholeRoofStats ?? solarPotential.buildingStats;
-  const roofAreaM2 = Math.max(
+  const wholeRoofAreaM2 = Math.max(
     roofStats?.areaMeters2 ??
       roofStats?.groundAreaMeters2 ??
       solarPotential.maxArrayAreaMeters2 ??
       0,
     0
   );
+  const roofAreaM2 =
+    droppedNeighborSegments > 0 && keptSegmentAreaM2 > 0
+      ? roundTo(keptSegmentAreaM2, 1)
+      : wholeRoofAreaM2;
   const usableRoofAreaM2 = Math.max(
     0,
-    Math.min(solarPotential.maxArrayAreaMeters2 ?? 0, roofAreaM2)
+    Math.min((solarPotential.maxArrayAreaMeters2 ?? 0) * keptAreaRatio, roofAreaM2)
   );
-  const maxArrayPanelsCount = Math.max(
-    Math.round(solarPotential.maxArrayPanelsCount ?? 0),
-    0
+  const maxArrayPanelsCount =
+    droppedNeighborSegments > 0
+      ? solarPanels.length
+      : Math.max(Math.round(solarPotential.maxArrayPanelsCount ?? 0), 0);
+  const panelCapacityWatts = clamp(
+    Number(solarPotential.panelCapacityWatts ?? 400),
+    100,
+    800
   );
-  const panelCapacityWatts = 400;
   const panelWidthMeters = Math.max(
     Number(solarPotential.panelWidthMeters ?? 1.1),
     0.5
@@ -338,9 +464,14 @@ export function buildSolarRoofAnalysis(params: {
     Number(solarPotential.panelHeightMeters ?? 1.7),
     1
   );
-  const rawSolarPanelConfigs = [...(solarPotential.solarPanelConfigs ?? [])].sort(
-    (left, right) => (left.panelsCount ?? 0) - (right.panelsCount ?? 0)
-  );
+  const rawSolarPanelConfigs = [...(solarPotential.solarPanelConfigs ?? [])]
+    .sort((left, right) => (left.panelsCount ?? 0) - (right.panelsCount ?? 0))
+    // Neighbor-inclusive configs would overstate this home's capacity.
+    .filter(
+      (config) =>
+        droppedNeighborSegments === 0 ||
+        Math.round(config.panelsCount ?? 0) <= solarPanels.length
+    );
   const solarPanelConfigs = normalizeSolarPanelConfigs(
     rawSolarPanelConfigs
   );
@@ -351,18 +482,19 @@ export function buildSolarRoofAnalysis(params: {
     rawSolarPanelConfigs.find(
       (config) => Math.round(config.panelsCount ?? 0) === maxConfig?.panelsCount
     ) ?? rawSolarPanelConfigs.at(-1);
-  const recommendedPanelCount = Math.max(
+  const roofBox =
+    droppedNeighborSegments > 0 && segmentBoxes.length
+      ? unionSegmentBoxes(
+          segmentBoxes.filter((box) => primarySegmentIndices.has(box.index))
+        )
+      : params.insights.boundingBox;
+  // Physical max capacity (slider upper bound). Default homeowner size is
+  // chosen later as a bill-offset / typical-usage recommendation.
+  const maxPanelCapacity = Math.max(
     0,
-    Math.round(maxConfig?.panelsCount ?? maxArrayPanelsCount)
-  );
-  const roofSegments = [...(solarPotential.roofSegmentStats ?? [])].sort(
-    (left, right) =>
-      (right.stats?.areaMeters2 ?? right.stats?.groundAreaMeters2 ?? 0) -
-      (left.stats?.areaMeters2 ?? left.stats?.groundAreaMeters2 ?? 0)
-  );
-  const roofBox = params.insights.boundingBox;
-  const solarPanels = (solarPotential.solarPanels ?? []).map((panel) =>
-    normalizeSolarPanel(panel)
+    maxArrayPanelsCount,
+    solarPanels.length,
+    Math.round(maxConfig?.panelsCount ?? 0)
   );
 
   if (!roofBox?.sw || !roofBox?.ne) {
@@ -380,7 +512,7 @@ export function buildSolarRoofAnalysis(params: {
     roofBox
   );
   const roofOutline = buildDetectedRoofOutline(
-    roofSegments,
+    keptRoofSegments,
     roofBox,
     usableOutlineFromPanels
   );
@@ -395,19 +527,23 @@ export function buildSolarRoofAnalysis(params: {
     usableOutlineFromPanels.length >= 3
       ? insetPolygon(usableOutlineFromPanels, 2.5)
       : insetPolygon(roofOutline, 10 - Math.min(usablePctRoof / 25, 3.5));
-  const roofShape = deriveRoofShape(roofSegments);
-  const primarySegment = roofSegments[0];
+  const roofShape = deriveRoofShape(keptRoofSegments);
+  const primarySegment = [...keptRoofSegments].sort(
+    (left, right) =>
+      (right.stats?.areaMeters2 ?? right.stats?.groundAreaMeters2 ?? 0) -
+      (left.stats?.areaMeters2 ?? left.stats?.groundAreaMeters2 ?? 0)
+  )[0];
   const primaryRoofAzimuth = clamp(
     Math.round(primarySegment?.azimuthDegrees ?? 180),
     0,
     359
   );
   const pitchDeg = roundTo(
-    roofSegments.length > 0
-      ? roofSegments.reduce(
+    keptRoofSegments.length > 0
+      ? keptRoofSegments.reduce(
           (sum, segment) => sum + Math.max(Number(segment.pitchDegrees ?? 0), 0),
           0
-        ) / roofSegments.length
+        ) / keptRoofSegments.length
       : Number(primarySegment?.pitchDegrees ?? 0),
     1
   );
@@ -420,31 +556,55 @@ export function buildSolarRoofAnalysis(params: {
   });
   const widthM = roundTo(rawWidthM > 0 ? rawWidthM : inferredFootprint.widthM, 1);
   const depthM = roundTo(rawDepthM > 0 ? rawDepthM : inferredFootprint.depthM, 1);
-  const shadingRisk = classifyShadingRisk(solarPotential, roofSegments);
-  const obstructionOutlines = buildObstructionOutlines(roofSegments, roofBox, shadingRisk);
-  const panelCount = recommendedPanelCount || maxArrayPanelsCount;
-  const trimmedSolarPanels =
-    solarPanels.length > panelCount ? solarPanels.slice(0, panelCount) : solarPanels;
+  const shadingRisk = classifyShadingRisk(solarPotential, keptRoofSegments);
+  const obstructionOutlines = buildObstructionOutlines(keptRoofSegments, roofBox, shadingRisk);
+  // Keep full Google placements for the map slider; default economics use a
+  // practical bill-offset size rather than max theoretical packing.
+  // Placements are snapped onto per-plane rack grids so the rendered array
+  // reads like an installer layout (regularizeSolarPanels reverts any plane
+  // it cannot align honestly).
+  const trimmedSolarPanels = regularizeSolarPanels({
+    panels:
+      solarPanels.length > maxPanelCapacity
+        ? solarPanels.slice(0, maxPanelCapacity)
+        : solarPanels,
+    panelWidthMeters,
+    panelHeightMeters,
+  });
+  const panelCount = getRecommendedPanelCountForTarget({
+    maxPanelCount: Math.max(maxPanelCapacity, trimmedSolarPanels.length),
+    solarPanelConfigs,
+    solarPanels: trimmedSolarPanels,
+    targetAnnualKwh: getTargetAnnualUsageKwh(null),
+    fallbackAnnualKwh:
+      maxPanelCapacity > 0 && Number(maxConfig?.yearlyEnergyDcKwh ?? 0) > 0
+        ? Number(maxConfig?.yearlyEnergyDcKwh ?? 0) / maxPanelCapacity
+        : panelCapacityWatts * 4.8,
+  });
+  const recommendedConfig =
+    findPanelConfig(solarPanelConfigs, panelCount) ?? maxConfig;
   const energyPerPanelKwh =
-    panelCount > 0 && Number(maxConfig?.yearlyEnergyDcKwh ?? 0) > 0
-      ? Number(maxConfig?.yearlyEnergyDcKwh ?? 0) / panelCount
+    panelCount > 0 && Number(recommendedConfig?.yearlyEnergyDcKwh ?? 0) > 0
+      ? Number(recommendedConfig?.yearlyEnergyDcKwh ?? 0) / panelCount
       : panelCapacityWatts * 4.8;
   const annualKwh = Math.round(
-    Number(maxConfig?.yearlyEnergyDcKwh ?? 0) > 0
-      ? Number(maxConfig?.yearlyEnergyDcKwh ?? 0)
+    Number(recommendedConfig?.yearlyEnergyDcKwh ?? 0) > 0
+      ? Number(recommendedConfig?.yearlyEnergyDcKwh ?? 0)
       : trimmedSolarPanels.length > 0
-        ? trimmedSolarPanels.reduce(
-            (sum, panel) => sum + Math.max(panel.yearlyEnergyDcKwh, 0),
-            0
-          )
+        ? trimmedSolarPanels
+            .slice(0, panelCount)
+            .reduce((sum, panel) => sum + Math.max(panel.yearlyEnergyDcKwh, 0), 0)
         : panelCount * energyPerPanelKwh
   );
-  const annualSavingsUSD = Math.round(annualKwh * AZ_RATE_PER_KWH);
+  const annualSavingsUSD = Math.round(
+    annualKwh * ARIZONA_AVG_RATE_PER_KWH
+  );
   const roofSegmentsOut = buildRoofSegmentOutlines(
     roofSegments,
+    primarySegmentIndices,
     roofBox,
     rawMaxConfig?.roofSegmentSummaries ?? [],
-    panelCount,
+    maxPanelCapacity || panelCount,
     pitchDeg,
     primaryRoofAzimuth,
     solarPanels,
@@ -453,22 +613,22 @@ export function buildSolarRoofAnalysis(params: {
   );
   const propertyType = inferPropertyType({
     roofAreaM2,
-    panelCount,
+    panelCount: maxPanelCapacity || panelCount,
     widthM,
     depthM,
-    roofSegments,
+    roofSegments: keptRoofSegments,
     imageryQuality: params.insights.imageryQuality,
   });
   const confidence =
     String(params.insights.imageryQuality ?? "").toUpperCase() === "HIGH"
       ? "high"
-      : roofSegments.length > 0
+      : keptRoofSegments.length > 0
         ? "medium"
         : "low";
   const rooftopConfidenceScore = computeRooftopConfidenceScore({
     roofAreaM2,
-    panelCount,
-    roofSegmentsCount: roofSegments.length,
+    panelCount: maxPanelCapacity || panelCount,
+    roofSegmentsCount: keptRoofSegments.length,
     imageryQuality: params.insights.imageryQuality,
     usablePctRoof,
     roofBounds,
@@ -477,7 +637,7 @@ export function buildSolarRoofAnalysis(params: {
   if (
     propertyType !== "residential" ||
     !roofBounds ||
-    panelCount < 4 ||
+    (maxPanelCapacity || panelCount) < 4 ||
     roofAreaM2 < 25 ||
     roofSegmentsOut.length === 0 ||
     rooftopConfidenceScore < 55
@@ -490,7 +650,7 @@ export function buildSolarRoofAnalysis(params: {
           : "This property does not appear to be a detached residential rooftop.",
       confidenceNote: buildConfidenceNote(
         params.insights.imageryQuality ?? "UNKNOWN",
-        roofSegments.length
+        keptRoofSegments.length
       ),
     });
   }
@@ -510,8 +670,9 @@ export function buildSolarRoofAnalysis(params: {
       usablePctRoof,
       primaryRoofAzimuth,
       panelCount,
-      originalPanelCandidateCount: solarPanels.length || panelCount,
-      acceptedPanelCount: panelCount,
+      originalPanelCandidateCount:
+        solarPanels.length || maxPanelCapacity || panelCount,
+      acceptedPanelCount: maxPanelCapacity || panelCount,
       rejectedPanelCandidateCount: 0,
       systemKw: roundTo((panelCount * panelCapacityWatts) / 1000, 1),
       annualKwh,
@@ -525,7 +686,7 @@ export function buildSolarRoofAnalysis(params: {
       panelHeightMeters,
       annualSunlightHours: Math.round(solarPotential.maxSunshineHoursPerYear ?? 1800),
       shadingRisk,
-      shadeNote: buildShadeNote(shadingRisk, roofSegments.length),
+      shadeNote: buildShadeNote(shadingRisk, keptRoofSegments.length),
       rooftopConfidenceScore,
       roofOutline,
       usableOutline,
@@ -537,7 +698,7 @@ export function buildSolarRoofAnalysis(params: {
       confidence,
       confidenceNote: buildConfidenceNote(
         params.insights.imageryQuality ?? "UNKNOWN",
-        roofSegments.length
+        keptRoofSegments.length
       ),
       source: "solar-api",
     },
@@ -549,14 +710,36 @@ export function buildSolarRoofAnalysis(params: {
   );
 }
 
-function normalizeSolarPanel(panel: SolarPanel): SolarPanelPlacement {
+function normalizeSolarPanel(
+  panel: SolarPanel,
+  roofSegments: RoofSegmentStats[]
+): SolarPanelPlacement {
+  // Google SolarPanel has no azimuth/pitch — only segmentIndex. Orientation,
+  // facing direction, and pitch all come from roofSegmentStats[segmentIndex].
+  // Bake them onto the panel so drawing stays correct even when the display
+  // list only keeps the largest few segments.
+  const segmentIndex = Math.max(0, Math.round(Number(panel.segmentIndex ?? 0)));
+  const segment = roofSegments[segmentIndex];
+  const segmentAzimuth = segment?.azimuthDegrees;
+  const panelAzimuth = Number(panel.azimuthDegrees);
+  const azimuthSource = Number.isFinite(panelAzimuth)
+    ? panelAzimuth
+    : Number.isFinite(Number(segmentAzimuth))
+      ? Number(segmentAzimuth)
+      : 180;
+  const pitchSource = Number(segment?.pitchDegrees);
+  const pitchDeg = Number.isFinite(pitchSource)
+    ? clamp(pitchSource, 0, 89)
+    : 0;
+
   return {
     center: {
       lat: Number(panel.center?.latitude ?? 0),
       lng: Number(panel.center?.longitude ?? 0),
     },
     orientation: panel.orientation === "LANDSCAPE" ? "LANDSCAPE" : "PORTRAIT",
-    azimuthDeg: clamp(Math.round(Number(panel.azimuthDegrees ?? 180)), 0, 359),
+    azimuthDeg: clamp(Math.round(azimuthSource), 0, 359),
+    pitchDeg,
     rowIndex: Number.isFinite(Number(panel.rowIndex))
       ? Math.round(Number(panel.rowIndex))
       : null,
@@ -564,7 +747,7 @@ function normalizeSolarPanel(panel: SolarPanel): SolarPanelPlacement {
       ? Math.round(Number(panel.columnIndex))
       : null,
     yearlyEnergyDcKwh: Math.max(0, Number(panel.yearlyEnergyDcKwh ?? 0)),
-    segmentIndex: Math.max(0, Math.round(Number(panel.segmentIndex ?? 0))),
+    segmentIndex,
   };
 }
 
@@ -684,12 +867,28 @@ function buildShadeNote(shadingRisk: ShadingRisk, segmentsCount: number) {
   return "Solar API indicates strong, even roof sunshine across the main roof planes.";
 }
 
+function unionSegmentBoxes(
+  boxes: Array<{ north: number; south: number; east: number; west: number }>
+): LatLngBox {
+  return {
+    ne: {
+      latitude: Math.max(...boxes.map((box) => box.north)),
+      longitude: Math.max(...boxes.map((box) => box.east)),
+    },
+    sw: {
+      latitude: Math.min(...boxes.map((box) => box.south)),
+      longitude: Math.min(...boxes.map((box) => box.west)),
+    },
+  };
+}
+
 function buildConfidenceNote(imageryQuality: string, segmentCount: number) {
   return `Solar API imagery quality: ${imageryQuality.toLowerCase()}. The analysis used ${segmentCount} roof segments from the live building insights response.`;
 }
 
 function buildRoofSegmentOutlines(
   segments: RoofSegmentStats[],
+  keepIndices: Set<number>,
   roofBox: LatLngBox,
   segmentSummaries: NonNullable<SolarPanelConfig["roofSegmentSummaries"]>,
   totalPanels: number,
@@ -703,26 +902,68 @@ function buildRoofSegmentOutlines(
     (sum, segment) => sum + (segment.stats?.areaMeters2 ?? segment.stats?.groundAreaMeters2 ?? 0),
     0
   );
-  const fallbackOutlines = [
-    { label: "primary" as RoofPlaneLabel, inset: 4 },
-    { label: "secondary" as RoofPlaneLabel, inset: 10 },
-    { label: "garage" as RoofPlaneLabel, inset: 16 },
+  const fallbackLabels = [
+    "primary" as RoofPlaneLabel,
+    "secondary" as RoofPlaneLabel,
+    "garage" as RoofPlaneLabel,
   ];
 
-  return segments.slice(0, 3).map((segment, index) => {
-    const areaM2 = segment.stats?.areaMeters2 ?? segment.stats?.groundAreaMeters2 ?? 0;
+  // Keep original API segmentIndex (panels reference it). Prefer every segment
+  // that actually hosts panels so map outlines wrap the full layout — not only
+  // the three largest faces (which left panels looking "off the roof").
+  const ranked = segments
+    .map((segment, originalIndex) => {
+      const areaM2 =
+        segment.stats?.areaMeters2 ?? segment.stats?.groundAreaMeters2 ?? 0;
+      const panelsOnSegment = panels.filter(
+        (panel) => panel.segmentIndex === originalIndex
+      ).length;
+      return { areaM2, originalIndex, panelsOnSegment, segment };
+    })
+    .filter((entry) => keepIndices.has(entry.originalIndex))
+    .filter((entry) => entry.panelsOnSegment > 0 || entry.areaM2 >= 12)
+    .sort((left, right) => {
+      if (right.panelsOnSegment !== left.panelsOnSegment) {
+        return right.panelsOnSegment - left.panelsOnSegment;
+      }
+      return right.areaM2 - left.areaM2;
+    });
+
+  const selected =
+    ranked.length > 0
+      ? ranked
+      : segments
+          .map((segment, originalIndex) => ({
+            areaM2:
+              segment.stats?.areaMeters2 ??
+              segment.stats?.groundAreaMeters2 ??
+              0,
+            originalIndex,
+            panelsOnSegment: 0,
+            segment,
+          }))
+          .filter((entry) => keepIndices.has(entry.originalIndex))
+          .sort((left, right) => right.areaM2 - left.areaM2)
+          .slice(0, 3);
+
+  return selected.map(({ areaM2, originalIndex, panelsOnSegment, segment }, rank) => {
     const summary = segmentSummaries.find(
-      (entry) => Number(entry.segmentIndex ?? index) === index
+      (entry) => Number(entry.segmentIndex ?? originalIndex) === originalIndex
     );
     const share = roofArea > 0 ? areaM2 / roofArea : 1 / Math.max(segments.length, 1);
     const panelsFit = Math.max(
       0,
-      Math.round(summary?.panelsCount ?? totalPanels * share)
+      Math.round(
+        summary?.panelsCount ??
+          (panelsOnSegment > 0 ? panelsOnSegment : totalPanels * share)
+      )
     );
-    const label = fallbackOutlines[index]?.label ?? "primary";
+    const label =
+      fallbackLabels[rank] ??
+      (`plane ${rank + 1}` as RoofPlaneLabel);
     const panelOutline = buildSegmentOutlineFromPanels({
       panels,
-      segmentIndex: index,
+      segmentIndex: originalIndex,
       roofBox,
       panelWidthMeters,
       panelHeightMeters,
@@ -733,7 +974,7 @@ function buildRoofSegmentOutlines(
         ? panelOutline
         : segment.boundingBox
           ? boxToOutline(segment.boundingBox, roofBox)
-          : buildFallbackSegmentOutline(index);
+          : buildFallbackSegmentOutline(Math.min(rank, 2));
     const sunshineScore = medianSunshine(segment.stats?.sunshineQuantiles ?? []);
     const usable =
       areaM2 >= 8 &&
@@ -748,6 +989,7 @@ function buildRoofSegmentOutlines(
       usable,
       outline,
       bounds: toRoofGeoBounds(segment.boundingBox),
+      segmentIndex: originalIndex,
     };
   });
 }
@@ -824,12 +1066,14 @@ function buildSegmentOutlineFromPanels({
   }
 
   const points = segmentPanels.flatMap((panel) =>
-    getPanelCornerCoordinates({
+    buildPanelPolygonPath({
+      fallbackAzimuthDeg: Number.isFinite(panel.azimuthDeg)
+        ? panel.azimuthDeg
+        : fallbackAzimuth,
       panel,
-      panels: segmentPanels,
-      panelWidthMeters,
       panelHeightMeters,
-      fallbackAzimuth,
+      panelWidthMeters,
+      panels: segmentPanels,
     }).map((corner) =>
       toNormalizedPoint(
         {
@@ -846,119 +1090,6 @@ function buildSegmentOutlineFromPanels({
   }
 
   return insetPolygon(convexHull(points), -1.8);
-}
-
-function getPanelCornerCoordinates({
-  panel,
-  panels,
-  panelWidthMeters,
-  panelHeightMeters,
-  fallbackAzimuth,
-}: {
-  panel: SolarPanelPlacement;
-  panels: SolarPanelPlacement[];
-  panelWidthMeters: number;
-  panelHeightMeters: number;
-  fallbackAzimuth: number;
-}) {
-  const shortSide = Math.min(panelWidthMeters, panelHeightMeters);
-  const longSide = Math.max(panelWidthMeters, panelHeightMeters);
-  const widthMeters = panel.orientation === "LANDSCAPE" ? longSide : shortSide;
-  const heightMeters = panel.orientation === "LANDSCAPE" ? shortSide : longSide;
-  const halfWidth = widthMeters / 2;
-  const halfHeight = heightMeters / 2;
-  const rotation = (inferPanelRotationDeg(panel, panels, fallbackAzimuth) * Math.PI) / 180;
-  const corners = [
-    { east: -halfWidth, north: -halfHeight },
-    { east: halfWidth, north: -halfHeight },
-    { east: halfWidth, north: halfHeight },
-    { east: -halfWidth, north: halfHeight },
-  ];
-
-  return corners.map((corner) => {
-    const rotatedEast =
-      corner.east * Math.cos(rotation) + corner.north * Math.sin(rotation);
-    const rotatedNorth =
-      -corner.east * Math.sin(rotation) + corner.north * Math.cos(rotation);
-
-    return offsetLatLngMeters({
-      lat: panel.center.lat,
-      lng: panel.center.lng,
-      eastMeters: rotatedEast,
-      northMeters: rotatedNorth,
-    });
-  });
-}
-
-function inferPanelRotationDeg(
-  panel: SolarPanelPlacement,
-  panels: SolarPanelPlacement[],
-  fallbackAzimuth: number
-) {
-  const rowNeighbor = panels
-    .filter(
-      (candidate) =>
-        candidate !== panel &&
-        candidate.rowIndex !== null &&
-        candidate.rowIndex === panel.rowIndex &&
-        candidate.columnIndex !== null &&
-        panel.columnIndex !== null
-    )
-    .sort(
-      (left, right) =>
-        Math.abs((left.columnIndex ?? 0) - (panel.columnIndex ?? 0)) -
-        Math.abs((right.columnIndex ?? 0) - (panel.columnIndex ?? 0))
-    )[0];
-
-  if (rowNeighbor) {
-    return normalizeDegrees(
-      bearingDegrees(panel.center.lat, panel.center.lng, rowNeighbor.center.lat, rowNeighbor.center.lng) - 90
-    );
-  }
-
-  const columnNeighbor = panels
-    .filter(
-      (candidate) =>
-        candidate !== panel &&
-        candidate.columnIndex !== null &&
-        candidate.columnIndex === panel.columnIndex &&
-        candidate.rowIndex !== null &&
-        panel.rowIndex !== null
-    )
-    .sort(
-      (left, right) =>
-        Math.abs((left.rowIndex ?? 0) - (panel.rowIndex ?? 0)) -
-        Math.abs((right.rowIndex ?? 0) - (panel.rowIndex ?? 0))
-    )[0];
-
-  if (columnNeighbor) {
-    return normalizeDegrees(
-      bearingDegrees(panel.center.lat, panel.center.lng, columnNeighbor.center.lat, columnNeighbor.center.lng)
-    );
-  }
-
-  return normalizeDegrees((Number.isFinite(panel.azimuthDeg) ? panel.azimuthDeg : fallbackAzimuth) - 90);
-}
-
-function offsetLatLngMeters({
-  lat,
-  lng,
-  eastMeters,
-  northMeters,
-}: {
-  lat: number;
-  lng: number;
-  eastMeters: number;
-  northMeters: number;
-}) {
-  const metersPerDegreeLat = 111_320;
-  const metersPerDegreeLng =
-    metersPerDegreeLat * Math.max(Math.cos((lat * Math.PI) / 180), 0.01);
-
-  return {
-    lat: lat + northMeters / metersPerDegreeLat,
-    lng: lng + eastMeters / metersPerDegreeLng,
-  };
 }
 
 function buildObstructionOutlines(
@@ -1237,30 +1368,18 @@ function haversineMeters(
 }
 
 function angularDistance(left: number, right: number) {
-  const delta = Math.abs(((left - right) % 360) + 360) % 360;
+  const delta = Math.abs(normalizeDegrees(left) - normalizeDegrees(right));
   return Math.min(delta, 360 - delta);
-}
-
-function bearingDegrees(fromLat: number, fromLng: number, toLat: number, toLng: number) {
-  const toRadians = (value: number) => (value * Math.PI) / 180;
-  const toDegrees = (value: number) => (value * 180) / Math.PI;
-  const lat1 = toRadians(fromLat);
-  const lat2 = toRadians(toLat);
-  const deltaLng = toRadians(toLng - fromLng);
-  const y = Math.sin(deltaLng) * Math.cos(lat2);
-  const x =
-    Math.cos(lat1) * Math.sin(lat2) -
-    Math.sin(lat1) * Math.cos(lat2) * Math.cos(deltaLng);
-
-  return normalizeDegrees(toDegrees(Math.atan2(y, x)));
-}
-
-function normalizeDegrees(value: number) {
-  return ((value % 360) + 360) % 360;
 }
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
+}
+
+function withRequestTimeout(signal?: AbortSignal, timeoutMs = 12_000) {
+  const timeout = AbortSignal.timeout(timeoutMs);
+
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
 }
 
 function roundTo(value: number, digits: number) {

@@ -1,3 +1,5 @@
+import "server-only";
+
 import { Resend } from "resend";
 import { isKillSwitchEnabled } from "@/lib/abuse-protection";
 import { formatDisplayAddress } from "@/lib/address-format";
@@ -27,6 +29,7 @@ export type LeadNotificationInput = {
   leadId: string;
   leadScoreLabel?: string | null;
   leadScoreValue?: number | null;
+  installerContactConsent?: boolean;
   monthlyBill?: number | null;
   name: string;
   panelCount?: number | null;
@@ -54,7 +57,13 @@ export async function sendLeadNotifications(
   const [homeownerEmail, adminEmailResult] =
     await Promise.all([
       sendHomeownerReportEmail(input),
-      sendAdminLeadEmail(input),
+      input.installerContactConsent
+        ? sendAdminLeadEmail(input)
+        : Promise.resolve({
+            ok: false,
+            reason: "installer_contact_not_requested",
+            skipped: true,
+          } satisfies NotificationResult),
     ]);
   const summary = {
     adminEmail: adminEmailResult,
@@ -86,7 +95,7 @@ export async function sendTestNotificationEmail({
   });
 }
 
-async function sendHomeownerReportEmail(
+export async function sendHomeownerReportEmail(
   input: LeadNotificationInput
 ): Promise<NotificationResult> {
   if (!input.email) {
@@ -108,7 +117,9 @@ async function sendHomeownerReportEmail(
     "",
     "What happens next:",
     "1. Review your preliminary roof and savings estimate.",
-    "2. A solar specialist can verify final design, pricing, incentives, and utility details.",
+    input.installerContactConsent
+      ? "2. Your request for installer follow-up has been recorded."
+      : "2. If you choose, you can request installer verification later.",
     "3. You decide when, or if, you want to move forward.",
     "",
     "This is a preliminary estimate. Final design, pricing, incentives, and savings require installer confirmation.",
@@ -135,6 +146,7 @@ async function sendAdminLeadEmail(
   const city = input.address.split(",").map((part) => part.trim())[1] || "Arizona";
   const subject = `New solar lead - ${input.name} in ${city}`;
   const text = [
+    "Installer contact requested: Yes",
     `Name: ${input.name}`,
     `Phone: ${input.phone}`,
     `Email: ${input.email}`,
@@ -179,7 +191,7 @@ async function sendEmail({
   const resendApiKey = process.env.RESEND_API_KEY?.trim();
   const resendFromEmail = getResendFromEmail();
 
-  console.info("[notification-email:attempt]", { kind, to });
+  console.info("[notification-email:attempt]", { kind });
 
   if (isKillSwitchEnabled("DISABLE_EMAIL_SENDING")) {
     console.info("[notification-email:skipped]", {
@@ -190,7 +202,12 @@ async function sendEmail({
   }
 
   if (!resendApiKey) {
-    console.info("[notification-email-dev]", { kind, subject, text, to });
+    console.info("[notification-email-dev]", {
+      hasHtml: Boolean(html),
+      kind,
+      subjectLength: subject.length,
+      textLength: text.length,
+    });
     console.info("[notification-email:skipped]", {
       kind,
       reason: "resend_not_configured",
@@ -244,7 +261,7 @@ async function sendEmail({
 
 export function sanitizeProviderError(error: unknown) {
   if (error instanceof Error) {
-    return error.message;
+    return redactProviderMessage(error.message);
   }
 
   if (typeof error === "object" && error !== null) {
@@ -255,17 +272,17 @@ export function sanitizeProviderError(error: unknown) {
       statusCode?: unknown;
     };
 
-    return [
+    return redactProviderMessage([
       candidate.name,
       candidate.code ? `code ${String(candidate.code)}` : "",
       candidate.statusCode ? `status ${String(candidate.statusCode)}` : "",
       candidate.message,
     ]
       .filter(Boolean)
-      .join(" - ");
+      .join(" - "));
   }
 
-  return String(error);
+  return redactProviderMessage(String(error));
 }
 
 function logResult(result: NotificationResult) {
@@ -305,26 +322,49 @@ function formatKw(value?: number | null) {
 }
 
 function homeownerEmailHtml(input: LeadNotificationInput) {
+  const safeFirstName = escapeHtml(firstName(input.name));
+  const safeAddress = escapeHtml(formatDisplayAddress(input.address));
+  const safeReportUrl = escapeHtml(input.reportUrl);
+  const nextStep = input.installerContactConsent
+    ? "Your request for installer follow-up has been recorded."
+    : "If you choose, you can request installer verification later.";
+
   return `
     <div style="font-family:Arial,sans-serif;background:#07111f;color:#f8fafc;padding:28px">
       <div style="max-width:640px;margin:0 auto;background:#0f172a;border:1px solid #233047;border-radius:20px;padding:28px">
         <p style="color:#67e8f9;text-transform:uppercase;letter-spacing:3px;font-size:12px;font-weight:700;margin:0 0 16px">${APP_NAME}</p>
-        <h1 style="font-size:28px;line-height:1.2;margin:0 0 16px">Your solar report is ready, ${firstName(input.name)}.</h1>
-        <p style="color:#cbd5e1;line-height:1.7;margin:0 0 20px">We received your report request and prepared a preliminary roof and savings estimate for ${formatDisplayAddress(input.address)}.</p>
+        <h1 style="font-size:28px;line-height:1.2;margin:0 0 16px">Your solar report is ready, ${safeFirstName}.</h1>
+        <p style="color:#cbd5e1;line-height:1.7;margin:0 0 20px">We received your report request and prepared a preliminary roof and savings estimate for ${safeAddress}.</p>
         <div style="display:grid;gap:12px;margin:22px 0">
           <div style="background:#111827;border-radius:14px;padding:14px"><strong>Estimated annual savings:</strong> ${formatCurrency(input.annualSavings)}</div>
           <div style="background:#111827;border-radius:14px;padding:14px"><strong>System size:</strong> ${formatKw(input.systemSizeKw)}</div>
           <div style="background:#111827;border-radius:14px;padding:14px"><strong>Panel count:</strong> ${formatCount(input.panelCount)}</div>
         </div>
-        <a href="${input.reportUrl}" style="display:inline-block;background:#67e8f9;color:#020617;text-decoration:none;font-weight:700;border-radius:999px;padding:14px 22px">Open my solar report</a>
+        <a href="${safeReportUrl}" style="display:inline-block;background:#67e8f9;color:#020617;text-decoration:none;font-weight:700;border-radius:999px;padding:14px 22px">Open my solar report</a>
         <h2 style="font-size:18px;margin:28px 0 10px">What happens next</h2>
         <ol style="color:#cbd5e1;line-height:1.7;padding-left:22px">
           <li>Review your preliminary roof and savings estimate.</li>
-          <li>A solar specialist can verify final design, pricing, incentives, and utility details.</li>
+          <li>${escapeHtml(nextStep)}</li>
           <li>You decide when, or if, you want to move forward.</li>
         </ol>
         <p style="color:#94a3b8;font-size:13px;line-height:1.6;margin-top:24px">This is a preliminary estimate. Final design, pricing, incentives, and savings require installer confirmation.</p>
       </div>
     </div>
   `;
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function redactProviderMessage(value: string) {
+  return value
+    .replace(/\b[^\s@]+@[^\s@]+\.[^\s@]+\b/g, "[email redacted]")
+    .replace(/https?:\/\/\S+/gi, "[url redacted]")
+    .slice(0, 500);
 }

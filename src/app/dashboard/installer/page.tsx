@@ -39,6 +39,7 @@ export const metadata: Metadata = {
     description:
       "Manage homeowner solar leads, prioritize hot prospects, and download reports.",
   },
+  robots: { index: false, follow: false },
 };
 
 export const dynamic = "force-dynamic";
@@ -65,7 +66,7 @@ type DashboardLead = {
   pdf_downloaded?: boolean | null;
   pdf_generated?: boolean | null;
   quote_requested?: boolean | null;
-  phone: string;
+  phone: string | null;
   roi_years?: number | null;
   solar_suitability_score?: number | null;
   status?: string | null;
@@ -237,12 +238,12 @@ function mapInstallerLead(
     panelCount: report.panelCount,
     pdfDownloaded: lead.pdf_downloaded,
     pdfGenerated: lead.pdf_generated ?? true,
-    phone: lead.phone,
+    phone: lead.phone ?? "",
     quoteRequested: lead.quote_requested,
     solarSuitabilityScore: solarScore,
     systemSizeKw,
     twentyYearSavings:
-      Number(lead.twenty_year_savings ?? 0) || report.annualSavings * 20,
+      Number(lead.twenty_year_savings ?? 0) || report.twentyYearSavings,
     utilityBillUploaded: lead.utility_bill_uploaded,
   });
   const storedScore =
@@ -275,7 +276,7 @@ function mapInstallerLead(
     panelCount: report.panelCount,
     pdfDownloaded: Boolean(lead.pdf_downloaded),
     pdfGenerated: lead.pdf_generated ?? true,
-    phone: lead.phone,
+    phone: lead.phone ?? "",
     reportUrl: buildReportPdfPath(lead.id),
     roiYears: Number(lead.roi_years ?? report.estimatedRoiYears),
     solarScore,

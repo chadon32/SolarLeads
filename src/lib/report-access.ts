@@ -1,13 +1,19 @@
+import "server-only";
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { APP_CANONICAL_URL } from "@/lib/brand";
 
 const REPORT_SECRET = process.env.REPORT_SIGNING_SECRET?.trim();
 const SITE_URL =
-  process.env.NEXT_PUBLIC_SITE_URL?.trim() ?? "http://localhost:3000";
+  process.env.NEXT_PUBLIC_SITE_URL?.trim() ??
+  (process.env.NODE_ENV === "production"
+    ? APP_CANONICAL_URL
+    : "http://localhost:3000");
 const REQUIRE_SIGNED_REPORTS = process.env.NODE_ENV === "production";
 const REPORT_LINK_TTL_SECONDS = 60 * 60 * 24 * 7;
 
 type ReportAccessOptions = {
   absolute?: boolean;
+  baseUrl?: string;
   download?: boolean;
   expiresAt?: number;
   expiresInSeconds?: number;
@@ -56,10 +62,16 @@ export function buildReportPdfPath(
 
 export function buildRawReportPdfPath(
   leadId: string,
-  options: { download?: boolean } = {}
+  options: {
+    download?: boolean;
+    expiresAt?: number;
+    expiresInSeconds?: number;
+  } = {}
 ) {
   return buildReportPdfPath(leadId, {
     download: options.download,
+    expiresAt: options.expiresAt,
+    expiresInSeconds: options.expiresInSeconds,
     raw: true,
   });
 }
@@ -73,6 +85,19 @@ export function buildReportViewerPath(
   const query = params.toString();
 
   return `/report/${encodeURIComponent(leadId)}${query ? `?${query}` : ""}`;
+}
+
+export function buildReportViewerUrl(
+  leadId: string,
+  options: ReportAccessOptions = {}
+) {
+  const path = buildReportViewerPath(leadId, options);
+
+  if (!options.absolute) {
+    return path;
+  }
+
+  return new URL(path, options.baseUrl ?? SITE_URL).toString();
 }
 
 export function buildSignedReportPdfPath(
@@ -108,7 +133,7 @@ export function buildReportPdfUrl(
     return path;
   }
 
-  return new URL(path, SITE_URL).toString();
+  return new URL(path, options.baseUrl ?? SITE_URL).toString();
 }
 
 export function buildReportAccessUrl(
@@ -121,7 +146,7 @@ export function buildReportAccessUrl(
     return path;
   }
 
-  return new URL(path, SITE_URL).toString();
+  return new URL(path, options.baseUrl ?? SITE_URL).toString();
 }
 
 function appendReportSignature(

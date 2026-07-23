@@ -1,4 +1,6 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Solartelligence
+
+Satellite-based roof analysis, solar readiness reports, and savings estimates for Arizona homeowners.
 
 ## Getting Started
 
@@ -16,9 +18,7 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+The app uses the Next.js App Router and self-hosts its UI fonts through `next/font`.
 
 ## Environment Variables
 
@@ -43,6 +43,7 @@ RESEND_API_KEY=your_resend_api_key_here
 FROM_EMAIL=reports@solartelligence.com
 RESEND_FROM_EMAIL=reports@solartelligence.com
 ADMIN_EMAIL=owner@yourdomain.com
+OWNER_EMAIL=owner@yourdomain.com
 DASHBOARD_ACCESS_TOKEN=your_dashboard_token_here
 ROOF_ANALYSIS_CACHE_TTL_DAYS=30
 DISABLE_SOLAR_API_CALLS=false
@@ -79,13 +80,13 @@ The rooftop analysis pipeline now uses Google Geocoding plus the Google Maps Pla
 
 Paid services are protected behind server routes and route-specific limits. Current defaults:
 
-- `POST /api/leads`: 3 submissions per IP per hour, plus 5 per normalized email per day, 5 per normalized phone per day, and 8 per normalized address per day.
+- `POST /api/leads`: 100 submissions per unique IP per hour, plus 5 per normalized email per day, 5 per normalized phone per day, and 8 per normalized address per day. Different IPs do not share the 100-request bucket.
 - `POST /api/analyze-roof`: 5 requests per IP per 10 minutes, 20 per IP per day, and 8 per normalized address per day.
 - `GET /api/report/pdf?raw=1`: 3 PDF generations per lead per day after report auth/signature passes.
 - `POST /api/utility-bills`: 6 upload attempts per IP per hour, plus 2 uploads per normalized email, phone, or address per day when the form provides that context.
 - `POST /api/notifications/test`: dashboard auth required, then 5 test sends per hour.
 
-The app also rejects oversized JSON/multipart requests, hidden honeypot submissions, and lead forms submitted too quickly to be realistic. Rate-limit events log route, IP, user-agent hash, normalized address where relevant, cache hit/miss, and whether a paid API was called. Logs never include API keys, dashboard tokens, or full submitted payloads.
+The app also rejects oversized JSON/multipart requests, invalid file signatures, hidden honeypot submissions, and lead forms submitted too quickly to be realistic. Abuse events log route, pseudonymous IP/user-agent hashes, hashed address context where relevant, cache hit/miss, and whether a paid API was called. Logs never include API keys, dashboard tokens, raw contact details, or full submitted payloads.
 
 Roof analysis cache entries are stored in `roof_analysis_cache` by normalized address plus rounded coordinates. The cache stores the normalized address, lat/lng, analysis payload, optional report/panel snapshots, `created_at`, `updated_at`, and `expires_at`. `ROOF_ANALYSIS_CACHE_TTL_DAYS` defaults to 30 days. The app checks the cache before calling the Google Solar API and returns cached valid or invalid analysis when available.
 
@@ -106,6 +107,49 @@ Utility bill uploads are stored in the private `utility-bills` bucket. The brows
 
 The follow-up processor route is ready for a scheduler call. If you use Vercel Cron or another job runner, send `FOLLOW_UP_PROCESS_SECRET` as a bearer token or `x-process-secret` header when calling `POST /api/follow-ups/process`.
 
+For a local smoke check that does not create a lead or call paid services, run
+the dev server and then `npm run qa:browser`. Set `BASE_URL` to point the
+browser check at another deployment. The check verifies the homepage copy,
+unsigned PDF rejection, and unauthenticated dashboard mutation rejection.
+
+## iPhone app
+
+The `mobile/` project uses Expo and EAS Build, matching the TestFlight workflow
+used by CarPartsRadar. It uses bundle ID `com.solartelligence.app` and is linked
+to Expo project `@chadon32/solartelligence`. EAS compiles and signs the iOS app
+on a cloud Mac, so production builds can be created and submitted from Windows.
+
+The native client opens the shared production app at
+`https://solartelligence.com`, preserving roof analysis, reports, Supabase data,
+email delivery, uploads, and security controls. Server secrets remain in Vercel
+and are never bundled in the iPhone app.
+
+```bash
+cd mobile
+npm install
+npm run typecheck
+npm run export:ios
+npm run testflight
+```
+
+The first EAS production build may prompt for Apple Developer credentials and
+signing setup. EAS stores those credentials securely outside this repository.
+Successful `testflight` builds are uploaded to App Store Connect for TestFlight;
+promotion to App Review remains a manual action in App Store Connect.
+
+Apple can reject a thin website wrapper under its minimum-functionality rules.
+Before public submission, complete device QA for file uploads, PDF links,
+external links, offline recovery, keyboard behavior, and rooftop map gestures,
+then add genuinely native value if App Review requires it.
+
+## Financial model assumptions
+
+- The modeled Arizona retail electricity value is `$0.155/kWh`, rounded from the U.S. Energy Information Administration's April 2026 Arizona residential average of 15.48 cents/kWh.
+- Savings are capped at the homeowner's entered annual electric bill. Utility fixed charges, demand charges, time-of-use periods, and export compensation are not fully modeled and require tariff/installer verification.
+- New estimates generated in 2026 model a `0%` federal residential clean-energy credit. Current IRS guidance says Section 25D is unavailable for expenditures after December 31, 2025. Historic 2022-2025 scenarios remain calculable at 30% when an installation year is supplied explicitly.
+- The Arizona residential solar credit is shown separately as a potential nonrefundable credit of 25% of eligible cost, capped at $1,000. It is not automatically deducted from payback because individual eligibility and tax liability vary.
+- Equipment cost, production, financing, and payback values are preliminary modeled estimates, not quotes or guarantees.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:
@@ -119,6 +163,6 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
-Before deploying, make sure `GOOGLE_PLACES_API_KEY`, `GOOGLE_MAPS_API_KEY`, `GOOGLE_SOLAR_API_KEY`, `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`, `SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `REPORT_SIGNING_SECRET`, `DASHBOARD_ACCESS_TOKEN`, `RATE_LIMIT_SECRET`, `FOLLOW_UP_PROCESS_SECRET`, `UTILITY_BILL_UPLOAD_SECRET`, and any Resend variables are set in Vercel. Add Turnstile variables only when you are ready to enforce the challenge.
+Before deploying, make sure the following are set in the Vercel **Production** environment, not only Preview or Development: `GOOGLE_PLACES_API_KEY`, `GOOGLE_MAPS_API_KEY`, `GOOGLE_SOLAR_API_KEY`, `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`, `SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `REPORT_SIGNING_SECRET`, `DASHBOARD_ACCESS_TOKEN`, `RATE_LIMIT_SECRET`, `FOLLOW_UP_PROCESS_SECRET`, `UTILITY_BILL_UPLOAD_SECRET`, `RESEND_API_KEY`, and `FROM_EMAIL` or `RESEND_FROM_EMAIL`. Set `ADMIN_EMAIL` or `OWNER_EMAIL` when admin lead notifications are desired. Add Turnstile variables only when you are ready to enforce the challenge. Redeploy after changing Vercel environment variables.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.

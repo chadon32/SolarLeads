@@ -14,11 +14,9 @@ function isAuthorized(request: Request) {
   const configuredSecret = process.env.FOLLOW_UP_PROCESS_SECRET?.trim();
 
   if (!configuredSecret) {
-    return process.env.NODE_ENV !== "production";
+    return false;
   }
 
-  const { searchParams } = new URL(request.url);
-  const querySecret = searchParams.get("secret")?.trim();
   const headerSecret = request.headers.get("x-process-secret")?.trim();
   const bearer = request.headers
     .get("authorization")
@@ -26,7 +24,6 @@ function isAuthorized(request: Request) {
     .trim();
 
   return (
-    safeSecretEquals(querySecret, configuredSecret) ||
     safeSecretEquals(headerSecret, configuredSecret) ||
     safeSecretEquals(bearer, configuredSecret)
   );

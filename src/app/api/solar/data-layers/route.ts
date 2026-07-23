@@ -8,6 +8,7 @@ import {
 } from "@/lib/abuse-protection";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { fetchSolarDataLayers } from "@/lib/google-solar";
+import { isArizonaCoordinate } from "@/lib/arizona-address";
 
 export async function GET(request: Request) {
   try {
@@ -52,9 +53,9 @@ export async function GET(request: Request) {
     const lat = Number(searchParams.get("lat"));
     const lng = Number(searchParams.get("lng"));
 
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    if (!isArizonaCoordinate(lat, lng)) {
       return NextResponse.json(
-        { message: "lat and lng are required." },
+        { message: "Valid Arizona coordinates are required." },
         { status: 400 }
       );
     }
@@ -75,12 +76,11 @@ export async function GET(request: Request) {
       imageryProcessedDate: dataLayers.imageryProcessedDate ?? null,
     });
   } catch (error) {
-    const detail = error instanceof Error ? error.message : "Unexpected solar data layer failure.";
-
+    console.warn("[solar-data-layers:error]", {
+      errorType: error instanceof Error ? error.name : "unknown",
+    });
     return NextResponse.json(
-      {
-        message: detail,
-      },
+      { message: "Solar imagery layers are temporarily unavailable." },
       { status: 502 }
     );
   }

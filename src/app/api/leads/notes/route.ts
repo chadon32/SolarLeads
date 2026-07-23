@@ -1,7 +1,14 @@
 import { NextResponse } from "next/server";
+import { payloadTooLargeResponse, readJsonWithLimit } from "@/lib/abuse-protection";
 import { requireDashboardAuth } from "@/lib/dashboard-auth";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
+import { z } from "zod";
+
+const notesUpdateSchema = z.object({
+  leadId: z.string().uuid(),
+  notes: z.string().max(4000).default(""),
+});
 
 export async function PATCH(request: Request) {
   try {
@@ -25,12 +32,15 @@ export async function PATCH(request: Request) {
       );
     }
 
-    const body = (await request.json()) as {
-      leadId?: string;
-      notes?: string;
-    };
-    const leadId = body.leadId?.trim();
-    const notes = typeof body.notes === "string" ? body.notes.slice(0, 4000) : "";
+    const jsonBody = await readJsonWithLimit(request, 16 * 1024);
+
+    if (!jsonBody.ok && jsonBody.reason === "too_large") {
+      return payloadTooLargeResponse("The notes update is too large.");
+    }
+
+    const parsed = notesUpdateSchema.safeParse(jsonBody.ok ? jsonBody.data : null);
+    const leadId = parsed.success ? parsed.data.leadId : "";
+    const notes = parsed.success ? parsed.data.notes : "";
 
     if (!leadId) {
       return NextResponse.json(
@@ -49,7 +59,7 @@ export async function PATCH(request: Request) {
 
     if (error) {
       return NextResponse.json(
-        { message: error.message || "Unable to update lead notes." },
+        { message: "Unable to update lead notes." },
         { status: 500 }
       );
     }
@@ -61,11 +71,11 @@ export async function PATCH(request: Request) {
       },
     });
   } catch (error) {
+    console.error("[lead-notes:error]", {
+      errorType: error instanceof Error ? error.name : "unknown",
+    });
     return NextResponse.json(
-      {
-        message:
-          error instanceof Error ? error.message : "Unexpected note save error.",
-      },
+      { message: "Unable to update lead notes." },
       { status: 500 }
     );
   }

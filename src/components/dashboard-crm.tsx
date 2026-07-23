@@ -810,6 +810,7 @@ function TableMetric({ label, value }: { label: string; value: string }) {
   );
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function LeadPipelineCard({
   isSelected,
   isUpdating,
@@ -1009,7 +1010,7 @@ function LeadDetailPanel({
           label="Net system cost"
           value={lead.netSystemCost ? formatMoney(lead.netSystemCost) : "Not captured"}
         />
-        <DetailRow label="Estimated ROI" value={`${formatDecimal(lead.estimatedRoiYears)} yrs`} />
+        <DetailRow label="Estimated Payback" value={`${formatDecimal(lead.estimatedRoiYears)} yrs`} />
         <DetailRow label="Energy offset" value={`${formatNumber(lead.energyOffsetPct)}%`} />
         <DetailRow label="CO2 offset" value={`${formatNumber(lead.co2OffsetLbs)} lbs`} />
       </div>
@@ -1133,6 +1134,7 @@ function EmptyState({
   );
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function StageEmptyState() {
   return (
     <div className="rounded-[1rem] border border-dashed border-white/14 bg-white/[0.025] px-3 py-6 text-center">
@@ -1305,6 +1307,7 @@ function formatDecimal(value: number) {
   }).format(Number.isFinite(value) ? value : 0);
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function formatDateTime(value: string) {
   const date = new Date(value);
 

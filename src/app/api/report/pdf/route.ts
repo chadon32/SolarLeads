@@ -2,12 +2,18 @@ import { NextResponse } from "next/server";
 import {
   PDFDocument,
   StandardFonts,
+  clip,
+  endPath,
+  popGraphicsState,
+  pushGraphicsState,
+  rectangle as clippingRectangle,
   rgb,
   type PDFFont,
   type PDFImage,
   type PDFPage,
 } from "pdf-lib";
 import * as QRCode from "qrcode";
+import { z } from "zod";
 import {
   buildSolarReportFromSolarValues,
   type SolarReport,
@@ -48,29 +54,24 @@ import {
 } from "@/lib/roof-analysis-viewport";
 import {
   buildPanelCornerLatLngPoints,
-  buildAcceptedPanelAnalysisForReport,
-  buildSolarReportSnapshot,
   boundsToLatLngPoints,
   getRoofAnalysisSnapshotPoints,
   normalizeSolarReportSnapshot,
   outlineToLatLngPoints,
   type SolarReportSnapshot,
 } from "@/lib/report-snapshot";
-import {
-  buildFallbackRoofAnalysis,
-  type RoofAnalysis,
-  type RoofGeoBounds,
-} from "@/lib/roof-analysis";
-import {
-  buildSolarRoofAnalysis,
-  fetchSolarBuildingInsights,
-  geocodeAddress,
-} from "@/lib/google-solar";
-import {
-  getCachedRoofAnalysis,
-  saveCachedRoofAnalysis,
-} from "@/lib/roof-analysis-cache";
+import type { RoofAnalysis } from "@/lib/roof-analysis";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
+import {
+  calculateFederalResidentialSolarCredit,
+  calculateTwentyYearSolarCosts,
+  getFederalResidentialSolarCreditRate,
+} from "@/lib/financial-model";
+import {
+  calculateEnergyOffsetPct,
+  INSTALLED_COST_PER_WATT,
+  STANDARD_PANEL_WATTS,
+} from "@/lib/solar-metrics";
 
 export const runtime = "nodejs";
 
@@ -137,7 +138,6 @@ type PdfColors = ReturnType<typeof createColors>;
 
 type ProposalData = {
   id: string;
-  reportUrl: string;
   name: string;
   address: string;
   email: string;
@@ -159,7 +159,6 @@ type ProposalData = {
   roiYears?: number;
   grossPaybackYears?: number;
   netPaybackYears?: number;
-  federalTaxCredit?: number;
   leadScore: number;
   leadScoreLabel: LeadScoreLabel;
   quoteRequested: boolean;
@@ -223,13 +222,14 @@ export async function GET(request: Request) {
     }
 
     const { searchParams } = new URL(request.url);
-    const leadId = searchParams.get("leadId");
+    const leadIdResult = z.string().uuid().safeParse(searchParams.get("leadId"));
     const exp = searchParams.get("exp");
     const token = searchParams.get("token");
 
-    if (!leadId) {
-      return NextResponse.json({ message: "Missing leadId." }, { status: 400 });
+    if (!leadIdResult.success) {
+      return NextResponse.json({ message: "Invalid report ID." }, { status: 400 });
     }
+    const leadId = leadIdResult.data;
 
     const raw = searchParams.get("raw") === "1" || searchParams.get("download") === "1";
     const reportAccess = verifyReportAccess(request, leadId, exp, token);
@@ -317,7 +317,7 @@ export async function GET(request: Request) {
 
     if (error || !lead) {
       return NextResponse.json(
-        { message: error?.message || "Lead not found." },
+        { message: "Report not found." },
         { status: 404 }
       );
     }
@@ -339,13 +339,13 @@ export async function GET(request: Request) {
     };
     const colors = createColors();
     const reportSnapshot = await loadBestReportSnapshotForPdf(lead);
-    const proposal = buildProposalData(lead, report, request.url, reportSnapshot);
+    const proposal = buildProposalData(lead, report, reportSnapshot);
     await markPdfDownloaded(supabase, lead.id, proposal);
     const roofAsset = await loadRoofImage(pdf, proposal);
     const assets: PdfAssets = {
       roofImage: roofAsset.image,
       roofImageViewport: roofAsset.viewport,
-      qrImage: await loadQrImage(pdf, buildEstimateUrl(request.url, proposal.address)),
+      qrImage: await loadQrImage(pdf, buildEstimateUrl(proposal.address)),
     };
 
     drawExecutiveSummary(pdf.addPage([612, 792]), proposal, assets, fonts, colors);
@@ -372,13 +372,11 @@ export async function GET(request: Request) {
       },
     });
   } catch (error) {
+    console.error("[report-pdf:error]", {
+      errorType: error instanceof Error ? error.name : "unknown",
+    });
     return NextResponse.json(
-      {
-        message:
-          error instanceof Error
-            ? error.message
-            : "Unexpected PDF generation error.",
-      },
+      { message: "Unable to generate this report right now." },
       { status: 500 }
     );
   }
@@ -427,172 +425,21 @@ async function loadBestReportSnapshotForPdf(
 ): Promise<SolarReportSnapshot | null> {
   const storedSnapshot = normalizeSolarReportSnapshot(lead.report_snapshot);
 
-  if (storedSnapshot && hasHighValueRoofSnapshot(storedSnapshot)) {
-    console.info("[pdf-roof-snapshot]", {
-      confidence: storedSnapshot.roofModelConfidence,
-      leadId: lead.id,
-      panelCount: storedSnapshot.panelCount,
-      source: "stored",
-    });
-    return storedSnapshot;
-  }
-
-  let lat = positiveNumber(lead.lat ?? storedSnapshot?.home?.lat);
-  let lng = positiveNumber(lead.lng ?? storedSnapshot?.home?.lng);
-
-  if (!lat || !lng) {
-    const geocoded = await geocodeLeadForPdf(lead.address);
-
-    if (geocoded) {
-      lat = geocoded.lat;
-      lng = geocoded.lng;
-    }
-  }
-
-  if (!lat || !lng) {
-    if (storedSnapshot) {
-      console.info("[pdf-roof-snapshot]", {
-        confidence: storedSnapshot.roofModelConfidence,
-        leadId: lead.id,
-        panelCount: storedSnapshot.panelCount,
-        source: "stored-limited-no-coordinates",
-      });
-    }
-
-    return storedSnapshot;
-  }
-
-  const fallback = buildFallbackRoofAnalysis({
-    address: lead.address,
-    lat,
-    lng,
+  console.info("[pdf-roof-snapshot]", {
+    confidence: storedSnapshot?.roofModelConfidence ?? null,
+    leadId: lead.id,
+    panelCount: storedSnapshot?.panelCount ?? null,
+    source: storedSnapshot ? "stored" : "unavailable",
   });
 
-  try {
-    const cached = await getCachedRoofAnalysis({
-      address: lead.address,
-      lat,
-      lng,
-      fallback,
-    });
-    const cachedSnapshot = cached?.validSite
-      ? buildSnapshotFromPdfAnalysis(lead, cached, lat, lng)
-      : null;
-
-    if (cachedSnapshot && hasHighValueRoofSnapshot(cachedSnapshot)) {
-      console.info("[pdf-roof-snapshot]", {
-        confidence: cachedSnapshot.roofModelConfidence,
-        leadId: lead.id,
-        panelCount: cachedSnapshot.panelCount,
-        source: "cache",
-      });
-      return cachedSnapshot;
-    }
-
-    if (isKillSwitchEnabled("DISABLE_SOLAR_API_CALLS")) {
-      console.info("[pdf-roof-snapshot]", {
-        leadId: lead.id,
-        paidApiCalled: false,
-        source: "solar-api-disabled",
-      });
-      return storedSnapshot ?? cachedSnapshot;
-    }
-
-    const insights = await fetchSolarBuildingInsights(lat, lng);
-    const analysis = buildSolarRoofAnalysis({
-      address: lead.address,
-      lat,
-      lng,
-      insights,
-    });
-
-    if (!analysis.validSite) {
-      return storedSnapshot ?? cachedSnapshot;
-    }
-
-    await saveCachedRoofAnalysis({
-      address: lead.address,
-      lat,
-      lng,
-      analysis,
-    });
-
-    const rebuiltSnapshot = buildSnapshotFromPdfAnalysis(lead, analysis, lat, lng);
-    console.info("[pdf-roof-snapshot]", {
-      confidence: rebuiltSnapshot.roofModelConfidence,
-      leadId: lead.id,
-      panelCount: rebuiltSnapshot.panelCount,
-      source: "google-solar",
-    });
-
-    return hasHighValueRoofSnapshot(rebuiltSnapshot)
-      ? rebuiltSnapshot
-      : storedSnapshot ?? rebuiltSnapshot;
-  } catch (error) {
-    console.warn("[pdf-roof-snapshot-fallback]", {
-      leadId: lead.id,
-      message: error instanceof Error ? error.message : "unknown",
-    });
-    return storedSnapshot;
-  }
-}
-
-async function geocodeLeadForPdf(address: string) {
-  try {
-    const geocoded = await geocodeAddress(address);
-    return {
-      lat: geocoded.lat,
-      lng: geocoded.lng,
-    };
-  } catch (error) {
-    console.warn("[pdf-roof-geocode-fallback]", {
-      address,
-      message: error instanceof Error ? error.message : "unknown",
-    });
-    return null;
-  }
-}
-
-function buildSnapshotFromPdfAnalysis(
-  lead: ReportLead,
-  analysis: RoofAnalysis,
-  lat: number,
-  lng: number
-) {
-  const leadPanelCount = positiveNumber(lead.panel_count);
-  const acceptedAnalysis = buildAcceptedPanelAnalysisForReport(analysis);
-
-  return buildSolarReportSnapshot({
-    activePanelCount:
-      leadPanelCount ??
-      acceptedAnalysis.acceptedPanelCount ??
-      acceptedAnalysis.solarPanels.length ??
-      acceptedAnalysis.panelCount,
-    address: lead.address,
-    analysis: acceptedAnalysis,
-    lat,
-    lng,
-    monthlyBill: positiveNumber(lead.monthly_bill),
-  });
-}
-
-function hasHighValueRoofSnapshot(snapshot: SolarReportSnapshot | null) {
-  if (!snapshot) {
-    return false;
-  }
-
-  return (
-    snapshot.roofAnalysis.validSite &&
-    snapshot.panelCount > 0 &&
-    snapshot.roofModelConfidence >= 70 &&
-    snapshot.roofAnalysis.solarPanels.length > 0
-  );
+  // Exact PDF layouts must come from the same immutable snapshot saved by the
+  // live analysis. Rebuilding here can drift from what the homeowner reviewed.
+  return storedSnapshot;
 }
 
 function buildProposalData(
   lead: ReportLead,
   report: SolarReport,
-  reportUrl: string,
   reportSnapshot: SolarReportSnapshot | null
 ): ProposalData {
   const snapshotMetrics = reportSnapshot?.metrics ?? null;
@@ -618,7 +465,17 @@ function buildProposalData(
     snapshotMetrics?.systemKw ?? lead.system_size_kw
   );
   const systemKw =
-    directSystemKw ?? (panelCount ? Number((panelCount * 0.4).toFixed(1)) : undefined);
+    directSystemKw ??
+    (panelCount
+      ? Number(
+          (
+            (panelCount *
+              (positiveNumber(lead.selected_panel_watts) ??
+                STANDARD_PANEL_WATTS)) /
+            1000
+          ).toFixed(2)
+        )
+      : undefined);
   const roofAreaSqFt = metersToSqFt(
     positiveNumber(snapshotMetrics?.grossRoofAreaM2 ?? lead.roof_area_m2)
   );
@@ -633,12 +490,14 @@ function buildProposalData(
   const sunlightHours =
     annualKwh && systemKw ? Math.round(annualKwh / systemKw) : undefined;
   const installedCost = positiveNumber(lead.system_cost_before_incentives) ?? (systemKw
-    ? systemKw * 1000 * 2.75
+    ? systemKw * 1000 * INSTALLED_COST_PER_WATT
     : panelCount
-      ? panelCount * 400 * 2.75
+      ? panelCount * STANDARD_PANEL_WATTS * INSTALLED_COST_PER_WATT
       : undefined);
   const netSystemCost = positiveNumber(lead.net_system_cost) ??
-    (installedCost ? installedCost * 0.7 : undefined);
+    (installedCost
+      ? installedCost - calculateFederalResidentialSolarCredit(installedCost)
+      : undefined);
   const grossPaybackYears =
     annualSavings && installedCost
       ? Number((installedCost / annualSavings).toFixed(1))
@@ -648,17 +507,23 @@ function buildProposalData(
       ? Number((netSystemCost / annualSavings).toFixed(1))
       : undefined;
   const roiYears = netPaybackYears;
-  const twentyYearSavings = annualSavings ? annualSavings * 20 : undefined;
-  const costWithoutSolar20Yr = monthlyBill ? monthlyBill * 12 * 20 * 1.12 : undefined;
-  const costWithSolar20Yr =
-    costWithoutSolar20Yr && twentyYearSavings
-      ? Math.max(0, costWithoutSolar20Yr - twentyYearSavings)
-      : undefined;
+  const twentyYearCosts =
+    monthlyBill && annualSavings && netSystemCost !== undefined
+      ? calculateTwentyYearSolarCosts({
+          annualSavings,
+          monthlyBill,
+          totalSolarPayments: netSystemCost,
+        })
+      : null;
+  const twentyYearSavings =
+    positiveNumber(lead.twenty_year_savings) ?? twentyYearCosts?.totalSavings;
+  const costWithoutSolar20Yr = twentyYearCosts?.totalCostWithoutSolar;
+  const costWithSolar20Yr = twentyYearCosts?.totalCostWithSolar;
   const annualImpactLbs = positiveNumber(report.annualImpactLbs);
   const energyOffsetPct =
     positiveNumber(snapshotMetrics?.coveragePct) ??
     (annualKwh && monthlyBill
-      ? clamp(Math.round(((annualKwh * 0.13) / (monthlyBill * 12)) * 100), 0, 100)
+      ? calculateEnergyOffsetPct(annualKwh, monthlyBill)
       : positiveNumber(lead.energy_offset_pct ?? report.annualEnergyOffset));
   const suitabilityScore =
     positiveNumber(
@@ -718,19 +583,20 @@ function buildProposalData(
 
   return {
     id: lead.id,
-    reportUrl,
     name: formatName(lead.name) || "Homeowner",
     address: lead.address || "Address unavailable",
     email: lead.email || "Email unavailable",
     phone: lead.phone || "Phone unavailable",
-    lat: positiveNumber(reportSnapshot?.home?.lat ?? lead.lat),
-    lng: positiveNumber(reportSnapshot?.home?.lng ?? lead.lng),
+    lat: finiteCoordinate(reportSnapshot?.home?.lat ?? lead.lat, "lat"),
+    lng: finiteCoordinate(reportSnapshot?.home?.lng ?? lead.lng, "lng"),
     generatedDate: new Date(lead.created_at || Date.now()).toLocaleDateString(
       "en-US",
       { month: "long", day: "numeric", year: "numeric" }
     ),
     confidence,
-    systemKwSource: "Modeled from panel layout",
+    systemKwSource: reportSnapshot?.panelCount
+      ? "Modeled from panel layout"
+      : "Modeled",
     monthlyBill,
     annualSavings,
     monthlySavings,
@@ -745,7 +611,6 @@ function buildProposalData(
       grossPaybackYears && grossPaybackYears > 0 ? grossPaybackYears : undefined,
     netPaybackYears:
       netPaybackYears && netPaybackYears > 0 ? netPaybackYears : undefined,
-    federalTaxCredit: installedCost ? installedCost * 0.3 : undefined,
     leadScore,
     leadScoreLabel: normalizeLeadScoreLabel(lead.lead_score_label, leadScore),
     quoteRequested: Boolean(lead.quote_requested),
@@ -892,17 +757,17 @@ function drawExecutiveSummary(
   ];
 
   primaryMetrics.forEach((metric, index) => {
-    drawMetricCard(page, 42 + index * 182, 206, 164, 82, metric.label, metric.value, metric.source, metric.accent, fonts, colors);
+    drawMetricCard(page, 42 + index * 182, 212, 164, 78, metric.label, metric.value, metric.source, metric.accent, fonts, colors);
   });
 
   secondaryMetrics.forEach((metric, index) => {
-    drawMetricCard(page, 42 + index * 273, 126, 255, 78, metric.label, metric.value, metric.source, metric.accent, fonts, colors);
+    drawMetricCard(page, 42 + index * 273, 128, 255, 78, metric.label, metric.value, metric.source, metric.accent, fonts, colors);
   });
 
-  drawCard(page, 42, 78, 528, 74, colors, colors.line);
+  drawCard(page, 42, 50, 528, 70, colors, colors.line);
   page.drawText("How to read this report", {
     x: 60,
-    y: 128,
+    y: 100,
     size: 12,
     font: fonts.bold,
     color: colors.text,
@@ -913,23 +778,23 @@ function drawExecutiveSummary(
       ? "This report uses satellite imagery, available solar data, modeled savings assumptions, and your submitted utility bill for quote review. It is a preliminary estimate; final design, pricing, incentives, and savings require installer verification."
       : "This report uses satellite imagery, available solar data, and modeled savings assumptions. It is a preliminary estimate; final design, pricing, incentives, and savings require installer verification.",
     60,
-    104,
-    300,
+    82,
+    274,
     fonts.regular,
-    8.8,
-    11.2,
+    8.2,
+    10.4,
     colors.muted
   );
   const guidanceBadges: Array<{ label: SourceLabel; description: string }> = [
-    { label: "Solar API", description: "Roof geometry and imagery inputs" },
-    { label: "Modeled", description: "Savings and production assumptions" },
-    { label: "User-adjusted", description: "Bill and usage values you can update" },
+    { label: "Solar API", description: "Roof + imagery inputs" },
+    { label: "Modeled", description: "Savings assumptions" },
+    { label: "User-adjusted", description: "Bill + usage inputs" },
   ];
   guidanceBadges.forEach((badge, index) => {
-    drawBadgeWithDescription(page, 376, 122 - index * 18, badge.label, badge.description, fonts, colors);
+    drawBadgeWithDescription(page, 356, 94 - index * 19, badge.label, badge.description, fonts, colors);
   });
   if (proposal.utilityBillUploaded) {
-    drawSourceBadge(page, 376, 68, "Utility Bill", fonts, colors);
+    drawSourceBadge(page, 260, 94, "Utility Bill", fonts, colors, 88);
   }
 }
 
@@ -987,25 +852,25 @@ function drawRoofAnalysisPage(
   });
   drawRoofVisualCaption(page, 42, 296, 528, proposal, fonts, colors, "roof");
 
-  drawCard(page, 42, 212, 258, 96, colors);
-  drawPanelSummary(page, 58, 284, proposal, fonts, colors);
-  drawCard(page, 312, 212, 258, 96, colors);
-  drawRoofSummary(page, 328, 284, proposal, fonts, colors);
+  drawCard(page, 42, 182, 258, 96, colors);
+  drawPanelSummary(page, 58, 254, proposal, fonts, colors);
+  drawCard(page, 312, 182, 258, 96, colors);
+  drawRoofSummary(page, 328, 254, proposal, fonts, colors);
 
-  drawCard(page, 42, 92, 528, 104, colors);
+  drawCard(page, 42, 64, 528, 104, colors);
   page.drawText("AI Solar Advisor", {
     x: 60,
-    y: 170,
+    y: 142,
     size: 13.5,
     font: fonts.bold,
     color: colors.text,
   });
-  drawSourceBadge(page, 448, 166, "Estimated", fonts, colors);
+  drawSourceBadge(page, 448, 138, "Estimated", fonts, colors);
   drawTextBlock(
     page,
     proposal.advisor.summary,
     60,
-    148,
+    120,
     492,
     fonts.regular,
     8.4,
@@ -1075,7 +940,7 @@ function drawSolarReadinessPage(
   });
   const readinessFactors = [
     `Energy offset: ${formatPctMaybe(proposal.energyOffsetPct)}`,
-    `Accepted panel count: ${proposal.panelCount ?? 0}`,
+    `Accepted panel count: ${proposal.panelCount ?? "Unavailable"}`,
     `Solar-ready area: ${formatSqFtMaybe(proposal.usableAreaSqFt)}`,
     `Sunlight quality: ${proposal.advisor.sunlightQuality.label}`,
   ];
@@ -1152,7 +1017,7 @@ function drawPanelLayoutPage(
   drawMetricCard(
     page,
     42,
-    230,
+    194,
     120,
     84,
     "Accepted panels",
@@ -1162,11 +1027,11 @@ function drawPanelLayoutPage(
     fonts,
     colors
   );
-  drawPanelSizeCard(page, 174, 230, 120, 92, proposal, fonts, colors);
+  drawPanelSizeCard(page, 174, 186, 120, 92, proposal, fonts, colors);
   drawMetricCard(
     page,
     306,
-    230,
+    194,
     120,
     84,
     "System size",
@@ -1179,7 +1044,7 @@ function drawPanelLayoutPage(
   drawMetricCard(
     page,
     438,
-    230,
+    194,
     132,
     84,
     "Panel model",
@@ -1190,19 +1055,21 @@ function drawPanelLayoutPage(
     colors
   );
 
-  drawCard(page, 42, 106, 528, 100, colors);
+  drawCard(page, 42, 70, 528, 100, colors);
   page.drawText("Why this panel selection", {
     x: 60,
-    y: 178,
+    y: 142,
     size: 13,
     font: fonts.bold,
     color: colors.text,
   });
   drawTextBlock(
     page,
-    `The model prioritizes usable roof planes with stronger sunlight and enough continuous area for a practical residential array. The current layout supports ${proposal.panelCount ?? 0} accepted panels and a modeled ${formatKwMaybe(proposal.systemKw)} system. Panel count, equipment brand, and inverter selection should be confirmed during final installer design.`,
+    proposal.panelCount && proposal.systemKw
+      ? `The model prioritizes usable roof planes with stronger sunlight and enough continuous area for a practical residential array. The current layout supports ${proposal.panelCount} accepted panels and a modeled ${formatKwMaybe(proposal.systemKw)} system. Panel count, equipment brand, and inverter selection should be confirmed during final installer design.`
+      : "Detailed panel geometry was not available when this report was saved. The house-centered roof image is provided for context; panel count, system size, and equipment selection require a new analysis and installer verification.",
     60,
-    158,
+    122,
     492,
     fonts.regular,
     8.5,
@@ -1245,27 +1112,27 @@ function drawSunlightAnalysisPage(
   });
   drawRoofVisualCaption(page, 42, 284, 528, proposal, fonts, colors, "sunlight");
 
-  drawCard(page, 42, 214, 250, 104, colors);
+  drawCard(page, 42, 164, 250, 104, colors);
   page.drawText("Sunlight quality", {
     x: 60,
-    y: 286,
+    y: 236,
     size: 12,
     font: fonts.bold,
     color: colors.text,
   });
   page.drawText(proposal.advisor.sunlightQuality.label, {
     x: 60,
-    y: 258,
+    y: 208,
     size: 22,
     font: fonts.bold,
     color: getSunlightPdfColor(proposal.advisor.sunlightQuality.label, colors),
   });
-  drawSourceBadge(page, 60, 232, proposal.advisor.sunlightQuality.source, fonts, colors);
+  drawSourceBadge(page, 60, 182, proposal.advisor.sunlightQuality.source, fonts, colors);
 
-  drawCard(page, 314, 214, 256, 104, colors);
+  drawCard(page, 314, 164, 256, 104, colors);
   page.drawText("Roof exposure", {
     x: 332,
-    y: 286,
+    y: 236,
     size: 12,
     font: fonts.bold,
     color: colors.text,
@@ -1276,7 +1143,7 @@ function drawSunlightAnalysisPage(
       ? `${formatNumber(proposal.sunlightHours)} modeled annual sunlight hours are used with the accepted panel layout to estimate production. Exposure depends on roof direction, pitch, shade, and nearby obstructions.`
       : "Detailed sunlight hours were not saved for this lead, so the report uses the saved production and savings estimate.",
     332,
-    264,
+    214,
     210,
     fonts.regular,
     8.3,
@@ -1284,10 +1151,10 @@ function drawSunlightAnalysisPage(
     colors.muted
   );
 
-  drawCard(page, 42, 96, 528, 92, colors);
+  drawCard(page, 42, 58, 528, 92, colors);
   page.drawText("How to interpret the layer", {
     x: 60,
-    y: 160,
+    y: 122,
     size: 12,
     font: fonts.bold,
     color: colors.text,
@@ -1296,7 +1163,7 @@ function drawSunlightAnalysisPage(
     page,
     proposal.advisor.sunlightQuality.summary,
     60,
-    140,
+    102,
     492,
     fonts.regular,
     8.4,
@@ -1502,9 +1369,7 @@ function drawFinancingPage(
     "Solar Loan",
     "Own your system and pay over time while keeping long-term savings potential.",
     ["Lower upfront barrier", "May preserve incentives", "Depends on APR and term"],
-    proposal.installedCost
-      ? `${formatMoney((proposal.installedCost * 1.2) / 240)}/mo est.`
-      : "Estimate unavailable",
+    "Lender quote required",
     fonts,
     colors,
     true
@@ -1532,6 +1397,7 @@ function drawFinancingPage(
   });
   drawSourceBadge(page, 420, 388, "Modeled", fonts, colors);
 
+  const federalCreditRate = getFederalResidentialSolarCreditRate();
   const rows = [
     {
       label: "Up-front cost of installation",
@@ -1543,7 +1409,7 @@ function drawFinancingPage(
       value: proposal.grossPaybackYears ? `${proposal.grossPaybackYears} yrs` : "Unavailable",
     },
     {
-      label: "Net payback (after 30% federal tax credit)",
+      label: "Estimated payback after current modeled federal credit",
       primary: true,
       value: proposal.netPaybackYears ? `${proposal.netPaybackYears} yrs` : "Unavailable",
     },
@@ -1553,7 +1419,7 @@ function drawFinancingPage(
   ];
 
   rows.forEach((row, index) => {
-    const y = 356 - index * 30;
+    const y = 356 - index * 28;
     if (row.primary) {
       page.drawRectangle({
         x: 60,
@@ -1614,7 +1480,9 @@ function drawFinancingPage(
 
   drawTextBlock(
     page,
-    "* Net payback assumes the 30% federal Investment Tax Credit (ITC) is claimed in the year of installation. Consult a tax advisor for eligibility.",
+    federalCreditRate > 0
+      ? `The estimate models a ${Math.round(federalCreditRate * 100)}% federal residential credit. Eligibility and timing require tax-professional confirmation.`
+      : "No federal residential clean-energy credit is modeled for new 2026 expenditures under current IRS guidance. Arizona credit eligibility is not deducted from payback and requires tax-professional confirmation.",
     60,
     142,
     455,
@@ -1624,7 +1492,7 @@ function drawFinancingPage(
     colors.muted
   );
 
-  drawDisclaimer(page, 42, 92, fonts, colors);
+  drawDisclaimer(page, 42, 68, fonts, colors);
 }
 
 function drawAiSolarAdvisorPage(
@@ -1684,7 +1552,9 @@ function drawAiSolarAdvisorPage(
     color: colors.text,
   });
   [
-    `${proposal.panelCount ?? 0} accepted panels for a modeled ${formatKwMaybe(proposal.systemKw)} system.`,
+    proposal.panelCount && proposal.systemKw
+      ? `${proposal.panelCount} accepted panels for a modeled ${formatKwMaybe(proposal.systemKw)} system.`
+      : "Detailed panel count and system size are unavailable in this saved report.",
     `${formatMoneyMaybe(proposal.annualSavings)} estimated annual savings from the current bill input.`,
     `${formatPctMaybe(proposal.energyOffsetPct)} estimated energy offset from modeled production.`,
     `Sunlight quality is ${proposal.advisor.sunlightQuality.label.toLowerCase()}.`,
@@ -1919,7 +1789,9 @@ function drawInstallerVerificationPage(
   });
   drawTextBlock(
     page,
-    `This report is a strong starting point for ${proposal.address}. The saved model shows ${proposal.panelCount ?? 0} accepted panels, ${formatKwMaybe(proposal.systemKw)} system size, ${formatMoneyMaybe(proposal.annualSavings)} estimated annual savings, and ${formatPctMaybe(proposal.energyOffsetPct)} energy offset. Final design may change after installer verification.`,
+    proposal.panelCount && proposal.systemKw
+      ? `This report is a strong starting point for ${proposal.address}. The saved model shows ${proposal.panelCount} accepted panels, ${formatKwMaybe(proposal.systemKw)} system size, ${formatMoneyMaybe(proposal.annualSavings)} estimated annual savings, and ${formatPctMaybe(proposal.energyOffsetPct)} energy offset. Final design may change after installer verification.`
+      : `This report is a starting point for ${proposal.address}. Detailed roof geometry, panel count, and system size were not available in the saved report. The bill-based model estimates ${formatMoneyMaybe(proposal.annualSavings)} annual savings and ${formatPctMaybe(proposal.energyOffsetPct)} energy offset. Final design requires a new analysis and installer verification.`,
     60,
     214,
     492,
@@ -2087,6 +1959,12 @@ function drawRoofBaseImage(
   const drawX = frame.x + (frame.width - drawnWidth) / 2;
   const drawY = frame.y + (frame.height - drawnHeight) / 2;
 
+  page.pushOperators(
+    pushGraphicsState(),
+    clippingRectangle(frame.x, frame.y, frame.width, frame.height),
+    clip(),
+    endPath()
+  );
   page.drawImage(image, {
     x: drawX,
     y: drawY,
@@ -2094,44 +1972,7 @@ function drawRoofBaseImage(
     height: drawnHeight,
     opacity: 0.96,
   });
-
-  // Mask any overflow so the image behaves like a cropped report plate.
-  if (drawY < frame.y) {
-    page.drawRectangle({
-      x: drawX,
-      y: drawY,
-      width: drawnWidth,
-      height: frame.y - drawY,
-      color: colors.card,
-    });
-  }
-  if (drawY + drawnHeight > frame.y + frame.height) {
-    page.drawRectangle({
-      x: drawX,
-      y: frame.y + frame.height,
-      width: drawnWidth,
-      height: drawY + drawnHeight - (frame.y + frame.height),
-      color: colors.card,
-    });
-  }
-  if (drawX < frame.x) {
-    page.drawRectangle({
-      x: drawX,
-      y: frame.y,
-      width: frame.x - drawX,
-      height: frame.height,
-      color: colors.card,
-    });
-  }
-  if (drawX + drawnWidth > frame.x + frame.width) {
-    page.drawRectangle({
-      x: frame.x + frame.width,
-      y: frame.y,
-      width: drawX + drawnWidth - (frame.x + frame.width),
-      height: frame.height,
-      color: colors.card,
-    });
-  }
+  page.pushOperators(popGraphicsState());
 
   page.drawRectangle({
     x: frame.x,
@@ -2525,13 +2366,16 @@ function drawEstimatedCapacityOverlay(
     font: fonts.bold,
     color: colors.text,
   });
-  page.drawText(`Up to ${proposal.panelCount ?? 0} panels`, {
+  page.drawText(
+    proposal.panelCount ? `Up to ${proposal.panelCount} panels` : "Panel count unavailable",
+    {
     x: frame.x + frame.width - 156,
     y: frame.y + 28,
     size: 6.8,
     font: fonts.regular,
     color: colors.muted,
-  });
+    }
+  );
 }
 
 function drawRoofImageHeader(
@@ -2555,9 +2399,15 @@ function drawRoofImageHeader(
   const secondary =
     visualization === "sunlight"
       ? `${proposal.advisor.sunlightQuality.label} sunlight quality`
-      : overlayMode === "exact"
-        ? `${proposal.panelCount ?? 0} panel sample layout`
-        : `${proposal.panelCount ?? 0} panel estimate`;
+      : visualization === "roof"
+        ? overlayMode === "exact"
+          ? "Saved roof geometry"
+          : "Roof geometry unavailable"
+        : proposal.panelCount
+          ? overlayMode === "exact"
+            ? `${proposal.panelCount} panel sample layout`
+            : `Up to ${proposal.panelCount} panels`
+          : "Panel layout unavailable";
 
   page.drawRectangle({
     x: frame.x + 12,
@@ -2602,13 +2452,27 @@ function getPdfRoofOverlayMode(
   proposal: ProposalData,
   visualization: "roof" | "panels" | "sunlight"
 ) {
+  const snapshot = proposal.reportSnapshot;
+  const score = proposal.suitabilityScore ?? 0;
+  const hasSavedRoofModel = Boolean(
+    snapshot?.roofAnalysis.validSite && snapshot.roofModelConfidence >= 50
+  );
+
+  if (!hasSavedRoofModel) {
+    return "estimated" as const;
+  }
+
   if (visualization !== "panels") {
     return "exact" as const;
   }
 
-  const score = proposal.suitabilityScore ?? 0;
-
-  if (proposal.panelCount && proposal.panelCount > 0 && score >= 72 && proposal.confidence !== "Limited") {
+  if (
+    proposal.panelCount &&
+    proposal.panelCount > 0 &&
+    snapshot?.roofAnalysis.solarPanels.length &&
+    score >= 72 &&
+    proposal.confidence !== "Limited"
+  ) {
     return "exact" as const;
   }
 
@@ -2665,7 +2529,7 @@ function drawPanelSummary(
   fonts: PdfFonts,
   colors: PdfColors
 ) {
-  page.drawText("Recommended panel count", {
+  page.drawText("Accepted panel count", {
     x,
     y,
     size: 8,
@@ -2937,6 +2801,16 @@ function drawMetricCard(
   fonts: PdfFonts,
   colors: PdfColors
 ) {
+  const maxValueWidth = width - 20;
+  let valueFontSize = value.length > 12 ? 14.5 : 18;
+
+  while (
+    fonts.bold.widthOfTextAtSize(value, valueFontSize) > maxValueWidth &&
+    valueFontSize > 7.2
+  ) {
+    valueFontSize -= 0.4;
+  }
+
   drawCard(page, x, y, width, height, colors);
   page.drawRectangle({ x, y: y + height - 4, width, height: 4, color: accent, opacity: 0.75 });
   page.drawText(label, {
@@ -2946,17 +2820,16 @@ function drawMetricCard(
     font: fonts.bold,
     color: colors.muted,
   });
-  drawTextBlock(
-    page,
-    value,
-    x + 10,
-    y + height - 44,
-    width - 20,
-    fonts.bold,
-    value.length > 19 ? 11.5 : value.length > 12 ? 14.5 : 18,
-    18,
-    value.includes("unavailable") ? colors.muted : colors.text
-  );
+  page.drawText(value, {
+    x: x + 10,
+    y: y + height - 44,
+    size: valueFontSize,
+    font: fonts.bold,
+    color: value.toLowerCase().includes("unavailable")
+      ? colors.muted
+      : colors.text,
+    maxWidth: maxValueWidth,
+  });
   drawSourceBadge(page, x + 10, y + 10, source, fonts, colors, width - 20);
 }
 
@@ -3088,7 +2961,9 @@ function drawImageLegend(
       label:
         options.overlayMode === "exact"
           ? "Sample Panel Layout"
-          : `Estimated capacity up to ${proposal.panelCount ?? 0} panels`,
+          : proposal.panelCount
+            ? `Estimated capacity up to ${proposal.panelCount} panels`
+            : "Panel layout unavailable",
     },
     {
       color: colors.green,
@@ -3160,7 +3035,9 @@ function drawRoofVisualCaption(
   const leading =
     overlayMode === "exact"
       ? "Preliminary rooftop analysis based on satellite imagery and available solar data."
-      : `Estimated capacity view based on usable roof area and saved solar metrics.`;
+      : proposal.reportSnapshot
+        ? "Estimated capacity view based on usable roof area and saved solar metrics."
+        : "House-centered satellite view; detailed roof geometry was not saved with this report.";
   const trailing =
     visualization === "sunlight"
       ? "Final panel placement and sunlight performance require installer verification."
@@ -3583,9 +3460,12 @@ async function loadQrImage(pdf: PDFDocument, url: string) {
   }
 }
 
-function buildEstimateUrl(requestUrl: string, address: string) {
-  const origin = new URL(requestUrl).origin;
-  return `${origin}/estimate?address=${encodeURIComponent(address)}`;
+function buildEstimateUrl(address: string) {
+  const configuredSiteUrl =
+    process.env.NEXT_PUBLIC_SITE_URL?.trim() || APP_CANONICAL_URL;
+  const url = new URL("/estimate", configuredSiteUrl);
+  url.searchParams.set("address", address);
+  return url.toString();
 }
 
 function buildPdfFilename(proposal: ProposalData) {
@@ -3696,6 +3576,15 @@ function positiveNumber(value: unknown) {
   return parsed > 0 ? parsed : undefined;
 }
 
+function finiteCoordinate(value: unknown, type: "lat" | "lng") {
+  const parsed = Number(value);
+  const limit = type === "lat" ? 90 : 180;
+
+  return Number.isFinite(parsed) && Math.abs(parsed) <= limit
+    ? parsed
+    : undefined;
+}
+
 function toFiniteNumber(value: unknown, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -3722,25 +3611,39 @@ function formatMoney(value: number) {
 }
 
 function formatMoneyMaybe(value?: number) {
-  return value ? formatMoney(value) : "Estimate unavailable";
+  return hasFiniteValue(value) ? formatMoney(value) : "Estimate unavailable";
 }
 
 function formatKwMaybe(value?: number) {
-  return value ? `${Number(value.toFixed(1))} kW` : "Estimate unavailable";
+  return hasFiniteValue(value)
+    ? `${Number(value.toFixed(1))} kW`
+    : "Estimate unavailable";
 }
 
 function formatSqFtMaybe(value?: number) {
-  return value ? `${formatNumber(value)} sq ft` : "Estimate unavailable";
+  return hasFiniteValue(value)
+    ? `${formatNumber(value)} sq ft`
+    : "Estimate unavailable";
 }
 
 function formatPctMaybe(value?: number) {
-  return value ? `${Math.round(value)}%` : "Estimate unavailable";
+  return hasFiniteValue(value)
+    ? `${Math.round(value)}%`
+    : "Estimate unavailable";
 }
 
 function formatKwhMaybe(value?: number) {
-  return value ? `${formatNumber(value)} kWh / yr` : "Estimate unavailable";
+  return hasFiniteValue(value)
+    ? `${formatNumber(value)} kWh / yr`
+    : "Estimate unavailable";
 }
 
 function formatLbsMaybe(value?: number) {
-  return value ? `${formatNumber(value)} lbs / yr` : "Estimate unavailable";
+  return hasFiniteValue(value)
+    ? `${formatNumber(value)} lbs / yr`
+    : "Estimate unavailable";
+}
+
+function hasFiniteValue(value: number | undefined): value is number {
+  return value !== undefined && Number.isFinite(value);
 }

@@ -1,43 +1,24 @@
 import { NextResponse } from "next/server";
-import { buildFallbackRoofAnalysis } from "@/lib/roof-analysis";
+import { z } from "zod";
 import {
   DAY_MS,
   isLikelyBotAddress,
   isRequestTooLarge,
   maintenanceModeResponse,
   payloadTooLargeResponse,
+  readJsonWithLimit,
   rateLimitResponse,
 } from "@/lib/abuse-protection";
+import {
+  geocodeAddress,
+  validateGeocodedResidentialSite,
+} from "@/lib/google-solar";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { buildFallbackRoofAnalysis } from "@/lib/roof-analysis";
 
-type GeocodeResponse = {
-  results?: Array<{
-    formatted_address: string;
-    partial_match?: boolean;
-    types?: string[];
-    geometry?: {
-      location?: {
-        lat: number;
-        lng: number;
-      };
-      location_type?: string;
-      viewport?: {
-        northeast: {
-          lat: number;
-          lng: number;
-        };
-        southwest: {
-          lat: number;
-          lng: number;
-        };
-      };
-    };
-  }>;
-  status?: string;
-  error_message?: string;
-};
-
-const MAPS_KEY = process.env.GOOGLE_MAPS_API_KEY;
+const previewSchema = z.object({
+  address: z.string().trim().min(8).max(220),
+});
 
 export async function POST(request: Request) {
   try {
@@ -79,118 +60,60 @@ export async function POST(request: Request) {
       );
     }
 
-    if (!MAPS_KEY) {
-      return NextResponse.json(
-        { message: "Google Maps API key is not configured." },
-        { status: 500 }
-      );
+    const jsonBody = await readJsonWithLimit(request, 16 * 1024);
+
+    if (!jsonBody.ok && jsonBody.reason === "too_large") {
+      return payloadTooLargeResponse("The satellite preview request is too large.");
     }
 
-    const body = (await request.json().catch(() => ({}))) as { address?: string };
-    const address = body.address?.trim();
+    const parsed = previewSchema.safeParse(jsonBody.ok ? jsonBody.data : null);
 
-    if (!address || isLikelyBotAddress(address)) {
+    if (!parsed.success || isLikelyBotAddress(parsed.data.address)) {
       return NextResponse.json(
         { message: "Enter a complete residential street address." },
         { status: 400 }
       );
     }
 
-    const geocodeUrl = new URL("https://maps.googleapis.com/maps/api/geocode/json");
-    geocodeUrl.searchParams.set("address", address);
-    geocodeUrl.searchParams.set("key", MAPS_KEY);
+    const geocoded = await geocodeAddress(parsed.data.address);
+    const validationMessage = validateGeocodedResidentialSite(geocoded);
 
-    const response = await fetch(geocodeUrl, {
-      headers: { Accept: "application/json" },
-      cache: "no-store",
-    });
-    const payload = (await response.json()) as GeocodeResponse;
-
-    const result = payload.results?.[0];
-    const location = result?.geometry?.location;
-    const viewport = result?.geometry?.viewport;
-    const status = payload.status;
-    const resultTypes = result?.types ?? [];
-    const locationType = result?.geometry?.location_type;
-
-    if (!response.ok || !result || !location || status !== "OK") {
-      if (status === "ZERO_RESULTS") {
-        return NextResponse.json(
-          { message: "We couldn't find that address." },
-          { status: 404 }
-        );
-      }
-
+    if (validationMessage) {
       return NextResponse.json(
-        {
-          message:
-            payload.error_message ||
-            "Google Geocoding is unavailable for this project.",
-        },
-        { status: 502 }
-      );
-    }
-
-    const disallowedResultTypes = new Set([
-      "route",
-      "intersection",
-      "parking",
-      "plus_code",
-      "point_of_interest",
-      "airport",
-      "park",
-      "natural_feature",
-    ]);
-
-    if (result.partial_match) {
-      return NextResponse.json(
-        { message: "Please choose a full street address with a visible rooftop." },
-        { status: 422 }
-      );
-    }
-
-    if (
-      resultTypes.some((type) => disallowedResultTypes.has(type)) ||
-      locationType === "APPROXIMATE"
-    ) {
-      return NextResponse.json(
-        {
-          message:
-            "This address does not appear to be a precise residential rooftop. Please choose a house address.",
-        },
+        { message: validationMessage },
         { status: 422 }
       );
     }
 
     const analysis = buildFallbackRoofAnalysis({
-      address: result.formatted_address,
-      lat: location.lat,
-      lng: location.lng,
-      viewport,
+      address: geocoded.formattedAddress,
+      lat: geocoded.lat,
+      lng: geocoded.lng,
+      viewport: geocoded.viewport,
     });
 
-    const imageUrl = `/api/satellite/image?lat=${encodeURIComponent(
-      location.lat
-    )}&lng=${encodeURIComponent(location.lng)}&zoom=${encodeURIComponent(
-      20
-    )}&address=${encodeURIComponent(result.formatted_address)}`;
-
     return NextResponse.json({
-      formattedAddress: result.formatted_address,
-      lat: location.lat,
-      lng: location.lng,
-      imageUrl,
+      formattedAddress: geocoded.formattedAddress,
+      lat: geocoded.lat,
+      lng: geocoded.lng,
+      imageUrl: `/api/satellite/image?lat=${encodeURIComponent(
+        geocoded.lat
+      )}&lng=${encodeURIComponent(geocoded.lng)}&zoom=20`,
       analysis,
     });
   } catch (error) {
+    console.warn("[satellite-preview:error]", {
+      errorType: error instanceof Error ? error.name : "unknown",
+    });
     return NextResponse.json(
       {
         message:
-          error instanceof Error
-            ? error.message
-            : "Unexpected satellite lookup error.",
+          error instanceof Error &&
+          (error.name === "AbortError" || error.name === "TimeoutError")
+            ? "Address lookup took too long. Please try again."
+            : "Address lookup is temporarily unavailable.",
       },
-      { status: 500 }
+      { status: 502 }
     );
   }
 }

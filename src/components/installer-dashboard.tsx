@@ -184,7 +184,7 @@ export function InstallerDashboard({
   const [solarScoreFilter, setSolarScoreFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [dateFilter, setDateFilter] = useState("all");
-  const [pdfUnavailableIds, setPdfUnavailableIds] = useState<Set<string>>(
+  const [pdfUnavailableIds] = useState<Set<string>>(
     () => new Set()
   );
   const [savingNotesIds, setSavingNotesIds] = useState<Set<string>>(
@@ -871,7 +871,7 @@ function LeadDrawer({
             <DrawerMetric label="Savings" value={formatMoney(lead.annualSavings)} />
             <DrawerMetric label="System" value={`${formatDecimal(lead.systemSizeKw)} kW`} />
             <DrawerMetric label="Energy offset" value={`${formatNumber(lead.energyOffsetPct)}%`} />
-            <DrawerMetric label="ROI" value={`${formatDecimal(lead.roiYears)} yrs`} />
+            <DrawerMetric label="Payback" value={`${formatDecimal(lead.roiYears)} yrs`} />
           </section>
 
           <section className="mt-4 rounded-[1.15rem] border border-white/10 bg-white/[0.04] p-4">

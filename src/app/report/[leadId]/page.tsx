@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { cookies } from "next/headers";
 import { formatDisplayAddress } from "@/lib/address-format";
@@ -11,7 +12,12 @@ import {
   buildRawReportPdfPath,
   verifyReportSignature,
 } from "@/lib/report-access";
+import {
+  normalizeSolarReportSnapshot,
+  type SolarReportSnapshot,
+} from "@/lib/report-snapshot";
 import { buildSolarReportFromSolarValues } from "@/lib/solar-report";
+import { STANDARD_PANEL_WATTS } from "@/lib/solar-assumptions";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
 
 type ReportViewerPageProps = {
@@ -33,8 +39,6 @@ type ReportLead = {
   energy_offset_pct?: number | null;
   estimated_savings?: number | null;
   id: string;
-  lead_score?: number | null;
-  lead_score_label?: string | null;
   monthly_bill?: number | null;
   name: string | null;
   panel_count?: number | null;
@@ -42,11 +46,13 @@ type ReportLead = {
   roi_years?: number | null;
   solar_suitability_score?: number | null;
   system_size_kw?: number | null;
+  report_snapshot?: SolarReportSnapshot | null;
 };
 
-export const metadata = {
+export const metadata: Metadata = {
   title: `Solar Report | ${APP_NAME}`,
   description: "View and download a homeowner solar report.",
+  robots: { index: false, follow: false },
 };
 
 export default async function ReportViewerPage({
@@ -74,12 +80,16 @@ export default async function ReportViewerPage({
   }
 
   const lead = await getLead(leadId);
+  const publicExpiry = toFiniteOptionalNumber(query?.exp);
   const rawPdfPath = access.dashboardAccess
     ? buildDashboardPdfPath(leadId, access.dashboardToken)
-    : buildRawReportPdfPath(leadId);
+    : buildRawReportPdfPath(leadId, { expiresAt: publicExpiry ?? undefined });
   const downloadPdfPath = access.dashboardAccess
     ? buildDashboardPdfPath(leadId, access.dashboardToken, true)
-    : buildRawReportPdfPath(leadId, { download: true });
+    : buildRawReportPdfPath(leadId, {
+        download: true,
+        expiresAt: publicExpiry ?? undefined,
+      });
 
   if (!lead) {
     return (
@@ -95,16 +105,17 @@ export default async function ReportViewerPage({
             The report may have been removed or the lead ID is incorrect.
           </p>
           <Link
-            href="/dashboard"
+            href={access.dashboardAccess ? "/dashboard" : "/"}
             className="mt-6 inline-flex rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100"
           >
-            Back to dashboard
+            Back to {access.dashboardAccess ? "dashboard" : APP_NAME}
           </Link>
         </section>
       </ReportShell>
     );
   }
 
+  const snapshot = normalizeSolarReportSnapshot(lead.report_snapshot);
   const report = buildSolarReportFromSolarValues({
     annualKwh: Number(lead.annual_energy_kwh ?? 0),
     annualSavings: Number(lead.annual_savings ?? lead.estimated_savings ?? 0),
@@ -112,26 +123,40 @@ export default async function ReportViewerPage({
     panelCount: Number(lead.panel_count ?? 0),
     systemKw: Number(lead.system_size_kw ?? 0),
   });
-  const annualSavings = Number(lead.annual_savings ?? lead.estimated_savings ?? report.annualSavings);
-  const systemSizeKw = Number(
-    lead.system_size_kw ?? (report.panelCount ? (report.panelCount * 400) / 1000 : 0)
+  const annualSavings = firstFiniteNumber(
+    snapshot?.metrics.annualSavings,
+    lead.annual_savings,
+    lead.estimated_savings,
+    report.annualSavings
   );
-  const panelCount = Number(lead.panel_count ?? report.panelCount);
-  const grossCost = panelCount > 0 ? panelCount * 400 * 2.75 : 0;
-  const netCost = grossCost * 0.7;
-  const netPaybackYears =
-    annualSavings > 0 && netCost > 0 ? Number((netCost / annualSavings).toFixed(1)) : 0;
-  const roiYears = Number.isFinite(netPaybackYears) && netPaybackYears > 0
-    ? netPaybackYears
-    : Number(lead.roi_years ?? report.estimatedRoiYears);
-  const annualKwh = Number(lead.annual_energy_kwh ?? 0);
-  const monthlyBill = Number(lead.monthly_bill ?? 0);
-  const energyOffset =
-    annualKwh > 0 && monthlyBill > 0
-      ? Math.min(Math.round(((annualKwh * 0.13) / (monthlyBill * 12)) * 100), 100)
-      : Number(lead.energy_offset_pct ?? report.annualEnergyOffset);
-  const solarReadinessScore = Number(lead.solar_suitability_score ?? 0);
-  const solarReadinessLabel = getSolarReadinessLabel(solarReadinessScore);
+  const systemSizeKw = firstFiniteNumber(
+    snapshot?.metrics.systemKw,
+    lead.system_size_kw,
+    report.panelCount > 0
+      ? (report.panelCount * STANDARD_PANEL_WATTS) / 1000
+      : undefined
+  );
+  const panelCount = firstFiniteNumber(
+    snapshot?.panelCount,
+    snapshot?.metrics.panelCount,
+    lead.panel_count,
+    report.panelCount
+  );
+  const roiYears = firstFiniteNumber(
+    snapshot?.metrics.paybackYears,
+    lead.roi_years,
+    report.estimatedRoiYears
+  );
+  const energyOffset = firstFiniteNumber(
+    snapshot?.metrics.coveragePct,
+    lead.energy_offset_pct,
+    report.annualEnergyOffset
+  );
+  const solarReadinessScore = firstFiniteOptionalNumber(
+    snapshot?.solarReadinessScore,
+    lead.solar_suitability_score
+  );
+  const solarReadinessLabel = getSolarReadinessLabel(solarReadinessScore ?? 0);
 
   return (
     <ReportShell>
@@ -148,12 +173,14 @@ export default async function ReportViewerPage({
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Link
-            href="/dashboard"
-            className="inline-flex items-center justify-center rounded-full border border-white/10 bg-white/[0.06] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-white/[0.1]"
-          >
-            Back to dashboard
-          </Link>
+          {access.dashboardAccess ? (
+            <Link
+              href="/dashboard"
+              className="inline-flex items-center justify-center rounded-full border border-white/10 bg-white/[0.06] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-white/[0.1]"
+            >
+              Back to dashboard
+            </Link>
+          ) : null}
           <a
             href={rawPdfPath}
             className="inline-flex items-center justify-center rounded-full border border-cyan-200/20 bg-cyan-300/10 px-4 py-2.5 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-300/16"
@@ -192,7 +219,7 @@ export default async function ReportViewerPage({
             <Metric
               label="Solar Readiness Score"
               value={
-                solarReadinessScore
+                solarReadinessScore !== null
                   ? `${Math.round(solarReadinessScore)}/100 - ${solarReadinessLabel}`
                   : "Preliminary Estimate"
               }
@@ -338,7 +365,7 @@ function ReportUnavailable({
 async function getLead(leadId: string) {
   const supabase = getSupabaseAdminClient();
   const selects = [
-    "id, name, email, phone, address, monthly_bill, estimated_savings, created_at, panel_count, system_size_kw, annual_savings, annual_energy_kwh, roi_years, energy_offset_pct, solar_suitability_score, lead_score, lead_score_label",
+    "id, name, email, phone, address, monthly_bill, estimated_savings, created_at, panel_count, system_size_kw, annual_savings, annual_energy_kwh, roi_years, energy_offset_pct, solar_suitability_score, report_snapshot",
     "id, name, email, phone, address, monthly_bill, estimated_savings, created_at, panel_count, system_size_kw, annual_savings, annual_energy_kwh",
     "id, name, email, phone, address, monthly_bill, estimated_savings, created_at",
   ];
@@ -430,4 +457,37 @@ function formatDecimal(value: number) {
   }
 
   return Number(value.toFixed(1)).toLocaleString("en-US");
+}
+
+function firstFiniteNumber(...values: unknown[]) {
+  for (const value of values) {
+    const parsed = toFiniteOptionalNumber(value);
+
+    if (parsed !== null && parsed >= 0) {
+      return parsed;
+    }
+  }
+
+  return 0;
+}
+
+function firstFiniteOptionalNumber(...values: unknown[]) {
+  for (const value of values) {
+    const parsed = toFiniteOptionalNumber(value);
+
+    if (parsed !== null && parsed >= 0) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function toFiniteOptionalNumber(value: unknown) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }

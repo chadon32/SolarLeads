@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
+import { payloadTooLargeResponse, readJsonWithLimit } from "@/lib/abuse-protection";
 import { requireDashboardAuth } from "@/lib/dashboard-auth";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
+import { z } from "zod";
 
 const followUpStatusLabels = {
   contacted: "Contacted",
@@ -28,6 +30,12 @@ type FollowUpBody = {
   leadId?: string;
   nextFollowUpAt?: string | null;
 };
+const followUpUpdateSchema = z.object({
+  action: z.string().trim().min(1).max(40),
+  followUpNotes: z.string().max(4000).optional(),
+  leadId: z.string().uuid(),
+  nextFollowUpAt: z.string().datetime({ offset: true }).nullable().optional(),
+});
 
 export async function PATCH(request: Request) {
   try {
@@ -51,9 +59,16 @@ export async function PATCH(request: Request) {
       );
     }
 
-    const body = (await request.json()) as FollowUpBody;
-    const leadId = body.leadId?.trim();
-    const action = normalizeFollowUpAction(body.action);
+    const jsonBody = await readJsonWithLimit(request, 16 * 1024);
+
+    if (!jsonBody.ok && jsonBody.reason === "too_large") {
+      return payloadTooLargeResponse("The follow-up update is too large.");
+    }
+
+    const parsed = followUpUpdateSchema.safeParse(jsonBody.ok ? jsonBody.data : null);
+    const body: FollowUpBody = parsed.success ? parsed.data : {};
+    const leadId = parsed.success ? parsed.data.leadId : "";
+    const action = parsed.success ? normalizeFollowUpAction(parsed.data.action) : null;
 
     if (!leadId || !action) {
       return NextResponse.json(
@@ -94,7 +109,7 @@ export async function PATCH(request: Request) {
 
     if (error) {
       return NextResponse.json(
-        { message: error.message || "Unable to update follow-up status." },
+        { message: "Unable to update follow-up status." },
         { status: 500 }
       );
     }
@@ -110,13 +125,11 @@ export async function PATCH(request: Request) {
       },
     });
   } catch (error) {
+    console.error("[lead-follow-up:error]", {
+      errorType: error instanceof Error ? error.name : "unknown",
+    });
     return NextResponse.json(
-      {
-        message:
-          error instanceof Error
-            ? error.message
-            : "Unexpected follow-up status error.",
-      },
+      { message: "Unable to update follow-up status." },
       { status: 500 }
     );
   }

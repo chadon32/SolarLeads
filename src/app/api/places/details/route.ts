@@ -1,9 +1,16 @@
 import { NextResponse } from "next/server";
 import { maintenanceModeResponse, rateLimitResponse } from "@/lib/abuse-protection";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import {
+  isArizonaAddressComponents,
+  isArizonaCoordinate,
+  looksLikeArizonaAddress,
+} from "@/lib/arizona-address";
+import { z } from "zod";
 
 const googlePlacesKey =
   process.env.GOOGLE_PLACES_API_KEY;
+const placeIdSchema = z.string().trim().min(10).max(500).regex(/^[A-Za-z0-9_-]+$/);
 
 export async function GET(request: Request) {
   try {
@@ -35,14 +42,15 @@ export async function GET(request: Request) {
     }
 
     const { searchParams } = new URL(request.url);
-    const placeId = searchParams.get("placeId");
+    const parsedPlaceId = placeIdSchema.safeParse(searchParams.get("placeId"));
 
-    if (!placeId) {
+    if (!parsedPlaceId.success) {
       return NextResponse.json(
-        { message: "Missing placeId." },
+        { message: "A valid placeId is required." },
         { status: 400 }
       );
     }
+    const placeId = parsedPlaceId.data;
 
     const response = await fetch(
       `https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`,
@@ -52,19 +60,28 @@ export async function GET(request: Request) {
           "X-Goog-FieldMask":
             "formattedAddress,location,types,primaryType,businessStatus,addressComponents",
         },
+        signal: AbortSignal.timeout(8_000),
       }
     );
 
     const data = await response.json().catch(() => ({}));
 
     if (!response.ok) {
+      console.warn("[places-details:provider]", { status: response.status });
       return NextResponse.json(
-        {
-          message:
-            data?.error?.message ??
-            "Google Places could not return address details.",
-        },
-        { status: response.status }
+        { message: "Address details are temporarily unavailable." },
+        { status: 502 }
+      );
+    }
+
+    if (
+      !isArizonaCoordinate(data.location?.latitude, data.location?.longitude) ||
+      (!isArizonaAddressComponents(data.addressComponents) &&
+        !looksLikeArizonaAddress(data.formattedAddress))
+    ) {
+      return NextResponse.json(
+        { message: "Solartelligence currently supports Arizona properties only." },
+        { status: 422 }
       );
     }
 
@@ -78,14 +95,12 @@ export async function GET(request: Request) {
       addressComponents: data.addressComponents,
     });
   } catch (error) {
+    console.warn("[places-details:error]", {
+      errorType: error instanceof Error ? error.name : "unknown",
+    });
     return NextResponse.json(
-      {
-        message:
-          error instanceof Error
-            ? error.message
-            : "Unexpected Places details failure.",
-      },
-      { status: 500 }
+      { message: "Address details are temporarily unavailable." },
+      { status: 502 }
     );
   }
 }

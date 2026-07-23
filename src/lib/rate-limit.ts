@@ -1,3 +1,4 @@
+import "server-only";
 import { createHash } from "node:crypto";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
 
@@ -21,6 +22,8 @@ type RateLimitResult =
       retryAfterSeconds: number;
     };
 
+const memoryWindows = new Map<string, { count: number; startedAt: number }>();
+
 export function getClientIp(request: Request) {
   const forwarded = request.headers.get("x-forwarded-for");
   const realIp = request.headers.get("x-real-ip");
@@ -38,18 +41,53 @@ function hashRateLimitKey(route: string, identifier: string) {
     .digest("hex");
 }
 
+const DEV_RATE_LIMIT_MULTIPLIER = 20;
+
 export async function enforceRateLimit({
   key,
   request,
   route,
-  limit,
+  limit: requestedLimit,
   windowMs,
 }: RateLimitInput): Promise<RateLimitResult> {
+  const limit =
+    process.env.NODE_ENV === "production"
+      ? requestedLimit
+      : requestedLimit * DEV_RATE_LIMIT_MULTIPLIER;
+
   try {
     const supabase = getSupabaseAdminClient();
     const ip = getClientIp(request);
     const identifier = key?.trim() || `ip:${ip}`;
     const keyHash = hashRateLimitKey(route, identifier);
+    const windowSeconds = Math.max(1, Math.ceil(windowMs / 1000));
+    const atomicResult = await supabase.rpc("enforce_request_rate_limit", {
+      p_key_hash: keyHash,
+      p_limit: limit,
+      p_route: route,
+      p_window_seconds: windowSeconds,
+    });
+
+    if (!atomicResult.error) {
+      const row = Array.isArray(atomicResult.data)
+        ? atomicResult.data[0]
+        : atomicResult.data;
+      const allowed = Boolean(row?.allowed);
+      const currentCount = Number(row?.current_count ?? (allowed ? 1 : limit));
+
+      return allowed
+        ? {
+            allowed: true,
+            remaining: Math.max(0, limit - currentCount),
+            retryAfterSeconds: windowSeconds,
+          }
+        : {
+            allowed: false,
+            remaining: 0,
+            retryAfterSeconds: windowSeconds,
+          };
+    }
+
     const cutoff = new Date(Date.now() - windowMs).toISOString();
 
     const { count, error } = await supabase
@@ -60,11 +98,7 @@ export async function enforceRateLimit({
       .gte("created_at", cutoff);
 
     if (error) {
-      return {
-        allowed: true,
-        remaining: limit,
-        retryAfterSeconds: Math.ceil(windowMs / 1000),
-      };
+      return enforceMemoryRateLimit(keyHash, limit, windowMs);
     }
 
     const currentCount = count ?? 0;
@@ -77,10 +111,14 @@ export async function enforceRateLimit({
       };
     }
 
-    await supabase.from("request_events").insert({
+    const insertResult = await supabase.from("request_events").insert({
       route,
       key_hash: keyHash,
     });
+
+    if (insertResult.error) {
+      return enforceMemoryRateLimit(keyHash, limit, windowMs);
+    }
 
     return {
       allowed: true,
@@ -88,10 +126,58 @@ export async function enforceRateLimit({
       retryAfterSeconds: Math.max(1, Math.ceil(windowMs / 1000)),
     };
   } catch {
+    const ip = getClientIp(request);
+    const identifier = key?.trim() || `ip:${ip}`;
+    return enforceMemoryRateLimit(
+      hashRateLimitKey(route, identifier),
+      limit,
+      windowMs
+    );
+  }
+}
+
+function enforceMemoryRateLimit(
+  keyHash: string,
+  limit: number,
+  windowMs: number
+): RateLimitResult {
+  const now = Date.now();
+  const current = memoryWindows.get(keyHash);
+  const window =
+    !current || now - current.startedAt >= windowMs
+      ? { count: 0, startedAt: now }
+      : current;
+
+  if (window.count >= limit) {
     return {
-      allowed: true,
-      remaining: limit,
-      retryAfterSeconds: Math.ceil(windowMs / 1000),
+      allowed: false,
+      remaining: 0,
+      retryAfterSeconds: Math.max(
+        1,
+        Math.ceil((windowMs - (now - window.startedAt)) / 1000)
+      ),
     };
+  }
+
+  window.count += 1;
+  memoryWindows.set(keyHash, window);
+  pruneMemoryWindows(now, windowMs);
+
+  return {
+    allowed: true,
+    remaining: Math.max(0, limit - window.count),
+    retryAfterSeconds: Math.max(1, Math.ceil(windowMs / 1000)),
+  };
+}
+
+function pruneMemoryWindows(now: number, windowMs: number) {
+  if (memoryWindows.size < 2_000) {
+    return;
+  }
+
+  for (const [key, value] of memoryWindows) {
+    if (now - value.startedAt >= windowMs) {
+      memoryWindows.delete(key);
+    }
   }
 }

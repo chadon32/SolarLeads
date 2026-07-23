@@ -186,7 +186,8 @@ export function AddressSearch({
 
       try {
         const response = await fetch(
-          `/api/places/details?placeId=${encodeURIComponent(prediction.place_id)}`
+          `/api/places/details?placeId=${encodeURIComponent(prediction.place_id)}`,
+          { cache: "no-store" }
         );
         const payload: PlaceDetailsPayload = await response.json().catch(() => ({}));
         const formattedAddress =
@@ -368,7 +369,10 @@ export function AddressSearch({
 
   return (
     <div className="relative w-full">
-      <label className="mb-3 block text-xs font-semibold uppercase tracking-[0.34em] text-cyan-100/90">
+      <label
+        htmlFor="address-search-input"
+        className="mb-3 block text-xs font-semibold uppercase tracking-[0.34em] text-cyan-100/90"
+      >
         Enter your Arizona address
       </label>
       <div className="relative">
@@ -378,8 +382,12 @@ export function AddressSearch({
             aria-hidden="true"
           />
           <input
+            id="address-search-input"
             ref={inputRef}
             type="text"
+            name="address"
+            autoComplete="street-address"
+            spellCheck={false}
             value={query}
             role="combobox"
             aria-autocomplete="list"
@@ -387,6 +395,10 @@ export function AddressSearch({
             aria-controls={showPredictions ? "address-suggestions" : undefined}
             aria-expanded={showPredictions}
             aria-activedescendant={activePredictionId}
+            aria-describedby={`address-helper${
+              status !== "Address lookup ready." ? " address-status" : ""
+            }${addressError ? " address-error" : ""}`}
+            aria-invalid={Boolean(addressError)}
             onChange={(event) => {
               setQuery(event.target.value);
               setOpen(true);
@@ -465,7 +477,14 @@ export function AddressSearch({
           </span>
         </div>
         {status !== "Address lookup ready." ? (
-          <p className="mt-2 text-xs leading-5 text-white/45">{status}</p>
+          <p
+            id="address-status"
+            role="status"
+            aria-live="polite"
+            className="mt-2 text-xs leading-5 text-white/45"
+          >
+            {status}
+          </p>
         ) : null}
 
         {open && exactPredictionMatch ? (
@@ -535,9 +554,13 @@ export function AddressSearch({
         Currently serving Arizona addresses only.
       </p>
       {addressError ? (
-        <p className="mt-2 text-sm leading-6 text-rose-300">{addressError}</p>
+        <p id="address-error" role="alert" className="mt-2 text-sm leading-6 text-rose-300">
+          {addressError}
+        </p>
       ) : null}
-      <p className="mt-3 text-sm leading-6 text-white/45">{helperText}</p>
+      <p id="address-helper" className="mt-3 text-sm leading-6 text-white/45">
+        {helperText}
+      </p>
     </div>
   );
 }

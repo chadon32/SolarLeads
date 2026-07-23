@@ -1,0 +1,37 @@
+{
+  "expo": {
+    "name": "Solartelligence",
+    "slug": "solartelligence",
+    "version": "1.1.1",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "solartelligence",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "bundleIdentifier": "com.solartelligence.app",
+      "supportsTablet": false,
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSCameraUsageDescription": "Solartelligence uses the camera only when you choose to photograph a utility bill for your solar report.",
+        "NSPhotoLibraryUsageDescription": "Solartelligence accesses your photo library only when you choose a utility bill image for your solar report."
+      }
+    },
+    "plugins": [
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#020617",
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 180
+        }
+      ]
+    ],
+    "extra": {
+      "appUrl": "https://solartelligence.com",
+      "eas": {
+        "projectId": "1b4e88e3-f01f-4150-8547-346d4a195b30"
+      }
+    },
+    "owner": "chadon32"
+  }
+}

@@ -6,15 +6,19 @@ import {
   isRequestTooLarge,
   logAbuseSignal,
   payloadTooLargeResponse,
+  readJsonWithLimit,
   rateLimitResponse,
 } from "@/lib/abuse-protection";
 import { requireDashboardAuth } from "@/lib/dashboard-auth";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
+import { sanitizeProviderError } from "@/lib/notifications";
+import { z } from "zod";
 
 type SendNowBody = {
   followUpId?: string;
 };
+const sendNowSchema = z.object({ followUpId: z.string().uuid() });
 
 type FollowUpRow = {
   id: string;
@@ -29,6 +33,8 @@ type LeadRow = {
   id: string;
   name: string | null;
   email: string | null;
+  installer_contact_consent?: boolean | null;
+  marketing_email_consent?: boolean | null;
 };
 
 const resendApiKey = process.env.RESEND_API_KEY?.trim();
@@ -72,7 +78,14 @@ export async function POST(request: Request) {
       );
     }
 
-    const body = (await request.json().catch(() => ({}))) as SendNowBody;
+    const jsonBody = await readJsonWithLimit(request, 16 * 1024);
+
+    if (!jsonBody.ok && jsonBody.reason === "too_large") {
+      return payloadTooLargeResponse("The follow-up request is too large.");
+    }
+
+    const parsed = sendNowSchema.safeParse(jsonBody.ok ? jsonBody.data : null);
+    const body: SendNowBody = parsed.success ? parsed.data : {};
 
     if (!body.followUpId) {
       return NextResponse.json({ message: "Missing followUpId." }, { status: 400 });
@@ -87,18 +100,18 @@ export async function POST(request: Request) {
 
     if (followUpError || !followUp) {
       return NextResponse.json(
-        { message: followUpError?.message || "Follow-up not found." },
+        { message: "Follow-up not found." },
         { status: 404 }
       );
     }
 
     const { data: lead } = (await supabase
       .from("leads")
-      .select("id, name, email")
+      .select("id, name, email, installer_contact_consent, marketing_email_consent")
       .eq("id", followUp.lead_id)
       .single()) as { data: LeadRow | null; error: { message: string } | null };
 
-    const deliveryMessage = await sendFollowUpIfConfigured(followUp, lead);
+    const delivery = await sendFollowUpIfConfigured(followUp, lead);
     const processedAt = new Date().toISOString();
     const attempts = (followUp.attempts ?? 0) + 1;
 
@@ -106,9 +119,9 @@ export async function POST(request: Request) {
       .from("lead_followups")
       .update({
         attempts,
-        delivery_message: deliveryMessage,
+        delivery_message: delivery.message,
         processed_at: processedAt,
-        status: "sent",
+        status: delivery.status,
       })
       .eq("id", followUp.id)
       .select("attempts, delivery_message, processed_at, status")
@@ -116,33 +129,35 @@ export async function POST(request: Request) {
 
     if (updateError) {
       return NextResponse.json(
-        { message: updateError.message || "Unable to update follow-up." },
+        { message: "Unable to update follow-up." },
         { status: 500 }
       );
     }
 
-    await supabase
-      .from("leads")
-      .update({
-        follow_up_status: "Contacted",
-        last_contacted_at: processedAt,
-      })
-      .eq("id", followUp.lead_id);
+    if (delivery.status === "sent") {
+      await supabase
+        .from("leads")
+        .update({
+          follow_up_status: "Contacted",
+          last_contacted_at: processedAt,
+        })
+        .eq("id", followUp.lead_id);
+    }
 
     return NextResponse.json({
       followUp: {
         attempts: updatedFollowUp?.attempts ?? attempts,
-        deliveryMessage: updatedFollowUp?.delivery_message ?? deliveryMessage,
+        deliveryMessage: updatedFollowUp?.delivery_message ?? delivery.message,
         processedAt: updatedFollowUp?.processed_at ?? processedAt,
-        status: updatedFollowUp?.status ?? "sent",
+        status: updatedFollowUp?.status ?? delivery.status,
       },
     });
   } catch (error) {
+    console.error("[follow-up-send-now:error]", {
+      errorType: error instanceof Error ? error.name : "unknown",
+    });
     return NextResponse.json(
-      {
-        message:
-          error instanceof Error ? error.message : "Unexpected follow-up send error.",
-      },
+      { message: "Unable to send the follow-up." },
       { status: 500 }
     );
   }
@@ -150,11 +165,24 @@ export async function POST(request: Request) {
 
 async function sendFollowUpIfConfigured(followUp: FollowUpRow, lead: LeadRow | null) {
   if (followUp.channel !== "email") {
-    return "Marked sent manually. Automated text messaging is disabled.";
+    return {
+      message: "Marked complete manually. Automated text messaging is disabled.",
+      status: "sent" as const,
+    };
+  }
+
+  if (!lead?.marketing_email_consent) {
+    return {
+      message: "Not sent. Marketing email consent is not recorded for this homeowner.",
+      status: "skipped" as const,
+    };
   }
 
   if (!resendApiKey || !lead?.email) {
-    return "Marked sent manually. Email automation is not connected yet.";
+    return {
+      message: "Not sent. Email automation is not configured.",
+      status: "skipped" as const,
+    };
   }
 
   try {
@@ -166,12 +194,27 @@ async function sendFollowUpIfConfigured(followUp: FollowUpRow, lead: LeadRow | n
       text: [`Hi ${lead.name || "there"},`, "", followUp.body].join("\n"),
     });
 
-    return error
-      ? `Marked sent manually. Resend error: ${error.message}`
-      : "Follow-up email sent with Resend.";
+    if (error) {
+      console.error("[follow-up-send-now:provider]", {
+        error: sanitizeProviderError(error),
+      });
+      return {
+        message: "Follow-up email could not be delivered.",
+        status: "failed" as const,
+      };
+    }
+
+    return {
+      message: "Follow-up email sent with Resend.",
+      status: "sent" as const,
+    };
   } catch (error) {
-    return `Marked sent manually. Email send failed: ${
-      error instanceof Error ? error.message : "Unknown error"
-    }`;
+    console.error("[follow-up-send-now:provider]", {
+      error: sanitizeProviderError(error),
+    });
+    return {
+      message: "Follow-up email could not be delivered.",
+      status: "failed" as const,
+    };
   }
 }

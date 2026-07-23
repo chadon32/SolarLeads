@@ -1,9 +1,15 @@
+import "server-only";
 import { normalizeRoofAnalysis, type RoofAnalysis } from "@/lib/roof-analysis";
 import { normalizeAddress } from "@/lib/lead-normalization";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
 
 const CACHE_TABLE = "roof_analysis_cache";
-const ANALYSIS_VERSION = 12;
+// Bump when RoofAnalysis panel geometry, segment outlines, or recommended
+// default panel count policy changes so stale cache rows recompute.
+// v26: terrain filters — neighbor separation (ground gap or height step)
+// plus per-panel off-plane exclusion (modules hanging past the roof edge).
+
+const ANALYSIS_VERSION = 28;
 const CACHE_TTL_MS = Number(process.env.ROOF_ANALYSIS_CACHE_TTL_DAYS ?? 30) * 24 * 60 * 60 * 1000;
 
 type CacheLookupParams = {

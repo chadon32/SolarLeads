@@ -1,3 +1,5 @@
+import { ARIZONA_AVG_RATE_PER_KWH } from "@/lib/solar-assumptions";
+
 export type RoofViewport = {
   northeast: {
     lat: number;
@@ -19,7 +21,7 @@ export type RoofPoint = {
   y: number;
 };
 
-export type RoofPlaneLabel = "primary" | "secondary" | "garage";
+export type RoofPlaneLabel = "primary" | "secondary" | "garage" | (string & {});
 
 export type RoofGeoBounds = {
   northeast: {
@@ -41,6 +43,12 @@ export type RoofSegment = {
   usable: boolean;
   outline: RoofPoint[];
   bounds: RoofGeoBounds | null;
+  /**
+   * Original Solar API segment index — the value panels reference via
+   * `SolarPanelPlacement.segmentIndex`. The segments array itself is
+   * filtered/re-ranked, so its position is NOT this index.
+   */
+  segmentIndex?: number;
 };
 
 export type SolarPanelPlacement = {
@@ -49,7 +57,14 @@ export type SolarPanelPlacement = {
     lng: number;
   };
   orientation: "PORTRAIT" | "LANDSCAPE";
+  /** Roof-segment facing direction (degrees clockwise from true north). */
   azimuthDeg: number;
+  /**
+   * Roof-segment pitch in degrees. Panel centers are ground lat/lng, so the
+   * along-azimuth panel edge must be foreshortened by cos(pitch) when drawn
+   * on the satellite map.
+   */
+  pitchDeg: number;
   rowIndex: number | null;
   columnIndex: number | null;
   yearlyEnergyDcKwh: number;
@@ -120,10 +135,10 @@ export function buildFallbackRoofAnalysis(params: {
   const pitchDeg = clamp(Math.round(16 + widthM * 0.55), 16, 28);
   const usablePctRoof = clamp(Math.round(62 + widthM * 0.8), 58, 86);
   const usableAreaM2 = getUsableAreaM2FromFootprint(widthM, depthM, usablePctRoof);
-  const panelCount = clamp(Math.round(usableAreaM2 / 2.2), 14, 30);
+  const panelCount = clamp(Math.floor((usableAreaM2 / 2.2) * 0.85), 12, 26);
   const systemKw = roundTo(panelCount * 0.4, 1);
   const annualKwh = Math.round(systemKw * 1706);
-  const annualSavingsUSD = Math.round(annualKwh * 0.13);
+  const annualSavingsUSD = Math.round(annualKwh * ARIZONA_AVG_RATE_PER_KWH);
 
   const roofShape: RoofShape =
     widthM > 15 ? "complex" : widthM > 13.4 ? "hip" : "gable";
@@ -343,7 +358,10 @@ export function normalizeRoofAnalysis(
   const annualSavingsUSD = Math.max(
     0,
     Math.round(
-      numberOrFallback(input.annualSavingsUSD, Math.round(annualKwh * 0.13))
+      numberOrFallback(
+        input.annualSavingsUSD,
+        Math.round(annualKwh * ARIZONA_AVG_RATE_PER_KWH)
+      )
     )
   );
   const carbonOffsetFactorKgPerMwh = Math.max(
@@ -595,7 +613,11 @@ function normalizeRoofSegments(
       ...segment,
       outline: segment.outline.length
         ? segment.outline
-        : defaultOutlines[segment.label],
+        : defaultOutlines[
+            segment.label === "secondary" || segment.label === "garage"
+              ? segment.label
+              : "primary"
+          ],
     }));
   }
 
@@ -662,6 +684,11 @@ function normalizeRoofSegments(
             : defaultOutlines[label]
         ),
         bounds: normalizeBounds(input.bounds, fallbackSegment?.bounds ?? null),
+        ...(typeof input.segmentIndex === "number" &&
+        Number.isInteger(input.segmentIndex) &&
+        input.segmentIndex >= 0
+          ? { segmentIndex: input.segmentIndex }
+          : {}),
       } satisfies RoofSegment;
     })
     .filter((segment): segment is RoofSegment => Boolean(segment));
@@ -702,6 +729,7 @@ function normalizeSolarPanels(value: unknown, fallback: SolarPanelPlacement[]) {
           0,
           359
         ),
+        pitchDeg: clamp(numberOrFallback(input.pitchDeg, 0), 0, 89),
         rowIndex: nullableInteger(input.rowIndex),
         columnIndex: nullableInteger(input.columnIndex),
         yearlyEnergyDcKwh: Math.max(
@@ -952,9 +980,11 @@ function roofSegmentLabelOrFallback(
   value: unknown,
   fallback: RoofPlaneLabel
 ): RoofPlaneLabel {
-  return value === "primary" || value === "secondary" || value === "garage"
-    ? value
-    : fallback;
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
+  }
+
+  return fallback;
 }
 
 function stringOrFallback(value: unknown, fallback: string) {
@@ -970,11 +1000,19 @@ function stringOrNullable(value: unknown, fallback: string | null) {
 }
 
 function numberOrFallback(value: unknown, fallback: number) {
+  if (value === null || value === undefined || value === "") {
+    return fallback;
+  }
+
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 function nullableInteger(value: unknown) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.round(parsed) : null;
 }

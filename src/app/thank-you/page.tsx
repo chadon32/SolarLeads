@@ -7,6 +7,7 @@ export const metadata: Metadata = {
     absolute: `Your Solar Report Is Ready | ${APP_NAME}`,
   },
   description: `Review the next steps after generating your ${APP_NAME} homeowner report.`,
+  robots: { index: false, follow: false },
 };
 
 export default function ThankYouPage() {

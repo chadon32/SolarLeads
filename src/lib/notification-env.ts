@@ -1,18 +1,25 @@
+import "server-only";
+
 export type NotificationEnvStatus = {
   configured: boolean;
   email: {
     configured: boolean;
     missing: string[];
   };
+  adminEmail: {
+    configured: boolean;
+    missing: string[];
+  };
   missing: string[];
+  optionalMissing: string[];
 };
 
 export function getNotificationEnvStatus(): NotificationEnvStatus {
   const emailMissing = [
     envMissing("RESEND_API_KEY"),
     senderMissing(),
-    adminEmailMissing(),
   ].filter(Boolean) as string[];
+  const adminMissing = [adminEmailMissing()].filter(Boolean) as string[];
 
   return {
     configured: emailMissing.length === 0,
@@ -20,7 +27,12 @@ export function getNotificationEnvStatus(): NotificationEnvStatus {
       configured: emailMissing.length === 0,
       missing: emailMissing,
     },
+    adminEmail: {
+      configured: adminMissing.length === 0,
+      missing: adminMissing,
+    },
     missing: emailMissing,
+    optionalMissing: adminMissing,
   };
 }
 

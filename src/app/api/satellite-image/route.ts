@@ -5,6 +5,7 @@ import {
   buildRoofAnalysisStaticMapUrl,
   getRoofAnalysisViewport,
 } from "@/lib/roof-analysis-viewport";
+import { isArizonaCoordinate } from "@/lib/arizona-address";
 
 const mapsKey = process.env.GOOGLE_MAPS_API_KEY;
 
@@ -55,9 +56,9 @@ export async function GET(request: Request) {
     const lat = Number(searchParams.get("lat"));
     const lng = Number(searchParams.get("lng"));
 
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    if (!isArizonaCoordinate(lat, lng)) {
       return NextResponse.json(
-        { message: "lat and lng are required." },
+        { message: "Valid Arizona coordinates are required." },
         { status: 400 }
       );
     }
@@ -89,6 +90,7 @@ export async function GET(request: Request) {
         Accept: "image/jpeg,image/png,image/webp,*/*",
       },
       cache: "no-store",
+      signal: AbortSignal.timeout(10_000),
     });
 
     if (!imageResponse.ok) {
@@ -115,14 +117,12 @@ export async function GET(request: Request) {
       bounds,
     });
   } catch (error) {
+    console.warn("[satellite-image:error]", {
+      errorType: error instanceof Error ? error.name : "unknown",
+    });
     return NextResponse.json(
-      {
-        message:
-          error instanceof Error
-            ? error.message
-            : "Unexpected satellite image failure.",
-      },
-      { status: 500 }
+      { message: "The rooftop image is temporarily unavailable." },
+      { status: 502 }
     );
   }
 }

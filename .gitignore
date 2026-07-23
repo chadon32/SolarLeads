@@ -33,8 +33,10 @@ dev-start.log
 .next-dev*.log
 .codex-artifacts/
 .codex-dev*.log
+.dev-logs/
 .codex-home-verification.png
 /Drone_shot_over_solar_neighborhood_202605281518.mp4
+/tmp/
 
 # env files (can opt-in for committing if needed)
 .env*
@@ -46,3 +48,6 @@ dev-start.log
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+.vercel
+.env*

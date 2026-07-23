@@ -1,5 +1,7 @@
-import type { RoofAnalysis } from "@/lib/roof-analysis";
-import { getUsableAreaM2 } from "@/lib/roof-analysis";
+import { calculateFederalResidentialSolarCredit } from "@/lib/financial-model";
+import { getUsableAreaM2, type RoofAnalysis } from "@/lib/roof-analysis";
+import { ARIZONA_AVG_RATE_PER_KWH } from "@/lib/solar-assumptions";
+import { getMaxPanelCount } from "@/lib/solar-metrics";
 
 export type SolarPanelTier = "premium" | "mid" | "value";
 
@@ -254,32 +256,66 @@ export function getPanelFit(
     input.usableAreaM2 ??
     (input.roofData ? getUsableAreaM2(input.roofData) : 0);
   const panelAreaM2 = Math.max(getPanelAreaM2(panel), 0.1);
-  const physicalFit = Math.max(0, Math.floor(Math.max(usableArea, 0) / panelAreaM2));
-  const apiCandidateFit =
-    input.roofData?.solarPanels.length ||
-    input.roofData?.acceptedPanelCount ||
-    input.roofData?.panelCount ||
-    physicalFit;
-  const maxPanelsFit = Math.max(0, Math.min(physicalFit, apiCandidateFit));
-  const selectedCount =
+  const AREA_PACKING_FACTOR = 0.85;
+  const physicalFit = Math.max(
+    0,
+    Math.floor(
+      (Math.max(usableArea, 0) / panelAreaM2) * AREA_PACKING_FACTOR
+    )
+  );
+  const preliminaryCapacity = input.roofData
+    ? getMaxPanelCount(input.roofData)
+    : physicalFit;
+  const providerPanelAreaM2 = input.roofData
+    ? Math.max(
+        input.roofData.panelWidthMeters * input.roofData.panelHeightMeters,
+        0.1
+      )
+    : panelAreaM2;
+  const moduleAdjustedCapacity = Math.max(
+    0,
+    Math.floor(
+      preliminaryCapacity * (providerPanelAreaM2 / panelAreaM2)
+    )
+  );
+  const maxPanelsFit = Math.max(
+    0,
+    Math.min(preliminaryCapacity, moduleAdjustedCapacity)
+  );
+  const requestedCount =
     input.selectedPanelCount && input.selectedPanelCount > 0
-      ? Math.max(0, Math.round(input.selectedPanelCount))
+      ? Math.max(0, Math.floor(input.selectedPanelCount))
       : maxPanelsFit;
+  const selectedCount = Math.min(requestedCount, maxPanelsFit);
   const sunshineHours =
     input.maxSunshineHoursPerYear ??
     input.roofData?.annualSunlightHours ??
     input.roofData?.annualKwh ??
     1800;
   const systemKw = roundTo((selectedCount * panel.watts) / 1000, 1);
-  const annualKwh = Math.round(systemKw * Math.max(sunshineHours, 0) * 0.8);
+  const providerAnnualKwh = getProviderAnnualKwh(
+    input.roofData,
+    selectedCount
+  );
+  const providerPanelWatts = Math.max(
+    Number(input.roofData?.panelCapacityWatts ?? 400),
+    1
+  );
+  const annualKwh = Math.round(
+    providerAnnualKwh > 0
+      ? providerAnnualKwh * (panel.watts / providerPanelWatts)
+      : systemKw * Math.max(sunshineHours, 0) * 0.8
+  );
   const annualBill =
     input.monthlyBill && input.monthlyBill > 0 ? input.monthlyBill * 12 : null;
   const annualSavings = Math.round(
-    annualBill ? Math.min(annualKwh * 0.13, annualBill) : annualKwh * 0.13
+    annualBill
+      ? Math.min(annualKwh * ARIZONA_AVG_RATE_PER_KWH, annualBill)
+      : annualKwh * ARIZONA_AVG_RATE_PER_KWH
   );
   const pricePerWatt = panel.pricePerWatt + (input.inverterCostAdderPerWatt ?? 0);
   const systemCost = Math.round(systemKw * 1000 * pricePerWatt);
-  const taxCredit = Math.round(systemCost * 0.3);
+  const taxCredit = calculateFederalResidentialSolarCredit(systemCost);
   const netCost = Math.max(systemCost - taxCredit, 0);
   const paybackYears = annualSavings > 0 ? roundTo(netCost / annualSavings, 1) : 0;
   const azHeatLoss = 4.4 * Math.abs(panel.tempCoefficient) / 100;
@@ -298,6 +334,43 @@ export function getPanelFit(
     systemKw,
     taxCredit,
   };
+}
+
+function getProviderAnnualKwh(
+  roofData: RoofAnalysis | null | undefined,
+  panelCount: number
+) {
+  if (!roofData || panelCount <= 0) {
+    return 0;
+  }
+
+  const config =
+    roofData.solarPanelConfigs.find(
+      (candidate) => candidate.panelsCount === panelCount
+    ) ??
+    roofData.solarPanelConfigs
+      .filter((candidate) => candidate.panelsCount <= panelCount)
+      .at(-1);
+
+  if (config?.yearlyEnergyDcKwh && config.yearlyEnergyDcKwh > 0) {
+    return config.yearlyEnergyDcKwh;
+  }
+
+  const panelEnergy = roofData.solarPanels
+    .slice(0, panelCount)
+    .reduce(
+      (total, candidate) =>
+        total + Math.max(candidate.yearlyEnergyDcKwh, 0),
+      0
+    );
+
+  if (panelEnergy > 0) {
+    return panelEnergy;
+  }
+
+  return roofData.panelCount > 0
+    ? (roofData.annualKwh / roofData.panelCount) * panelCount
+    : 0;
 }
 
 export function getRoofShadeRiskLabel(annualSunlightHours?: number | null) {

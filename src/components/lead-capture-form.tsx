@@ -2,24 +2,45 @@
 
 import type { ChangeEvent, FormEvent, InputHTMLAttributes } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import Script from "next/script";
 import { FileCheck2, UploadCloud } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatDisplayAddress } from "@/lib/address-format";
 import { trackEvent } from "@/lib/analytics";
-import { APP_LEAD_DISCLOSURE_COPY, APP_PRIVACY_COPY } from "@/lib/brand";
+import {
+  APP_LEAD_DISCLOSURE_COPY,
+  APP_PRIVACY_COPY,
+  REPORT_DELIVERY_DISCLOSURE,
+} from "@/lib/brand";
 import type { BatteryOption } from "@/lib/batteries";
+import {
+  BEST_TIME_OPTIONS,
+  CONTACT_METHOD_OPTIONS,
+  ELECTRIC_BILL_RANGE_OPTIONS,
+  HOME_OWNERSHIP_OPTIONS,
+  SOLAR_TIMELINE_OPTIONS,
+  getBillRangeByMonthlyBill,
+  getMonthlyBillFromRange,
+} from "@/lib/lead-form-values";
+import {
+  addressesMatch,
+  isReasonableMonthlyBill,
+} from "@/lib/lead-validation";
 import { formatName } from "@/lib/name-format";
 import {
   formatPhoneForDisplay,
   isValidUsPhoneNumber,
   normalizePhoneNumber,
 } from "@/lib/phone";
+import { formatCurrency } from "@/lib/number-format";
+import { calculateFederalResidentialSolarCredit } from "@/lib/financial-model";
 import {
   getRoofAreaM2,
   getUsableAreaM2,
   type RoofAnalysis,
 } from "@/lib/roof-analysis";
+import type { RoofAnalysisProof } from "@/lib/roof-analysis-proof";
 import { buildSolarReportSnapshot } from "@/lib/report-snapshot";
 import { buildSolarMetrics } from "@/lib/solar-metrics";
 import {
@@ -32,6 +53,8 @@ import {
 type LeadCaptureFormProps = {
   initialAddress: string;
   analysis?: RoofAnalysis | null;
+  analysisProof?: RoofAnalysisProof | null;
+  signedRoofAnalysis?: RoofAnalysis | null;
   activePanelCount?: number;
   initialMonthlyBill?: number;
   lat?: number;
@@ -54,6 +77,7 @@ type FormValues = {
   solarTimeline: string;
   preferredContactMethod: string;
   bestTimeToContact: string;
+  installerContactConsent: boolean;
   notes: string;
 };
 
@@ -67,7 +91,16 @@ type SavedLead = {
   quoteRequested?: boolean;
   reportUrl: string;
   referralCode?: string | null;
+  reportSummary?: {
+    annualSavings: number | null;
+    energyOffsetPct: number | null;
+    monthlySavings: number | null;
+    panelCount: number | null;
+    paybackYears: number | null;
+    systemSizeKw: number | null;
+  };
   utilityBillUploaded?: boolean;
+  emailDeliveryStatus?: "sent" | "delayed";
 };
 
 type UtilityBillState = {
@@ -89,64 +122,22 @@ const emptyValues: FormValues = {
   email: "",
   phone: "",
   address: "",
-  electricBillRange: "$100–$200",
+  electricBillRange: "",
   monthlyBill: "",
-  ownsHome: "Own",
-  solarTimeline: "1–3 months",
-  preferredContactMethod: "Phone",
-  bestTimeToContact: "Afternoon",
+  ownsHome: "",
+  solarTimeline: "",
+  preferredContactMethod: "",
+  bestTimeToContact: "",
+  installerContactConsent: false,
   notes: "",
 };
 
-const electricBillRangeOptions = [
-  "Under $100",
-  "$100–$200",
-  "$200–$300",
-  "$300–$400",
-  "$400+",
-] as const;
-const electricBillRangeMonthlyValues: Record<string, number> = {
-  "Under $100": 75,
-  "$100–$200": 150,
-  "$200–$300": 250,
-  "$300–$400": 350,
-  "$400+": 450,
-};
-const homeOwnershipOptions = ["Own", "Rent"] as const;
-const solarTimelineOptions = [
-  "Just researching",
-  "3–6 months",
-  "1–3 months",
-  "ASAP",
-] as const;
-const contactMethodOptions = ["Phone", "Text", "Email"] as const;
-const bestTimeOptions = ["Morning", "Afternoon", "Evening", "Weekend"] as const;
 const utilityBillMimeTypes = ["application/pdf", "image/jpeg", "image/png"];
 const utilityBillMaxBytes = 10 * 1024 * 1024;
 const turnstileSiteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
 
 function isValidEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
-}
-
-function formatMoney(value: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  }).format(value);
-}
-
-function getBillRangeByMonthlyBill(monthlyBill: number) {
-  if (monthlyBill < 100) return "Under $100";
-  if (monthlyBill <= 200) return "$100–$200";
-  if (monthlyBill <= 300) return "$200–$300";
-  if (monthlyBill <= 400) return "$300–$400";
-  return "$400+";
-}
-
-function getMonthlyBillFromRange(range: string) {
-  return electricBillRangeMonthlyValues[range] ?? 200;
 }
 
 function buildLeadNotes(values: FormValues) {
@@ -171,6 +162,7 @@ function buildFingerprint(values: FormValues) {
     values.solarTimeline.trim().toLowerCase(),
     values.preferredContactMethod.trim().toLowerCase(),
     values.bestTimeToContact.trim().toLowerCase(),
+    String(values.installerContactConsent),
     values.notes.trim().toLowerCase(),
   ].join("|");
 }
@@ -178,6 +170,8 @@ function buildFingerprint(values: FormValues) {
 export function LeadCaptureForm({
   initialAddress,
   analysis,
+  analysisProof,
+  signedRoofAnalysis,
   activePanelCount,
   initialMonthlyBill = 200,
   lat,
@@ -201,17 +195,19 @@ export function LeadCaptureForm({
     "idle" | "submitting" | "error"
   >("idle");
   const [message, setMessage] = useState(
-    "Your AI solar report is being generated"
+    "Your report is ready to send."
   );
   const [utilityBill, setUtilityBill] = useState<UtilityBillState>({
     status: "idle",
   });
   const [honeypot, setHoneypot] = useState("");
   const [turnstileToken, setTurnstileToken] = useState("");
-  const formStartedAt = useRef(Date.now());
+  const formStartedAt = useRef(0);
+  const formRef = useRef<HTMLFormElement | null>(null);
   const lastSubmittedFingerprint = useRef<string>("");
 
   useEffect(() => {
+    formStartedAt.current = Date.now();
     window.onSolartelligenceTurnstile = (token: string) => {
       setTurnstileToken(token);
     };
@@ -276,8 +272,9 @@ export function LeadCaptureForm({
       nextErrors.email = "Enter a valid email address.";
     }
 
-    if (!isValidUsPhoneNumber(values.phone)) {
-      nextErrors.phone = "Enter a valid 10-digit US phone number.";
+    if (values.phone.trim() && !isValidUsPhoneNumber(values.phone)) {
+      nextErrors.phone =
+        "Enter a valid 10-digit US phone number or leave it blank.";
     }
 
     if (values.address.trim().length < 8) {
@@ -285,12 +282,22 @@ export function LeadCaptureForm({
     }
 
     const monthly = Number(values.monthlyBill);
-    if (!Number.isFinite(monthly) || monthly <= 0) {
+    if (!isReasonableMonthlyBill(monthly)) {
       nextErrors.monthlyBill = "Enter your estimated monthly electric bill.";
     }
 
     if (!values.electricBillRange.trim()) {
       nextErrors.electricBillRange = "Choose your average monthly electric bill.";
+    }
+
+    if (
+      analysis?.validSite &&
+      initialAddress.trim() &&
+      values.address.trim() &&
+      !addressesMatch(initialAddress, values.address)
+    ) {
+      nextErrors.address =
+        "This address no longer matches the completed roof analysis. Re-run the estimate for the updated address.";
     }
 
     if (!values.ownsHome.trim()) {
@@ -301,15 +308,38 @@ export function LeadCaptureForm({
       nextErrors.solarTimeline = "Choose your solar timeline.";
     }
 
-    if (!values.preferredContactMethod.trim()) {
+    if (
+      values.installerContactConsent &&
+      !values.preferredContactMethod.trim()
+    ) {
       nextErrors.preferredContactMethod = "Choose how you prefer to be contacted.";
     }
 
-    if (!values.bestTimeToContact.trim()) {
+    if (
+      values.installerContactConsent &&
+      values.preferredContactMethod === "Phone" &&
+      !isValidUsPhoneNumber(values.phone)
+    ) {
+      nextErrors.phone =
+        "Enter a valid 10-digit US phone number for phone follow-up.";
+    }
+
+    if (
+      values.installerContactConsent &&
+      values.preferredContactMethod === "Phone" &&
+      !values.bestTimeToContact.trim()
+    ) {
       nextErrors.bestTimeToContact = "Choose the best time to contact you.";
     }
 
     setErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) {
+      window.requestAnimationFrame(() => {
+        formRef.current
+          ?.querySelector<HTMLElement>('[aria-invalid="true"]')
+          ?.focus();
+      });
+    }
     return Object.keys(nextErrors).length === 0;
   };
 
@@ -434,7 +464,8 @@ export function LeadCaptureForm({
         : null;
     const batteryCost = addBattery && selectedBattery ? selectedBattery.cost : 0;
     const totalSystemCost = (panelFit?.systemCost ?? 0) + batteryCost;
-    const totalFederalTaxCredit = Math.round(totalSystemCost * 0.3);
+    const totalFederalTaxCredit =
+      calculateFederalResidentialSolarCredit(totalSystemCost);
     const totalNetSystemCost = Math.max(totalSystemCost - totalFederalTaxCredit, 0);
     const totalPaybackYears =
       panelFit && panelFit.annualSavings > 0
@@ -506,13 +537,15 @@ export function LeadCaptureForm({
           solarTimeline: values.solarTimeline,
           bestTimeToContact: values.bestTimeToContact,
           notes: buildLeadNotes(values),
-          quoteRequested: true,
+          installerContactConsent: values.installerContactConsent,
+          quoteRequested: values.installerContactConsent,
           panelCount: metrics.panelCount,
           systemSizeKw: metrics.systemKw,
           annualSavings: metrics.annualSavings,
           monthlySavings: metrics.monthlySavings,
           annualEnergyKwh: metrics.annualKwh,
-          twentyYearSavings: metrics.annualSavings * 20,
+          roofAnalysisProof: analysisProof,
+          signedRoofAnalysis,
           energyOffsetPct: metrics.coveragePct,
           solarSuitabilityScore: analysis.rooftopConfidenceScore,
           roofAreaSqm: getRoofAreaM2(analysis),
@@ -521,7 +554,7 @@ export function LeadCaptureForm({
           reportSnapshot,
           lat,
           lng,
-          pdfGenerated: true,
+          pdfGenerated: false,
           utilityBillUploadClaim:
             utilityBill.status === "uploaded" ? utilityBill.uploadClaim : undefined,
           utilityBillUploaded: utilityBill.status === "uploaded",
@@ -557,44 +590,41 @@ export function LeadCaptureForm({
 
       lastSubmittedFingerprint.current = fingerprint;
       trackEvent("lead_submitted", {
-        annual_savings: metrics.annualSavings,
-        lead_id: payload.lead.id,
-        panel_count: metrics.panelCount,
+        contact_requested: values.installerContactConsent,
+        panel_count_bucket: getPanelCountBucket(metrics.panelCount),
       });
       setMessage("Preparing your confirmation...");
 
-      await Promise.allSettled([
-        fetch("/api/follow-ups", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ leadId: payload.lead.id }),
-        }),
-      ]);
-
       const thankYouPayload = {
           address: formatDisplayAddress(payload.lead.address),
-          annualSavings: metrics.annualSavings,
+          annualSavings:
+            payload.lead.reportSummary?.annualSavings ?? metrics.annualSavings,
           batteryAdded: addBattery,
           batteryBrand: selectedBattery?.brand,
           batteryCost: selectedBattery?.cost,
           batteryModel: selectedBattery?.model,
           email: values.email.trim(),
           firstName: formattedName.split(/\s+/)[0] ?? "there",
-          panelCount: metrics.panelCount,
+          panelCount:
+            payload.lead.reportSummary?.panelCount ?? metrics.panelCount,
           panelBrand: selectedPanel?.brand,
           panelModel: selectedPanel?.model,
-          paybackYears: metrics.paybackYears,
+          paybackYears:
+            payload.lead.reportSummary?.paybackYears ?? metrics.paybackYears,
           preferredContactMethod: values.preferredContactMethod,
-          quoteRequested: true,
+          emailDeliveryStatus: payload.lead.emailDeliveryStatus,
+          quoteRequested: values.installerContactConsent,
           referralCode: payload.lead.referralCode,
           reportUrl: payload.lead.reportUrl,
-          systemKw: metrics.systemKw,
+          systemKw:
+            payload.lead.reportSummary?.systemSizeKw ?? metrics.systemKw,
           utilityBillUploaded: Boolean(payload.lead.utilityBillUploaded),
       };
 
-      sessionStorage.setItem("arizonaSolarThankYou", JSON.stringify(thankYouPayload));
+      sessionStorage.setItem(
+        "solartelligenceThankYou",
+        JSON.stringify(thankYouPayload)
+      );
       sessionStorage.setItem("solarLeadData", JSON.stringify(thankYouPayload));
       localStorage.removeItem("solarProgress");
       window.location.assign("/thank-you");
@@ -614,7 +644,9 @@ export function LeadCaptureForm({
       ) : null}
       <div className="grid gap-5 lg:grid-cols-[1.05fr_0.95fr] lg:items-stretch">
         <form
+          ref={formRef}
           onSubmit={handleSubmit}
+          noValidate
           className="glass-panel h-full rounded-[1.6rem] p-4 shadow-[0_24px_80px_rgba(2,8,20,0.4)] sm:p-6"
         >
           <div className="flex items-start justify-between gap-4">
@@ -631,7 +663,7 @@ export function LeadCaptureForm({
               </p>
             </div>
             <div className="hidden rounded-full border border-cyan-300/15 bg-cyan-300/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.3em] text-cyan-200 sm:inline-flex">
-              Secure capture
+              Protected submission
             </div>
           </div>
 
@@ -666,7 +698,7 @@ export function LeadCaptureForm({
               autoComplete="email"
             />
             <Field
-              label="Phone"
+              label="Phone (optional)"
               value={values.phone}
               onChange={(value) => updateField("phone", formatPhoneForDisplay(value))}
               error={errors.phone}
@@ -684,7 +716,7 @@ export function LeadCaptureForm({
                 updateField("monthlyBill", String(nextMonthlyBill));
                 onMonthlyBillChange?.(nextMonthlyBill);
               }}
-              options={electricBillRangeOptions}
+              options={ELECTRIC_BILL_RANGE_OPTIONS}
               error={errors.electricBillRange || errors.monthlyBill}
               helperText="Used to estimate the savings shown in your report."
             />
@@ -705,30 +737,37 @@ export function LeadCaptureForm({
               label="Owns home or rents"
               value={values.ownsHome}
               onChange={(value) => updateField("ownsHome", value)}
-              options={homeOwnershipOptions}
+              options={HOME_OWNERSHIP_OPTIONS}
               error={errors.ownsHome}
             />
             <SelectField
               label="Solar timeline"
               value={values.solarTimeline}
               onChange={(value) => updateField("solarTimeline", value)}
-              options={solarTimelineOptions}
+              options={SOLAR_TIMELINE_OPTIONS}
               error={errors.solarTimeline}
             />
-            <SelectField
-              label="Preferred contact method"
-              value={values.preferredContactMethod}
-              onChange={(value) => updateField("preferredContactMethod", value)}
-              options={contactMethodOptions}
-              error={errors.preferredContactMethod}
-            />
-            <SelectField
-              label="Best time to contact"
-              value={values.bestTimeToContact}
-              onChange={(value) => updateField("bestTimeToContact", value)}
-              options={bestTimeOptions}
-              error={errors.bestTimeToContact}
-            />
+            {values.installerContactConsent ? (
+              <SelectField
+                label="Preferred contact method"
+                value={values.preferredContactMethod}
+                onChange={(value) =>
+                  updateField("preferredContactMethod", value)
+                }
+                options={CONTACT_METHOD_OPTIONS}
+                error={errors.preferredContactMethod}
+              />
+            ) : null}
+            {values.installerContactConsent &&
+            values.preferredContactMethod === "Phone" ? (
+              <SelectField
+                label="Best time to contact"
+                value={values.bestTimeToContact}
+                onChange={(value) => updateField("bestTimeToContact", value)}
+                options={BEST_TIME_OPTIONS}
+                error={errors.bestTimeToContact}
+              />
+            ) : null}
             <div className="sm:col-span-2">
               <TextAreaField
                 label="Notes"
@@ -743,6 +782,31 @@ export function LeadCaptureForm({
             state={utilityBill}
             onChange={handleUtilityBillChange}
           />
+
+          <label className="mt-5 flex cursor-pointer items-start gap-3 rounded-[1.15rem] border border-white/10 bg-slate-950/34 px-4 py-4 text-left">
+            <input
+              type="checkbox"
+              checked={values.installerContactConsent}
+              onChange={(event) => {
+                const checked = event.target.checked;
+                updateField("installerContactConsent", checked);
+
+                if (!checked) {
+                  updateField("preferredContactMethod", "");
+                  updateField("bestTimeToContact", "");
+                }
+              }}
+              className="mt-0.5 h-5 w-5 shrink-0 accent-cyan-200"
+            />
+            <span>
+              <span className="block text-sm font-semibold text-white">
+                Optional installer follow-up
+              </span>
+              <span className="mt-1 block text-sm leading-6 text-slate-400">
+                {APP_LEAD_DISCLOSURE_COPY}
+              </span>
+            </span>
+          </label>
 
           {turnstileSiteKey ? (
             <div className="mt-4 flex justify-center">
@@ -759,14 +823,25 @@ export function LeadCaptureForm({
             {APP_PRIVACY_COPY}
           </p>
           <p className="mt-2 text-center text-[0.8rem] leading-6 text-slate-500">
-            {APP_LEAD_DISCLOSURE_COPY}
+            {REPORT_DELIVERY_DISCLOSURE}
+          </p>
+          <p className="mt-2 text-center text-xs leading-5 text-slate-400">
+            Review our{" "}
+            <Link className="underline underline-offset-2" href="/privacy">
+              privacy notice
+            </Link>{" "}
+            and{" "}
+            <Link className="underline underline-offset-2" href="/terms">
+              estimate terms
+            </Link>
+            .
           </p>
 
           <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-center">
             <div className="rounded-[1rem] border border-white/8 bg-slate-950/28 px-4 py-3 text-sm text-slate-300">
               Estimated annual savings:{" "}
               <span className="font-semibold text-white">
-                {estimatedSavings > 0 ? formatMoney(estimatedSavings) : "Run roof analysis first"}
+                {estimatedSavings > 0 ? formatCurrency(estimatedSavings) : "Run roof analysis first"}
               </span>
             </div>
             <Button type="submit" disabled={status === "submitting"} className="min-h-12 w-full px-6 py-3.5 sm:w-auto">
@@ -856,6 +931,13 @@ export function LeadCaptureForm({
   );
 }
 
+function getPanelCountBucket(panelCount: number) {
+  if (panelCount < 10) return "under_10";
+  if (panelCount < 20) return "10_19";
+  if (panelCount < 30) return "20_29";
+  return "30_plus";
+}
+
 type FieldProps = {
   label: string;
   value: string;
@@ -881,8 +963,11 @@ function Field({
   autoComplete,
   helperText,
 }: FieldProps) {
+  const inputId = toFieldId(label);
+  const descriptionId = `${inputId}-${error ? "error" : "help"}`;
+
   return (
-    <label className="block">
+    <label className="block" htmlFor={inputId}>
       <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">
         {label}
       </span>
@@ -893,20 +978,29 @@ function Field({
           </span>
         ) : null}
         <input
+          id={inputId}
           type={type}
           value={value}
           onChange={(event) => onChange(event.target.value)}
           placeholder={placeholder}
           inputMode={inputMode}
           autoComplete={autoComplete}
+          aria-invalid={Boolean(error)}
+          aria-describedby={error || helperText ? descriptionId : undefined}
           className={`min-h-12 w-full rounded-[1.05rem] border bg-slate-950/46 px-4 py-3 text-base text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/45 focus:bg-slate-950/68 ${
             prefix ? "pl-8" : ""
           } ${error ? "border-rose-400/50" : "border-white/10"}`}
         />
       </div>
-      {error ? <p className="mt-2 text-sm text-rose-300">{error}</p> : null}
+      {error ? (
+        <p id={descriptionId} className="mt-2 text-sm text-rose-300" role="alert">
+          {error}
+        </p>
+      ) : null}
       {!error && helperText ? (
-        <p className="mt-2 text-sm leading-6 text-slate-400">{helperText}</p>
+        <p id={descriptionId} className="mt-2 text-sm leading-6 text-slate-400">
+          {helperText}
+        </p>
       ) : null}
     </label>
   );
@@ -927,27 +1021,42 @@ function SelectField({
   options: readonly string[];
   value: string;
 }) {
+  const inputId = toFieldId(label);
+  const descriptionId = `${inputId}-${error ? "error" : "help"}`;
+
   return (
-    <label className="block">
+    <label className="block" htmlFor={inputId}>
       <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">
         {label}
       </span>
       <select
+        id={inputId}
         value={value}
         onChange={(event) => onChange(event.target.value)}
+        aria-invalid={Boolean(error)}
+        aria-describedby={error || helperText ? descriptionId : undefined}
         className={`min-h-12 w-full rounded-[1.05rem] border bg-slate-950/46 px-4 py-3 text-base text-white outline-none transition focus:border-cyan-300/45 focus:bg-slate-950/68 ${
           error ? "border-rose-400/50" : "border-white/10"
         }`}
       >
+        <option value="" disabled className="bg-slate-950">
+          Select an option
+        </option>
         {options.map((option) => (
           <option key={option} value={option} className="bg-slate-950">
             {option}
           </option>
         ))}
       </select>
-      {error ? <p className="mt-2 text-sm text-rose-300">{error}</p> : null}
+      {error ? (
+        <p id={descriptionId} className="mt-2 text-sm text-rose-300" role="alert">
+          {error}
+        </p>
+      ) : null}
       {!error && helperText ? (
-        <p className="mt-2 text-sm leading-6 text-slate-400">{helperText}</p>
+        <p id={descriptionId} className="mt-2 text-sm leading-6 text-slate-400">
+          {helperText}
+        </p>
       ) : null}
     </label>
   );
@@ -964,12 +1073,15 @@ function TextAreaField({
   placeholder: string;
   value: string;
 }) {
+  const inputId = toFieldId(label);
+
   return (
-    <label className="block">
+    <label className="block" htmlFor={inputId}>
       <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">
         {label}
       </span>
       <textarea
+        id={inputId}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
@@ -977,6 +1089,10 @@ function TextAreaField({
       />
     </label>
   );
+}
+
+function toFieldId(label: string) {
+  return `lead-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
 }
 
 function UtilityBillUploadCard({

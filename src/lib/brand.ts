@@ -10,7 +10,12 @@ export const APP_REPORT_NAME = `${APP_NAME} Report`;
 export const APP_EMAIL_SENDER_NAME = APP_NAME;
 
 export const APP_PRIVACY_COPY =
-  "Your information is secure and used only to deliver your solar report and connect you with qualified solar professionals.";
+  "We use your information to deliver your report. We share it with a solar provider only when you request installer follow-up.";
+
+export const REPORT_DELIVERY_DISCLOSURE =
+  "By submitting, you are asking Solartelligence to save this analysis and email your requested report.";
 
 export const APP_LEAD_DISCLOSURE_COPY =
-  "By requesting your report, you agree that Solartelligence may share your information with qualified solar providers for quote and consultation purposes.";
+  "I would like a qualified solar professional to contact me about this property. If selected, Solartelligence may share my submitted information for quote and consultation purposes.";
+
+export const CONTACT_CONSENT_VERSION = "2026-07-14";

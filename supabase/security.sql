@@ -49,6 +49,56 @@ on public.request_events (route, key_hash, created_at desc);
 create index if not exists request_events_created_at_idx
 on public.request_events (created_at desc);
 
+create or replace function public.enforce_request_rate_limit(
+  p_route text,
+  p_key_hash text,
+  p_limit integer,
+  p_window_seconds integer
+)
+returns table (allowed boolean, current_count bigint)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  event_count bigint;
+begin
+  if p_limit <= 0 or p_window_seconds <= 0 then
+    raise exception 'Invalid rate-limit configuration';
+  end if;
+
+  perform pg_advisory_xact_lock(
+    hashtextextended(p_route || ':' || p_key_hash, 0)
+  );
+
+  select count(*)
+  into event_count
+  from public.request_events
+  where route = p_route
+    and key_hash = p_key_hash
+    and created_at >= now() - make_interval(secs => p_window_seconds);
+
+  if event_count >= p_limit then
+    return query select false, event_count;
+    return;
+  end if;
+
+  insert into public.request_events (route, key_hash)
+  values (p_route, p_key_hash);
+
+  return query select true, event_count + 1;
+end;
+$$;
+
+revoke all on function public.enforce_request_rate_limit(text, text, integer, integer)
+from public, anon, authenticated;
+grant execute on function public.enforce_request_rate_limit(text, text, integer, integer)
+to service_role;
+
+-- Retain only the period needed by the longest configured limit. Schedule this
+-- statement daily with Supabase Cron or another trusted scheduler.
+-- delete from public.request_events where created_at < now() - interval '8 days';
+
 create index if not exists roof_analysis_cache_updated_at_idx
 on public.roof_analysis_cache (updated_at desc);
 

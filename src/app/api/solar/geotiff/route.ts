@@ -68,15 +68,13 @@ export async function GET(request: Request) {
       headers: {
         Accept: "image/tiff,application/octet-stream",
       },
+      signal: AbortSignal.timeout(12_000),
     });
 
     if (!response.ok) {
-      const detail = await response.text().catch(() => "");
       return NextResponse.json(
-        {
-          message: detail || "Could not load Solar GeoTIFF data.",
-        },
-        { status: response.status }
+        { message: "Could not load Solar GeoTIFF data." },
+        { status: 502 }
       );
     }
 
@@ -90,9 +88,12 @@ export async function GET(request: Request) {
       },
     });
   } catch (error) {
-    const detail =
-      error instanceof Error ? error.message : "Unexpected Solar GeoTIFF failure.";
-
-    return NextResponse.json({ message: detail }, { status: 502 });
+    console.warn("[solar-geotiff:error]", {
+      errorType: error instanceof Error ? error.name : "unknown",
+    });
+    return NextResponse.json(
+      { message: "Could not load Solar GeoTIFF data." },
+      { status: 502 }
+    );
   }
 }

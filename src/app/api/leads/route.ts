@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { randomBytes } from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import {
   DAY_MS,
@@ -10,29 +11,54 @@ import {
   logAbuseSignal,
   maintenanceModeResponse,
   payloadTooLargeResponse,
+  readJsonWithLimit,
   rateLimitResponse,
   verifyTurnstileToken,
 } from "@/lib/abuse-protection";
 import { calculateLeadScore } from "@/lib/lead-scoring";
+import { buildConsentEvidence } from "@/lib/consent";
 import {
   normalizeAddress,
   normalizeEmail,
   normalizePhone,
 } from "@/lib/lead-normalization";
+import { selectLeadForNormalizedProperty } from "@/lib/lead-deduplication";
+import { deriveLeadSubmissionNumbers } from "@/lib/lead-submission";
 import { formatName } from "@/lib/name-format";
 import {
   sendLeadNotifications,
   type LeadNotificationSummary,
   type NotificationResult,
 } from "@/lib/notifications";
-import { isValidUsPhoneNumber, normalizePhoneNumber } from "@/lib/phone";
+import { isValidUsPhoneNumber } from "@/lib/phone";
 import {
+  buildAcceptedPanelAnalysisForReport,
   normalizeSolarReportSnapshot,
+  rebuildTrustedSolarReportSnapshot,
   type SolarReportSnapshot,
 } from "@/lib/report-snapshot";
-import { buildReportPdfUrl } from "@/lib/report-access";
+import type { RoofAnalysis } from "@/lib/roof-analysis";
+import {
+  verifyRoofAnalysisProof,
+  type RoofAnalysisProof,
+} from "@/lib/roof-analysis-proof";
+import {
+  addressesMatch,
+  isReasonableMonthlyBill,
+} from "@/lib/lead-validation";
+import {
+  buildReportPdfUrl,
+  buildReportViewerUrl,
+} from "@/lib/report-access";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { verifyUtilityBillUploadClaim } from "@/lib/utility-bill-claims";
+import { BATTERY_OPTIONS } from "@/lib/batteries";
+import {
+  INVERTER_OPTIONS,
+  SOLAR_PANELS,
+  getPanelById,
+} from "@/lib/solarPanels";
+import { z } from "zod";
 
 type LeadBody = {
   name?: string;
@@ -44,6 +70,7 @@ type LeadBody = {
   notes?: string;
   preferredContactMethod?: string;
   quoteRequested?: boolean;
+  installerContactConsent?: boolean;
   address?: string;
   electricBillRange?: string;
   monthlyBill?: number;
@@ -63,6 +90,8 @@ type LeadBody = {
   usableAreaSqm?: number;
   roofPitchDegrees?: number;
   reportSnapshot?: SolarReportSnapshot;
+  roofAnalysisProof?: RoofAnalysisProof;
+  signedRoofAnalysis?: RoofAnalysis;
   lat?: number;
   lng?: number;
   batteryAdded?: boolean;
@@ -82,8 +111,72 @@ type LeadBody = {
   website?: string;
 };
 
+const finiteNumber = z.number().finite();
+const leadBodySchema = z.object({
+  address: z.string().trim().min(8).max(220),
+  annualEnergyKwh: finiteNumber.optional(),
+  annualSavings: finiteNumber.optional(),
+  automatedContactConsent: z.boolean().optional(),
+  batteryAdded: z.boolean().optional(),
+  batteryBrand: z.string().trim().max(100).optional(),
+  batteryCost: finiteNumber.optional(),
+  batteryModel: z.string().trim().max(150).optional(),
+  bestTimeToContact: z.string().trim().max(50).optional(),
+  companyWebsite: z.string().max(500).optional(),
+  electricBillRange: z.string().trim().max(40).optional(),
+  email: z.string().trim().max(254),
+  energyOffsetPct: finiteNumber.optional(),
+  federalTaxCredit: finiteNumber.optional(),
+  formStartedAt: finiteNumber,
+  installerContactConsent: z.boolean().optional(),
+  lat: finiteNumber.optional(),
+  lng: finiteNumber.optional(),
+  monthlyBill: finiteNumber,
+  monthlySavings: finiteNumber.optional(),
+  name: z.string().trim().min(2).max(100),
+  netSystemCost: finiteNumber.optional(),
+  notes: z.string().max(4000).optional(),
+  ownsHome: z.string().trim().max(40).optional(),
+  panelCount: finiteNumber.optional(),
+  pdfGenerated: z.boolean().optional(),
+  phone: z.string().trim().max(32).optional(),
+  preferredContactMethod: z.string().trim().max(40).optional(),
+  quoteRequested: z.boolean().optional(),
+  referredBy: z.string().trim().max(64).optional(),
+  reportSnapshot: z.unknown().optional(),
+  roofAnalysisProof: z
+    .object({
+      exp: finiteNumber,
+      token: z.string().regex(/^[a-f0-9]{64}$/i),
+    })
+    .optional(),
+  roofAreaSqm: finiteNumber.optional(),
+  roofPitchDegrees: finiteNumber.optional(),
+  selectedInverterType: z.string().trim().max(40).optional(),
+  selectedPanelBrand: z.string().trim().max(100).optional(),
+  selectedPanelModel: z.string().trim().max(150).optional(),
+  selectedPanelWatts: finiteNumber.optional(),
+  signedRoofAnalysis: z.unknown().optional(),
+  solarSuitabilityScore: finiteNumber.optional(),
+  solarTimeline: z.string().trim().max(40).optional(),
+  systemCostBeforeIncentives: finiteNumber.optional(),
+  systemSizeKw: finiteNumber.optional(),
+  turnstileToken: z.string().max(4096).optional(),
+  twentyYearSavings: finiteNumber.optional(),
+  usableAreaSqm: finiteNumber.optional(),
+  utilityBillUploadClaim: z.string().max(4096).optional(),
+  utilityBillUploaded: z.boolean().optional(),
+  website: z.string().max(500).optional(),
+});
+
 type ExistingLeadMatch = {
+  address?: string | null;
+  email?: string | null;
   id: string;
+  normalized_address?: string | null;
+  normalized_email?: string | null;
+  normalized_phone?: string | null;
+  phone?: string | null;
   referral_code?: string | null;
 };
 
@@ -125,15 +218,30 @@ export async function POST(request: Request) {
 
     if (!supabaseUrl || !supabaseServiceRoleKey) {
       return NextResponse.json(
-        {
-          message:
-            "Lead storage is not configured yet. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.",
-        },
+        { message: "Report requests are temporarily unavailable." },
         { status: 500 }
       );
     }
 
-    const body = (await request.json().catch(() => ({}))) as LeadBody;
+    const jsonBody = await readJsonWithLimit(request, 1024 * 1024);
+
+    if (!jsonBody.ok && jsonBody.reason === "too_large") {
+      logAbuseSignal(request, "lead-payload-too-large", {
+        route: "api:leads",
+      });
+      return payloadTooLargeResponse("The lead request is too large.");
+    }
+
+    const parsedBody = leadBodySchema.safeParse(jsonBody.ok ? jsonBody.data : null);
+
+    if (!parsedBody.success) {
+      return NextResponse.json(
+        { message: "Review the report request fields and try again." },
+        { status: 400 }
+      );
+    }
+
+    const body = parsedBody.data as LeadBody;
 
     if (isHoneypotFilled(body.website, body.companyWebsite)) {
       logAbuseSignal(request, "lead-honeypot-filled", {
@@ -172,22 +280,78 @@ export async function POST(request: Request) {
     const phone = normalizePhone(body.phone);
     const address = body.address?.trim();
     const normalizedAddress = normalizeAddress(address);
-    const quoteRequested = Boolean(body.quoteRequested);
-    const preferredContactMethod = toNullableText(body.preferredContactMethod);
-    const bestTimeToContact = toNullableText(body.bestTimeToContact);
+    const quoteRequested = body.installerContactConsent === true;
+    const preferredContactMethod = quoteRequested
+      ? toNullableText(body.preferredContactMethod)
+      : null;
+    const bestTimeToContact =
+      quoteRequested && preferredContactMethod === "Phone"
+        ? toNullableText(body.bestTimeToContact)
+        : null;
     const quoteNotes = toNullableText(body.notes);
-    const monthlyBill = Number(body.monthlyBill);
-    const annualSavingsOverride = Number(body.annualSavings);
-    const panelCount = Number(body.panelCount);
-    const selectedPanelWatts = Number(body.selectedPanelWatts);
-    const netSystemCost = Number(body.netSystemCost);
-    const reportSnapshot = normalizeSolarReportSnapshot(body.reportSnapshot);
-    const twentyYearSavings =
-      toNullableNumber(body.twentyYearSavings) ??
-      (Number.isFinite(annualSavingsOverride) && annualSavingsOverride > 0
-        ? Math.round(annualSavingsOverride * 20)
-        : null);
-    const pdfGenerated = body.pdfGenerated ?? true;
+    const selectedPanel = resolveTrustedPanel(body);
+    const selectedInverter = resolveTrustedInverter(body.selectedInverterType);
+    const selectedBattery = resolveTrustedBattery(body);
+    const installedCostPerWatt =
+      selectedPanel.pricePerWatt + selectedInverter.costAdderPerWatt;
+    const candidateReportSnapshot = normalizeSolarReportSnapshot(body.reportSnapshot);
+    const proof = verifyRoofAnalysisProof({
+      address,
+      analysis: body.signedRoofAnalysis,
+      proof: body.roofAnalysisProof,
+    });
+    if (!candidateReportSnapshot || !body.signedRoofAnalysis) {
+      return NextResponse.json(
+        {
+          message:
+            "This roof analysis could not be verified. Please refresh the estimate and try again.",
+        },
+        { status: 403 }
+      );
+    }
+    if (!proof.ok) {
+      return NextResponse.json(
+        {
+          message: proof.missingSecret
+            ? "Report verification is not configured."
+            : proof.expired
+              ? "This roof analysis has expired. Please refresh the estimate and try again."
+              : "This roof analysis could not be verified. Please refresh the estimate and try again.",
+        },
+        { status: proof.expired ? 410 : 403 }
+      );
+    }
+
+    const reportSnapshot = rebuildTrustedSolarReportSnapshot(
+      {
+        ...candidateReportSnapshot,
+        roofAnalysis: buildAcceptedPanelAnalysisForReport(
+          body.signedRoofAnalysis
+        ),
+      },
+      {
+        batteryCost: selectedBattery?.cost ?? 0,
+        installedCostPerWatt,
+        monthlyBill: body.monthlyBill,
+        panelWatts: selectedPanel.watts,
+      }
+    );
+    const leadNumbers = deriveLeadSubmissionNumbers(
+      {
+        ...body,
+        batteryAdded: Boolean(selectedBattery),
+        batteryCost: selectedBattery?.cost ?? 0,
+        installedCostPerWatt,
+        selectedPanelWatts: selectedPanel.watts,
+      },
+      reportSnapshot
+    );
+    const monthlyBill = leadNumbers.monthlyBill;
+    const panelCount = leadNumbers.panelCount;
+    const estimatedSavings = leadNumbers.annualSavings;
+    const twentyYearSavings = leadNumbers.twentyYearSavings;
+    const roiYears = leadNumbers.roiYears;
+    const pdfGenerated = Boolean(body.pdfGenerated);
     const pdfDownloaded = false;
     const verifiedUtilityBillPath = resolveUtilityBillUploadPath(
       body.utilityBillUploadClaim
@@ -195,36 +359,30 @@ export async function POST(request: Request) {
     const utilityBillUploaded = Boolean(
       body.utilityBillUploaded && verifiedUtilityBillPath
     );
-    const batteryAdded = Boolean(body.batteryAdded);
+    const batteryAdded = Boolean(selectedBattery);
     const referredBy = toNullableText(body.referredBy)?.toUpperCase() ?? null;
     const utilityBillFilePath = utilityBillUploaded
       ? verifiedUtilityBillPath
       : null;
-    const estimatedSavings =
-      Number.isFinite(annualSavingsOverride) && annualSavingsOverride > 0
-        ? Math.round(annualSavingsOverride)
-        : null;
-    const roiYears =
-      Number.isFinite(netSystemCost) && netSystemCost > 0 && estimatedSavings
-        ? Number((netSystemCost / estimatedSavings).toFixed(1))
-        : Number.isFinite(panelCount) && panelCount > 0 && estimatedSavings
-        ? Number(
-            (
-              (panelCount *
-                (Number.isFinite(selectedPanelWatts) && selectedPanelWatts > 0
-                  ? selectedPanelWatts
-                  : 400) *
-                2.75 *
-                0.7) /
-              estimatedSavings
-            ).toFixed(1)
-          )
-        : null;
+    const trustedRoofAreaM2 = toNullableNumber(
+      reportSnapshot?.metrics.grossRoofAreaM2
+    );
+    const trustedUsableAreaM2 = toNullableNumber(
+      reportSnapshot?.metrics.usableRoofAreaM2
+    );
+    const trustedRoofPitchDegrees = toNullableNumber(
+      reportSnapshot?.metrics.avgPitchDeg
+    );
+    const trustedSuitabilityScore = toNullableScore(
+      reportSnapshot?.solarReadinessScore ??
+        reportSnapshot?.roofModelConfidence ??
+        reportSnapshot?.roofAnalysis.rooftopConfidenceScore
+    );
     const leadScore = calculateLeadScore({
       annualSavings: estimatedSavings,
       completedReportRequest: quoteRequested || pdfGenerated,
       email,
-      energyOffsetPct: body.energyOffsetPct,
+      energyOffsetPct: leadNumbers.energyOffsetPct,
       electricBillRange: body.electricBillRange,
       monthlyBill,
       name,
@@ -235,17 +393,19 @@ export async function POST(request: Request) {
       phone,
       preferredContactMethod,
       quoteRequested,
-      roofAreaM2: body.roofAreaSqm,
-      selectedPanelBrand: body.selectedPanelBrand,
-      selectedPanelModel: body.selectedPanelModel,
-      selectedPanelWatts: body.selectedPanelWatts,
-      solarSuitabilityScore: body.solarSuitabilityScore,
+      roofAreaM2: trustedRoofAreaM2,
+      selectedPanelBrand: selectedPanel.brand,
+      selectedPanelModel: selectedPanel.model,
+      selectedPanelWatts: selectedPanel.watts,
+      solarSuitabilityScore: trustedSuitabilityScore,
       solarTimeline: body.solarTimeline,
-      systemSizeKw: body.systemSizeKw,
+      systemSizeKw: leadNumbers.systemSizeKw,
       twentyYearSavings,
       utilityBillUploaded,
-      usableRoofAreaM2: body.usableAreaSqm,
-      validResidentialAddress: Boolean(address && address.length >= 8),
+      usableRoofAreaM2: trustedUsableAreaM2,
+      validResidentialAddress: Boolean(
+        proof.ok && body.signedRoofAnalysis?.validSite
+      ),
     });
 
     if (
@@ -253,15 +413,18 @@ export async function POST(request: Request) {
       name.length < 2 ||
       !email ||
       !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
-      !isValidUsPhoneNumber(phone) ||
+      (Boolean(phone) && !isValidUsPhoneNumber(phone)) ||
       !address ||
       isLikelyBotAddress(address) ||
-      !Number.isFinite(monthlyBill) ||
-      monthlyBill <= 0 ||
-      !Number.isFinite(panelCount) ||
+      !isReasonableMonthlyBill(monthlyBill) ||
+      panelCount === null ||
       panelCount < 1 ||
       !estimatedSavings ||
-      (quoteRequested && (!preferredContactMethod || !bestTimeToContact))
+      (reportSnapshot && !addressesMatch(address, reportSnapshot.address)) ||
+      (quoteRequested && !preferredContactMethod) ||
+      (quoteRequested &&
+        preferredContactMethod === "Phone" &&
+        (!phone || !bestTimeToContact))
     ) {
       return NextResponse.json(
         { message: "Missing required lead fields or Solar API analysis values." },
@@ -269,19 +432,21 @@ export async function POST(request: Request) {
       );
     }
 
-    if (!email || !phone) {
+    if (!email) {
       return NextResponse.json(
-        { message: "Missing normalized contact information." },
+        { message: "Missing normalized email information." },
         { status: 400 }
       );
     }
 
     const safeEmail: string = email;
-    const safePhone: string = phone;
+    const safePhone: string = phone ?? "";
 
     const contactLimits = [
       { key: `email:${safeEmail}`, label: "email" },
-      { key: `phone:${safePhone}`, label: "phone" },
+      ...(safePhone
+        ? [{ key: `phone:${safePhone}`, label: "phone" }]
+        : []),
       ...(normalizedAddress
         ? [{ key: `address:${normalizedAddress}`, label: "address" }]
         : []),
@@ -323,6 +488,11 @@ export async function POST(request: Request) {
     });
     const referralCode = existingLead?.referral_code ?? createReferralCode();
     const now = new Date().toISOString();
+    const consent = buildConsentEvidence(
+      request,
+      quoteRequested,
+      preferredContactMethod
+    );
 
     const baseInsert = {
       name,
@@ -337,33 +507,34 @@ export async function POST(request: Request) {
       ...baseInsert,
       status: leadStatus,
       updated_at: now,
-      panel_count: toNullableInteger(body.panelCount),
-      system_size_kw: toNullableNumber(body.systemSizeKw),
-      annual_savings: toNullableNumber(body.annualSavings),
-      monthly_savings: toNullableNumber(body.monthlySavings),
-      annual_energy_kwh: toNullableNumber(body.annualEnergyKwh),
+      panel_count: leadNumbers.panelCount,
+      system_size_kw: leadNumbers.systemSizeKw,
+      annual_savings: leadNumbers.annualSavings,
+      monthly_savings: leadNumbers.monthlySavings,
+      annual_energy_kwh: leadNumbers.annualEnergyKwh,
       roi_years: roiYears,
-      roof_area_m2: toNullableNumber(body.roofAreaSqm),
-      usable_area_m2: toNullableNumber(body.usableAreaSqm),
-      roof_pitch_deg: toNullableNumber(body.roofPitchDegrees),
-      lat: toNullableNumber(body.lat),
-      lng: toNullableNumber(body.lng),
-      selected_panel_brand: toNullableText(body.selectedPanelBrand),
-      selected_panel_model: toNullableText(body.selectedPanelModel),
-      selected_panel_watts: toNullableInteger(body.selectedPanelWatts),
-      system_cost_before_incentives: toNullableNumber(body.systemCostBeforeIncentives),
-      federal_tax_credit: toNullableNumber(body.federalTaxCredit),
-      net_system_cost: toNullableNumber(body.netSystemCost),
-      selected_inverter_type: toNullableText(body.selectedInverterType),
+      roof_area_m2: trustedRoofAreaM2,
+      usable_area_m2: trustedUsableAreaM2,
+      roof_pitch_deg: trustedRoofPitchDegrees,
+      lat: toNullableNumber(reportSnapshot?.home?.lat),
+      lng: toNullableNumber(reportSnapshot?.home?.lng),
+      selected_panel_brand: selectedPanel.brand,
+      selected_panel_model: selectedPanel.model,
+      selected_panel_watts: selectedPanel.watts,
+      system_cost_before_incentives: leadNumbers.systemCostBeforeIncentives,
+      federal_tax_credit: leadNumbers.federalTaxCredit,
+      net_system_cost: leadNumbers.netSystemCost,
+      selected_inverter_type: selectedInverter.id,
     };
     const scoredInsert = {
       ...extendedInsert,
       battery_added: batteryAdded,
-      battery_brand: batteryAdded ? toNullableText(body.batteryBrand) : null,
-      battery_cost: batteryAdded ? toNullableInteger(body.batteryCost) : null,
-      battery_model: batteryAdded ? toNullableText(body.batteryModel) : null,
+      battery_brand: selectedBattery?.brand ?? null,
+      battery_cost: selectedBattery?.cost ?? null,
+      battery_model: selectedBattery?.model ?? null,
       best_time_to_contact: bestTimeToContact,
-      energy_offset_pct: toNullableNumber(body.energyOffsetPct),
+      electric_bill_range: toNullableText(body.electricBillRange),
+      energy_offset_pct: leadNumbers.energyOffsetPct,
       follow_up_notes: quoteNotes,
       follow_up_status: quoteRequested ? "Quote requested" : "Not started",
       lead_score: leadScore.score,
@@ -371,6 +542,7 @@ export async function POST(request: Request) {
       pdf_downloaded: pdfDownloaded,
       pdf_generated: pdfGenerated,
       preferred_contact_method: preferredContactMethod,
+      owns_home: toNullableText(body.ownsHome),
       quote_notes: quoteNotes,
       quote_requested: quoteRequested,
       quote_requested_at: quoteRequested ? new Date().toISOString() : null,
@@ -378,7 +550,8 @@ export async function POST(request: Request) {
       referred_by: referredBy,
       report_snapshot: reportSnapshot,
       report_pdf_url: null,
-      solar_suitability_score: toNullableInteger(body.solarSuitabilityScore),
+      solar_suitability_score: trustedSuitabilityScore,
+      solar_timeline: toNullableText(body.solarTimeline),
       twenty_year_savings: twentyYearSavings,
       utility_bill_file_path: null,
       utility_bill_uploaded: utilityBillUploaded,
@@ -386,22 +559,24 @@ export async function POST(request: Request) {
       normalized_email: email,
       normalized_phone: phone,
       normalized_address: normalizedAddress,
+      automated_contact_consent: consent.automatedContactConsent,
+      consent_disclosure_text: consent.consentDisclosureText,
+      consent_disclosure_version: consent.consentDisclosureVersion,
+      consent_ip_hash: consent.consentIpHash,
+      consent_source: consent.consentSource,
+      consent_user_agent_hash: consent.consentUserAgentHash,
+      installer_contact_consent: consent.installerContactConsent,
+      installer_contact_consent_at: consent.installerContactConsentAt,
+      marketing_email_consent: consent.marketingEmailConsent,
+      phone_call_consent: consent.phoneCallConsent,
+      report_delivery_consent_at: consent.reportDeliveryConsentAt,
+      text_message_consent: consent.textMessageConsent,
     };
 
-    console.info("[lead-insert]", {
-      address,
-      annualSavings: estimatedSavings,
-      panelCount,
-      leadScore: leadScore.score,
-      leadScoreLabel: leadScore.label,
+    console.info("[lead-save:start]", {
+      hasReportSnapshot: Boolean(reportSnapshot),
       quoteRequested,
-      roiYears,
-      selectedInverterType: body.selectedInverterType,
-      selectedPanel: [body.selectedPanelBrand, body.selectedPanelModel]
-        .filter(Boolean)
-        .join(" "),
       batteryAdded,
-      referredBy,
       utilityBillUploaded,
     });
 
@@ -413,14 +588,29 @@ export async function POST(request: Request) {
             "battery_brand",
             "battery_cost",
             "battery_model",
+            "electric_bill_range",
             "normalized_address",
             "normalized_email",
             "normalized_phone",
+            "owns_home",
             "referral_code",
             "referred_by",
             "report_snapshot",
             "report_pdf_url",
             "utility_bill_file_path",
+            "automated_contact_consent",
+            "consent_disclosure_text",
+            "consent_disclosure_version",
+            "consent_ip_hash",
+            "consent_source",
+            "consent_user_agent_hash",
+            "installer_contact_consent",
+            "installer_contact_consent_at",
+            "marketing_email_consent",
+            "phone_call_consent",
+            "report_delivery_consent_at",
+            "text_message_consent",
+            "solar_timeline",
           ].includes(key)
       )
     );
@@ -444,11 +634,16 @@ export async function POST(request: Request) {
     const { data, error } = saveResult;
 
     if (error) {
+      console.error("[lead-save:error]", {
+        code: "database_write_failed",
+      });
       return NextResponse.json(
-        { message: error.message || "Unable to save the lead." },
+        { message: "Unable to save the report request." },
         { status: 500 }
       );
     }
+
+    await saveConsentEvent(supabase, data.id, consent);
 
     const finalizedUtilityBillPath =
       utilityBillUploaded && utilityBillFilePath
@@ -460,12 +655,19 @@ export async function POST(request: Request) {
         : null;
     const utilityBillStored = Boolean(finalizedUtilityBillPath);
 
-    const reportUrl = buildReportPdfUrl(data.id, {
+    const developmentBaseUrl =
+      process.env.NODE_ENV === "production" ? undefined : new URL(request.url).origin;
+    const reportPdfUrl = buildReportPdfUrl(data.id, {
       absolute: true,
+      baseUrl: developmentBaseUrl,
       download: true,
       raw: true,
     });
-    await saveReportPdfUrl(supabase, data.id, reportUrl);
+    const reportUrl = buildReportViewerUrl(data.id, {
+      absolute: true,
+      baseUrl: developmentBaseUrl,
+    });
+    await saveReportPdfUrl(supabase, data.id, reportPdfUrl);
     const notificationLimit = await enforceRateLimit({
       key: `lead:${data.id}`,
       request,
@@ -481,6 +683,7 @@ export async function POST(request: Request) {
           electricBillRange: toNullableText(body.electricBillRange),
           email: safeEmail,
           leadId: data.id,
+          installerContactConsent: quoteRequested,
           leadScoreLabel: leadScore.label,
           leadScoreValue: leadScore.score,
           monthlyBill,
@@ -490,7 +693,7 @@ export async function POST(request: Request) {
           preferredContactMethod,
           reportUrl,
           solarTimeline: toNullableText(body.solarTimeline),
-          systemSizeKw: toNullableNumber(body.systemSizeKw),
+          systemSizeKw: leadNumbers.systemSizeKw,
         })
       : buildSkippedNotificationSummary("notification_rate_limited");
 
@@ -503,7 +706,11 @@ export async function POST(request: Request) {
 
     await saveNotificationStatus(supabase, data.id, notificationResults);
 
-    console.info("[lead-notifications]", notificationResults);
+    console.info("[lead-notifications]", {
+      adminEmailOk: notificationResults.adminEmail.ok,
+      homeownerEmailOk: notificationResults.homeownerEmail.ok,
+      leadId: data.id,
+    });
 
     return NextResponse.json({
       lead: {
@@ -513,21 +720,30 @@ export async function POST(request: Request) {
         address: data.address,
         monthlyBill: data.monthly_bill,
         estimatedSavings: data.estimated_savings,
-        leadScore: leadScore.score,
-        leadScoreLabel: leadScore.label,
+        emailDeliveryStatus: notificationResults.homeownerEmail.ok
+          ? "sent"
+          : "delayed",
         quoteRequested,
         referralCode,
+        reportSummary: {
+          annualSavings: leadNumbers.annualSavings,
+          energyOffsetPct: leadNumbers.energyOffsetPct,
+          monthlySavings: leadNumbers.monthlySavings,
+          panelCount: leadNumbers.panelCount,
+          paybackYears: leadNumbers.roiYears,
+          systemSizeKw: leadNumbers.systemSizeKw,
+        },
         reportUrl,
         updatedExisting: Boolean(existingLead),
         utilityBillUploaded: utilityBillStored,
       },
     });
   } catch (error) {
+    console.error("[lead-save:unexpected]", {
+      errorType: error instanceof Error ? error.name : "unknown",
+    });
     return NextResponse.json(
-      {
-        message:
-          error instanceof Error ? error.message : "Unexpected lead save error.",
-      },
+      { message: "Unable to save the report request. Please try again." },
       { status: 500 }
     );
   }
@@ -578,6 +794,9 @@ async function finalizeUtilityBillUpload(
 
     if (error) {
       console.error("[utility-bill-finalize-update]", error.message);
+      await storage.remove([finalPath]);
+      await markUtilityBillUnavailable(supabase, leadId);
+      return null;
     }
 
     return finalPath;
@@ -632,6 +851,34 @@ async function saveNotificationStatus(
   console.error("[lead-notification-status]", error.message);
 }
 
+async function saveConsentEvent(
+  supabase: SupabaseClient,
+  leadId: string,
+  consent: ReturnType<typeof buildConsentEvidence>
+) {
+  const { error } = await supabase.from("lead_consent_events").insert({
+    automated_contact_consent: consent.automatedContactConsent,
+    consent_disclosure_text: consent.consentDisclosureText,
+    consent_disclosure_version: consent.consentDisclosureVersion,
+    consent_ip_hash: consent.consentIpHash,
+    consent_source: consent.consentSource,
+    consent_user_agent_hash: consent.consentUserAgentHash,
+    installer_contact_consent: consent.installerContactConsent,
+    lead_id: leadId,
+    marketing_email_consent: consent.marketingEmailConsent,
+    phone_call_consent: consent.phoneCallConsent,
+    report_delivery_consent: true,
+    text_message_consent: consent.textMessageConsent,
+  });
+
+  if (error) {
+    console.warn("[lead-consent-event]", {
+      saved: false,
+      schemaReady: !shouldRetryLegacyInsert(error.message),
+    });
+  }
+}
+
 function buildNotificationStatus(results: LeadNotificationSummary) {
   const email = resultStatus(results.homeownerEmail);
 
@@ -683,21 +930,80 @@ function resolveUtilityBillUploadPath(uploadClaim?: string) {
 }
 
 function toNullableNumber(value: unknown) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
 function toNullableInteger(value: unknown) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.round(parsed) : null;
+}
+
+function toNullableScore(value: unknown) {
+  const parsed = toNullableInteger(value);
+
+  if (parsed === null) {
+    return null;
+  }
+
+  return Math.max(0, Math.min(100, parsed));
 }
 
 function toNullableText(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+function resolveTrustedPanel(body: LeadBody) {
+  const brand = body.selectedPanelBrand?.trim().toLowerCase();
+  const model = body.selectedPanelModel?.trim().toLowerCase();
+  const watts = Number(body.selectedPanelWatts);
+
+  return (
+    SOLAR_PANELS.find(
+      (panel) =>
+        panel.brand.toLowerCase() === brand &&
+        panel.model.toLowerCase() === model &&
+        Number.isFinite(watts) &&
+        panel.watts === watts
+    ) ?? getPanelById()
+  );
+}
+
+function resolveTrustedInverter(value?: string | null) {
+  return (
+    INVERTER_OPTIONS.find((option) => option.id === value) ??
+    INVERTER_OPTIONS.find((option) => option.id === "string") ??
+    INVERTER_OPTIONS[0]
+  );
+}
+
+function resolveTrustedBattery(body: LeadBody) {
+  if (!body.batteryAdded) {
+    return null;
+  }
+
+  const brand = body.batteryBrand?.trim().toLowerCase();
+  const model = body.batteryModel?.trim().toLowerCase();
+
+  return (
+    BATTERY_OPTIONS.find(
+      (battery) =>
+        battery.brand.toLowerCase() === brand &&
+        battery.model.toLowerCase() === model
+    ) ?? null
+  );
+}
+
 function createReferralCode() {
-  return Math.random().toString(36).slice(2, 8).toUpperCase();
+  return randomBytes(5).toString("base64url").slice(0, 8).toUpperCase();
 }
 
 async function insertLeadRecord(
@@ -799,7 +1105,8 @@ async function findExistingLeadMatch(
     "normalized_email",
     identifiers.normalizedEmail ?? null,
     "email",
-    identifiers.normalizedEmail ?? null
+    identifiers.normalizedEmail ?? null,
+    identifiers.normalizedAddress ?? null
   );
 
   if (byEmail) {
@@ -811,34 +1118,33 @@ async function findExistingLeadMatch(
     "normalized_phone",
     identifiers.normalizedPhone ?? null,
     "phone",
-    identifiers.normalizedPhone ?? null
+    identifiers.normalizedPhone ?? null,
+    identifiers.normalizedAddress ?? null
   );
 
   if (byPhone) {
     return byPhone;
   }
 
-  return findLeadByIdentifier(
-    supabase,
-    "normalized_address",
-    identifiers.normalizedAddress ?? null,
-    "address",
-    identifiers.address?.trim() ?? null
-  );
+  // Address-only updates could let someone overwrite another homeowner's lead.
+  // Roof-analysis caching already deduplicates paid API work by property.
+  return null;
 }
 
 async function findLeadByIdentifier(
   supabase: SupabaseClient,
-  normalizedColumn: "normalized_email" | "normalized_phone" | "normalized_address",
+  normalizedColumn: "normalized_email" | "normalized_phone",
   normalizedValue: string | null,
-  legacyColumn: "email" | "phone" | "address",
-  legacyValue: string | null
+  legacyColumn: "email" | "phone",
+  legacyValue: string | null,
+  normalizedAddress: string | null
 ): Promise<ExistingLeadMatch | null> {
-  if (!normalizedValue && !legacyValue) {
+  if ((!normalizedValue && !legacyValue) || !normalizedAddress) {
     return null;
   }
 
-  const select = "id, referral_code, created_at";
+  const select =
+    "id, referral_code, created_at, email, phone, address, normalized_email, normalized_phone, normalized_address";
 
   if (normalizedValue) {
     const normalizedResult = await supabase
@@ -846,10 +1152,17 @@ async function findLeadByIdentifier(
       .select(select)
       .eq(normalizedColumn, normalizedValue)
       .order("created_at", { ascending: false })
-      .limit(1);
+      .limit(20);
 
     if (!normalizedResult.error && normalizedResult.data?.length) {
-      return normalizedResult.data[0] as ExistingLeadMatch;
+      const match = selectLeadForNormalizedProperty(
+        normalizedResult.data as ExistingLeadMatch[],
+        normalizedAddress
+      );
+
+      if (match) {
+        return match;
+      }
     }
 
     if (
@@ -869,14 +1182,42 @@ async function findLeadByIdentifier(
     .select(select)
     .eq(legacyColumn, legacyValue)
     .order("created_at", { ascending: false })
-    .limit(1);
+    .limit(20);
+
+  if (legacyResult.error && shouldRetryLegacyInsert(legacyResult.error.message)) {
+    const fallbackResult = await supabase
+      .from("leads")
+      .select("id, created_at, email, phone, address")
+      .eq(legacyColumn, legacyValue)
+      .order("created_at", { ascending: false })
+      .limit(20);
+
+    if (fallbackResult.error) {
+      console.warn("[lead-dedupe-legacy]", {
+        available: false,
+      });
+      return null;
+    }
+
+    return (
+      selectLeadForNormalizedProperty(
+        fallbackResult.data as ExistingLeadMatch[] | null,
+        normalizedAddress
+      )
+    );
+  }
 
   if (legacyResult.error) {
     console.warn("[lead-dedupe-legacy]", legacyResult.error.message);
     return null;
   }
 
-  return (legacyResult.data?.[0] as ExistingLeadMatch | undefined) ?? null;
+  return (
+    selectLeadForNormalizedProperty(
+      legacyResult.data as ExistingLeadMatch[] | null,
+      normalizedAddress
+    )
+  );
 }
 
 async function saveReportPdfUrl(

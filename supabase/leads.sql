@@ -2,7 +2,7 @@ create table if not exists public.leads (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   email text not null,
-  phone text not null,
+  phone text,
   address text not null,
   monthly_bill numeric(10, 2) not null,
   estimated_savings numeric(10, 2) not null,
@@ -11,6 +11,7 @@ create table if not exists public.leads (
 );
 
 alter table public.leads add column if not exists updated_at timestamptz not null default now();
+alter table public.leads alter column phone drop not null;
 alter table public.leads add column if not exists panel_count integer;
 alter table public.leads add column if not exists system_size_kw numeric(10, 2);
 alter table public.leads add column if not exists annual_savings numeric(10, 2);
@@ -63,6 +64,22 @@ alter table public.leads add column if not exists report_snapshot jsonb;
 alter table public.leads add column if not exists normalized_email text;
 alter table public.leads add column if not exists normalized_phone text;
 alter table public.leads add column if not exists normalized_address text;
+alter table public.leads add column if not exists electric_bill_range text;
+alter table public.leads add column if not exists owns_home text;
+alter table public.leads add column if not exists solar_timeline text;
+alter table public.leads add column if not exists report_delivery_consent_at timestamptz;
+alter table public.leads add column if not exists installer_contact_consent boolean not null default false;
+alter table public.leads add column if not exists installer_contact_consent_at timestamptz;
+alter table public.leads add column if not exists marketing_email_consent boolean not null default false;
+alter table public.leads add column if not exists phone_call_consent boolean not null default false;
+alter table public.leads add column if not exists text_message_consent boolean not null default false;
+alter table public.leads add column if not exists automated_contact_consent boolean not null default false;
+alter table public.leads add column if not exists consent_disclosure_text text;
+alter table public.leads add column if not exists consent_disclosure_version text;
+alter table public.leads add column if not exists consent_source text;
+alter table public.leads add column if not exists consent_ip_hash text;
+alter table public.leads add column if not exists consent_user_agent_hash text;
+alter table public.leads add column if not exists consent_revoked_at timestamptz;
 
 alter table public.leads enable row level security;
 
@@ -85,18 +102,49 @@ create index if not exists leads_referred_by_idx on public.leads (referred_by);
 create index if not exists leads_normalized_email_idx on public.leads (normalized_email);
 create index if not exists leads_normalized_phone_idx on public.leads (normalized_phone);
 create index if not exists leads_normalized_address_idx on public.leads (normalized_address);
+create index if not exists leads_installer_contact_consent_idx
+on public.leads (installer_contact_consent, created_at desc);
 create unique index if not exists leads_referral_code_idx on public.leads (referral_code)
 where referral_code is not null;
 create unique index if not exists leads_dedupe_idx
 on public.leads (lower(email), lower(address), monthly_bill);
 
--- Recommended after duplicate cleanup:
--- create unique index if not exists leads_normalized_email_unique_idx
--- on public.leads (normalized_email) where normalized_email is not null;
--- create unique index if not exists leads_normalized_phone_unique_idx
--- on public.leads (normalized_phone) where normalized_phone is not null;
--- create unique index if not exists leads_normalized_address_unique_idx
--- on public.leads (normalized_address) where normalized_address is not null;
+-- Recommended after reviewing and merging existing duplicate rows. Composite
+-- uniqueness allows one homeowner to analyze multiple properties while closing
+-- the concurrent-submit race for the same contact and property.
+-- create unique index if not exists leads_email_property_unique_idx
+-- on public.leads (normalized_email, normalized_address)
+-- where normalized_email is not null and normalized_address is not null;
+-- create unique index if not exists leads_phone_property_unique_idx
+-- on public.leads (normalized_phone, normalized_address)
+-- where normalized_phone is not null and normalized_address is not null;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'leads_monthly_bill_range_check'
+  ) then
+    alter table public.leads
+      add constraint leads_monthly_bill_range_check
+      check (monthly_bill > 0 and monthly_bill <= 5000) not valid;
+  end if;
+
+  if not exists (
+    select 1 from pg_constraint where conname = 'leads_panel_count_range_check'
+  ) then
+    alter table public.leads
+      add constraint leads_panel_count_range_check
+      check (panel_count is null or (panel_count >= 0 and panel_count <= 500)) not valid;
+  end if;
+
+  if not exists (
+    select 1 from pg_constraint where conname = 'leads_energy_offset_range_check'
+  ) then
+    alter table public.leads
+      add constraint leads_energy_offset_range_check
+      check (energy_offset_pct is null or (energy_offset_pct >= 0 and energy_offset_pct <= 100)) not valid;
+  end if;
+end $$;
 
 -- Optional private utility bill storage bucket.
 -- The app uploads with the Supabase service-role key through /api/utility-bills.

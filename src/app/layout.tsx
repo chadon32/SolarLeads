@@ -1,5 +1,5 @@
-import type { Metadata } from "next";
-import { Manrope, Space_Grotesk } from "next/font/google";
+import type { Metadata, Viewport } from "next";
+import { Instrument_Serif, Manrope, Space_Grotesk } from "next/font/google";
 import { GoogleAnalytics } from "@/components/google-analytics";
 import { APP_CANONICAL_URL, APP_NAME, APP_TAGLINE } from "@/lib/brand";
 import "./globals.css";
@@ -12,6 +12,12 @@ const display = Space_Grotesk({
 const body = Manrope({
   variable: "--font-body",
   subsets: ["latin"],
+});
+
+const editorial = Instrument_Serif({
+  variable: "--font-editorial",
+  subsets: ["latin"],
+  weight: "400",
 });
 
 export const metadata: Metadata = {
@@ -63,10 +69,23 @@ export const metadata: Metadata = {
   icons: {
     icon: "/icon.svg",
   },
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: APP_NAME,
+  },
   other: {
     "geo.region": "US-AZ",
     "geo.placename": "Arizona",
   },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: "#020617",
+  colorScheme: "dark",
 };
 
 export default function RootLayout({
@@ -75,10 +94,18 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${display.variable} ${body.variable} h-full`}>
+    <html
+      lang="en"
+      className={`${display.variable} ${body.variable} ${editorial.variable} h-full`}
+    >
       <body className="min-h-full antialiased">
+        <a className="skip-link" href="#main-content">
+          Skip to main content
+        </a>
         <GoogleAnalytics />
-        {children}
+        <div id="main-content" tabIndex={-1}>
+          {children}
+        </div>
       </body>
     </html>
   );

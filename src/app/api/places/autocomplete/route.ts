@@ -4,9 +4,11 @@ import {
   logAbuseSignal,
   maintenanceModeResponse,
   payloadTooLargeResponse,
+  readJsonWithLimit,
   rateLimitResponse,
 } from "@/lib/abuse-protection";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { z } from "zod";
 
 type PlaceSuggestion = {
   placePrediction?: {
@@ -27,6 +29,9 @@ type PlaceSuggestion = {
 
 const googlePlacesKey =
   process.env.GOOGLE_PLACES_API_KEY;
+const autocompleteSchema = z.object({
+  input: z.string().trim().min(3).max(220),
+});
 
 export async function POST(request: Request) {
   try {
@@ -64,12 +69,19 @@ export async function POST(request: Request) {
       );
     }
 
-    const body = (await request.json()) as { input?: string };
-    const input = body.input?.trim();
+    const jsonBody = await readJsonWithLimit(request, 8 * 1024);
 
-    if (!input) {
+    if (!jsonBody.ok && jsonBody.reason === "too_large") {
+      return payloadTooLargeResponse("The address lookup request is too large.");
+    }
+
+    const parsed = autocompleteSchema.safeParse(jsonBody.ok ? jsonBody.data : null);
+
+    if (!parsed.success) {
       return NextResponse.json({ predictions: [] });
     }
+
+    const input = parsed.data.input;
 
     const response = await fetch(
       "https://places.googleapis.com/v1/places:autocomplete",
@@ -86,19 +98,17 @@ export async function POST(request: Request) {
           includedRegionCodes: ["us"],
           includedPrimaryTypes: ["street_address", "premise"],
         }),
+        signal: AbortSignal.timeout(8_000),
       }
     );
 
     const data = await response.json().catch(() => ({}));
 
     if (!response.ok) {
+      console.warn("[places-autocomplete:provider]", { status: response.status });
       return NextResponse.json(
-        {
-          message:
-            data?.error?.message ??
-            "Google Places could not return address suggestions.",
-        },
-        { status: response.status }
+        { message: "Address suggestions are temporarily unavailable." },
+        { status: 502 }
       );
     }
 
@@ -121,14 +131,12 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ predictions });
   } catch (error) {
+    console.warn("[places-autocomplete:error]", {
+      errorType: error instanceof Error ? error.name : "unknown",
+    });
     return NextResponse.json(
-      {
-        message:
-          error instanceof Error
-            ? error.message
-            : "Unexpected Places autocomplete failure.",
-      },
-      { status: 500 }
+      { message: "Address suggestions are temporarily unavailable." },
+      { status: 502 }
     );
   }
 }

@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { payloadTooLargeResponse, readJsonWithLimit } from "@/lib/abuse-protection";
 import { requireDashboardAuth } from "@/lib/dashboard-auth";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { z } from "zod";
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -15,6 +17,10 @@ const statusLabels = {
 } as const;
 
 type LeadStatus = keyof typeof statusLabels;
+const statusUpdateSchema = z.object({
+  leadId: z.string().uuid(),
+  status: z.string().trim().min(1).max(32),
+});
 
 export async function PATCH(request: Request) {
   try {
@@ -45,12 +51,15 @@ export async function PATCH(request: Request) {
       );
     }
 
-    const body = (await request.json()) as {
-      leadId?: string;
-      status?: string;
-    };
-    const leadId = body.leadId?.trim();
-    const status = normalizeStatus(body.status);
+    const jsonBody = await readJsonWithLimit(request, 16 * 1024);
+
+    if (!jsonBody.ok && jsonBody.reason === "too_large") {
+      return payloadTooLargeResponse("The status update is too large.");
+    }
+
+    const parsed = statusUpdateSchema.safeParse(jsonBody.ok ? jsonBody.data : null);
+    const leadId = parsed.success ? parsed.data.leadId : "";
+    const status = parsed.success ? normalizeStatus(parsed.data.status) : null;
 
     if (!leadId || !status) {
       return NextResponse.json(
@@ -75,7 +84,7 @@ export async function PATCH(request: Request) {
 
     if (error) {
       return NextResponse.json(
-        { message: error.message || "Unable to update lead status." },
+        { message: "Unable to update lead status." },
         { status: 500 }
       );
     }
@@ -87,11 +96,11 @@ export async function PATCH(request: Request) {
       },
     });
   } catch (error) {
+    console.error("[lead-status:error]", {
+      errorType: error instanceof Error ? error.name : "unknown",
+    });
     return NextResponse.json(
-      {
-        message:
-          error instanceof Error ? error.message : "Unexpected lead status error.",
-      },
+      { message: "Unable to update lead status." },
       { status: 500 }
     );
   }

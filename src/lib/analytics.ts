@@ -15,5 +15,17 @@ export function trackEvent(eventName: string, params: GtagEventParams = {}) {
     return;
   }
 
-  window.gtag("event", eventName, params);
+  const safeParams = Object.fromEntries(
+    Object.entries(params)
+      .filter(
+        ([key]) =>
+          !/address|email|phone|name|lead|report|url|bill|saving/i.test(key)
+      )
+      .map(([key, value]) => [
+        key,
+        typeof value === "string" ? value.slice(0, 100) : value,
+      ])
+  );
+
+  window.gtag("event", eventName.slice(0, 40), safeParams);
 }

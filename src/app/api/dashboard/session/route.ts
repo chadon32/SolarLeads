@@ -3,6 +3,8 @@ import {
   HOUR_MS,
   isRequestTooLarge,
   payloadTooLargeResponse,
+  readJsonWithLimit,
+  readTextWithLimit,
   rateLimitResponse,
 } from "@/lib/abuse-protection";
 import {
@@ -12,9 +14,14 @@ import {
   verifyDashboardToken,
 } from "@/lib/dashboard-auth";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { z } from "zod";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+const dashboardSessionSchema = z.object({
+  nextPath: z.enum(["/dashboard", "/dashboard/installer"]).default("/dashboard"),
+  token: z.string().trim().min(1).max(1024),
+});
 
 export async function POST(request: Request) {
   if (isRequestTooLarge(request, 16 * 1024)) {
@@ -40,8 +47,11 @@ export async function POST(request: Request) {
     .get("accept")
     ?.toLowerCase()
     .includes("application/json");
-  const { nextPath, token } = await readSessionRequest(request, contentType);
-  const auth = verifyDashboardToken(token);
+  const parsed = dashboardSessionSchema.safeParse(
+    await readSessionRequest(request, contentType)
+  );
+  const nextPath = parsed.success ? parsed.data.nextPath : "/dashboard";
+  const auth = verifyDashboardToken(parsed.success ? parsed.data.token : "");
 
   if (!auth.ok) {
     const message =
@@ -93,22 +103,24 @@ export async function DELETE() {
 
 async function readSessionRequest(request: Request, contentType: string) {
   if (contentType.includes("application/json")) {
-    const body = (await request.json().catch(() => ({}))) as {
+    const result = await readJsonWithLimit(request, 16 * 1024);
+    const body = (result.ok ? result.data : {}) as {
       next?: string;
       token?: string;
     };
 
     return {
-      nextPath: body.next,
+      nextPath: body.next ?? "/dashboard",
       token: body.token,
     };
   }
 
-  const formData = await request.formData();
+  const result = await readTextWithLimit(request, 16 * 1024);
+  const formData = new URLSearchParams(result.ok ? result.data : "");
 
   return {
-    nextPath: String(formData.get("next") ?? ""),
-    token: String(formData.get("token") ?? ""),
+    nextPath: formData.get("next") ?? "/dashboard",
+    token: formData.get("token") ?? "",
   };
 }
 

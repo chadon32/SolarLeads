@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { DAY_MS, maintenanceModeResponse, rateLimitResponse } from "@/lib/abuse-protection";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { isArizonaCoordinate } from "@/lib/arizona-address";
 
 const MAPS_KEY = process.env.GOOGLE_MAPS_API_KEY;
 
@@ -53,9 +54,9 @@ export async function GET(request: Request) {
     const zoomParam = searchParams.get("zoom");
     const address = searchParams.get("address") ?? "Satellite preview";
 
-    if (!lat || !lng || Number.isNaN(Number(lat)) || Number.isNaN(Number(lng))) {
+    if (!isArizonaCoordinate(lat, lng)) {
       return NextResponse.json(
-        { message: "Invalid coordinates." },
+        { message: "Valid Arizona coordinates are required." },
         { status: 400 }
       );
     }
@@ -79,6 +80,7 @@ export async function GET(request: Request) {
         Accept: "image/png,image/*;q=0.9,*/*;q=0.8",
       },
       cache: "no-store",
+      signal: AbortSignal.timeout(10_000),
     });
 
     if (!response.ok || !response.body) {
@@ -98,10 +100,10 @@ export async function GET(request: Request) {
           .replace(/^-|-$/g, "") || "preview"}.png"`,
       },
     });
-  } catch (error) {
+  } catch {
     return satelliteFallbackResponse(
       "Satellite preview",
-      error instanceof Error ? error.message : "Unexpected satellite image error."
+      "Rooftop satellite imagery is temporarily unavailable."
     );
   }
 }

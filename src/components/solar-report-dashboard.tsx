@@ -19,13 +19,22 @@ import {
   type SolarAdvisorProfile,
 } from "@/lib/solar-advisor";
 import {
+  ARIZONA_AVG_RATE_PER_KWH,
   buildSolarMetrics,
+  calculateEnergyOffsetPct,
 } from "@/lib/solar-metrics";
 import {
   BATTERY_OPTIONS,
   getBatteryById,
   type BatteryOption,
 } from "@/lib/batteries";
+import {
+  calculateArizonaStateSolarCredit,
+  calculateFederalResidentialSolarCredit,
+  calculateTwentyYearSolarCosts,
+  calculateTwentyYearUtilityCost,
+  getFederalResidentialSolarCreditRate,
+} from "@/lib/financial-model";
 import {
   detectArizonaUtility,
   getInverterOption,
@@ -81,7 +90,7 @@ const financingCopy: Record<FinancingMode, string> = {
   lease:
     "Use solar with a third-party owner handling system costs. A lease or PPA may reduce upfront cost, though long-term savings can be lower.",
   loan:
-    "Own your system and pay over time. A loan is a great way to take advantage of incentives and long-term savings while spreading the cost across monthly payments.",
+    "Own your system and pay over time. Loan pricing, approval, fees, and final terms depend on the lender and installer.",
 };
 
 export function SolarReportDashboard({
@@ -151,7 +160,7 @@ export function SolarReportDashboard({
 
   return (
     <>
-      <aside className="space-y-3 lg:col-span-5">
+      <aside className="min-w-0 space-y-3 lg:col-span-5">
         <section className="rounded-[1.35rem] border border-cyan-200/12 bg-slate-950/72 p-4 shadow-[0_18px_65px_rgba(0,0,0,0.34)] backdrop-blur-xl">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
@@ -170,7 +179,7 @@ export function SolarReportDashboard({
           </p>
           <div className="mt-4 grid grid-cols-2 gap-2">
             <MiniReadout label="Solar score" source="solar-api" value={`${values.advisor.suitability.score}/100`} />
-            <MiniReadout label="Accepted panels" source="solar-api" value={`${values.panelCount}`} />
+            <MiniReadout label="Panels" source="solar-api" value={`${values.panelCount}`} />
             <MiniReadout label="Annual savings" source="user-adjusted" value={formatMoney(values.annualSavings)} />
             <MiniReadout label="System size" source="user-adjusted" value={`${values.recommendedKw.toFixed(1)} kW`} />
           </div>
@@ -222,6 +231,7 @@ export function SolarReportDashboard({
           <select
             value={monthlyBill}
             onChange={(event) => updateMonthlyBill(Number(event.target.value))}
+            aria-label="Monthly electric bill"
             className="mt-4 w-full rounded-full border border-white/12 bg-black/35 px-4 py-3 text-base font-semibold text-white outline-none transition focus:border-cyan-200/50"
           >
             {monthlyBillOptions.map((value) => (
@@ -248,7 +258,7 @@ export function SolarReportDashboard({
 
       <section
         id="report-dashboard"
-        className="rounded-[1.5rem] border border-white/12 bg-slate-950/70 p-3 shadow-[0_18px_70px_rgba(0,0,0,0.32)] backdrop-blur-xl sm:p-4 lg:col-span-12"
+        className="w-full min-w-0 max-w-full rounded-[1.5rem] border border-white/12 bg-slate-950/70 p-3 shadow-[0_18px_70px_rgba(0,0,0,0.32)] backdrop-blur-xl sm:p-4 lg:col-span-12"
       >
         <div
           role="tablist"
@@ -395,10 +405,10 @@ function PanelsTab({
     panelFits.find((item) => item.panel.id === selectedPanel.id)?.fit ??
     values.selectedPanelFit;
   const utility = detectArizonaUtility(address);
-  const federalCredit = Math.round(
-    (selectedFit.systemCost + (selectedBattery?.cost ?? 0)) * 0.3
+  const federalCredit = calculateFederalResidentialSolarCredit(
+    selectedFit.systemCost + (selectedBattery?.cost ?? 0)
   );
-  const stateCredit = selectedFit.netCost > 0 ? 1000 : 0;
+  const stateCredit = calculateArizonaStateSolarCredit(selectedFit.systemCost);
   const sortedFits = [...panelFits].sort((left, right) => {
     const direction = sortDirection === "asc" ? 1 : -1;
 
@@ -647,7 +657,7 @@ function PanelOptionCard({
         {isFeatured ? (
           <PanelFinancialRow label="Total cost" value={formatMoney(fit.systemCost)} />
         ) : null}
-        <PanelFinancialRow label="After 30% tax credit" value={formatMoney(fit.netCost)} />
+        <PanelFinancialRow label="Estimated net cost" value={formatMoney(fit.netCost)} />
         <PanelFinancialRow label="Est. payback" value={`${fit.paybackYears.toFixed(1)} years`} />
         <PanelFinancialRow label="Annual savings" value={formatMoney(fit.annualSavings)} />
       </div>
@@ -835,8 +845,9 @@ function BatteryStorageSection({
             Add battery storage?
           </h4>
           <p className="mt-2 text-xs leading-5 text-white/50">
-            Power your home during outages. Arizona averages 1.3 outages per year.
-            Batteries can qualify for the 30% federal tax credit.
+            Battery storage can provide backup power during outages. Capacity,
+            backup duration, and current incentive eligibility require installer
+            and tax-professional confirmation.
           </p>
         </div>
         <button
@@ -877,7 +888,8 @@ function BatteryCard({
   onSelect: () => void;
   selected: boolean;
 }) {
-  const afterCredit = Math.round(battery.cost * 0.7);
+  const federalCredit = calculateFederalResidentialSolarCredit(battery.cost);
+  const afterCredit = Math.max(battery.cost - federalCredit, 0);
 
   return (
     <button
@@ -906,7 +918,7 @@ function BatteryCard({
         <PanelFinancialRow label="Capacity" value={`${battery.capacityKwh} kWh`} />
         <PanelFinancialRow label="Backup" value={`~${battery.backupHours} hrs`} />
         <PanelFinancialRow label="Cost" value={formatMoney(battery.cost)} />
-        <PanelFinancialRow label="After credit" value={formatMoney(afterCredit)} />
+        <PanelFinancialRow label="Est. net cost" value={formatMoney(afterCredit)} />
         <PanelFinancialRow label="Warranty" value={`${battery.warrantyYears} yrs`} />
         <PanelFinancialRow label="Power" value={`${battery.powerKw} kW`} />
       </div>
@@ -924,6 +936,7 @@ function IncentivesSection({
   utility: string | null;
 }) {
   const totalIncentives = federalCredit + stateCredit;
+  const federalCreditRate = getFederalResidentialSolarCreditRate();
 
   return (
     <section className="rounded-[1rem] border border-white/10 bg-black/18 p-4">
@@ -933,7 +946,7 @@ function IncentivesSection({
             Available incentives
           </p>
           <h4 className="mt-1 text-lg font-semibold text-white">
-            Estimated federal and Arizona savings
+            Current modeled tax incentives
           </h4>
         </div>
         <span className="rounded-full border border-emerald-200/16 bg-emerald-200/10 px-3 py-1.5 text-xs font-semibold text-emerald-100">
@@ -942,30 +955,35 @@ function IncentivesSection({
       </div>
       <div className="mt-4 grid gap-3 md:grid-cols-2">
         <IncentiveCard
-          title="Federal ITC (30%)"
-          source="IRS Form 5695"
-          body={`Deduct 30% of your total system cost from federal taxes. Estimated value: ${formatMoney(federalCredit)}.`}
+          title="Federal residential credit"
+          source="Current IRS Section 25D guidance"
+          body={
+            federalCreditRate > 0
+              ? `${Math.round(federalCreditRate * 100)}% modeled credit: ${formatMoney(federalCredit)}. Eligibility requires tax-professional confirmation.`
+              : "No federal residential clean-energy credit is modeled for new 2026 expenditures under current IRS guidance. Confirm any project-specific eligibility with a tax professional."
+          }
         />
         <IncentiveCard
           title="Arizona State Tax Credit"
           source="ARS 43-1083"
-          body="Arizona offers a 25% state tax credit up to $1,000 on residential solar installations."
+          body="Arizona law provides a nonrefundable residential solar credit equal to 25% of eligible cost, capped at $1,000. Eligibility and tax liability must be confirmed."
         />
         <IncentiveCard
           title="APS / SRP Net Metering"
           source="Utility tariff"
-          body="Export excess solar electricity back to the grid for bill credits. Rate varies by utility."
+          body="Export compensation and remaining utility charges vary by current utility tariff and rate plan. Confirm them before purchase."
         />
         {utility ? (
           <IncentiveCard
-            title={`${utility} battery incentive`}
-            source="Utility program"
-            body="$200 rebate estimate for adding a battery storage system. Check with your utility for current availability."
+            title={`${utility} program review`}
+            source="Current utility tariff required"
+            body="Ask the installer and utility to verify current export rates, interconnection charges, and any available storage programs."
           />
         ) : null}
       </div>
       <div className="mt-4 rounded-[0.95rem] border border-emerald-200/24 bg-emerald-300/16 px-4 py-3 text-sm font-semibold text-emerald-50 shadow-[0_14px_34px_rgba(16,185,129,0.12)]">
-        Total estimated incentives: {formatMoney(totalIncentives)}
+        Potential modeled tax credits: {formatMoney(totalIncentives)}. Actual
+        eligibility depends on current law and individual tax circumstances.
       </div>
     </section>
   );
@@ -1090,7 +1108,7 @@ function ReportOverviewTab({
         <CompactInfo
           icon={Grid3X3}
           source="solar-api"
-          title={`${values.panelCount} accepted panels`}
+          title={`${values.panelCount} panels`}
           body={`${formatNumber(values.usableAreaSqFt)} square feet estimated solar-ready.`}
         />
         <CompactInfo
@@ -1182,6 +1200,7 @@ function RoofShadeTab({
   );
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function OverviewTab({
   values,
 }: {
@@ -1199,7 +1218,7 @@ function OverviewTab({
       <CompactInfo
         icon={Grid3X3}
         source="solar-api"
-        title={`${values.panelCount} accepted panels`}
+        title={`${values.panelCount} panels`}
         body={`${formatNumber(values.usableAreaSqFt)} square feet available for solar panels.`}
       />
       <CompactInfo
@@ -1259,6 +1278,7 @@ function SavingsTab({
   );
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function EnvironmentalTab({ values }: { values: DashboardValues }) {
   return (
     <div className="grid gap-3 md:grid-cols-3">
@@ -1352,8 +1372,11 @@ function FinancingTab({
   const [loanRate, setLoanRate] = useState(6.49);
   const [loanTermYears, setLoanTermYears] = useState(20);
   const [showDetails, setShowDetails] = useState(false);
+  const downPaymentAmount = Math.round(
+    values.installedCost * (downPaymentPct / 100)
+  );
   const loanPrincipal = Math.max(
-    values.installedCost * (1 - downPaymentPct / 100) - values.taxCredit,
+    values.installedCost - downPaymentAmount,
     0
   );
   const monthlyLoanPayment = calculateMonthlyLoanPayment(
@@ -1362,6 +1385,12 @@ function FinancingTab({
     loanTermYears
   );
   const netMonthly = values.monthlySavings - monthlyLoanPayment;
+  const loanCosts = calculateTwentyYearSolarCosts({
+    annualSavings: values.annualSavings,
+    monthlyBill: values.monthlyBill,
+    totalSolarPayments:
+      downPaymentAmount + monthlyLoanPayment * loanTermYears * 12,
+  });
 
   return (
     <div
@@ -1389,8 +1418,10 @@ function FinancingTab({
           {financingCopy[financingMode]}
         </p>
         <p className="mt-3 text-xs leading-5 text-amber-100/78">
-          Financing values are illustrative only. Final pricing, incentives, APR,
-          and terms require installer and lender confirmation.
+          Financing values are illustrative only. Final pricing, eligibility,
+          incentives, APR, dealer fees, and terms require installer, lender, and
+          tax-professional confirmation. No federal residential credit is assumed
+          for new 2026 expenditures under current IRS guidance.
         </p>
         {financingMode === "loan" ? (
           <div className="mt-4 grid gap-3 rounded-[1rem] border border-white/10 bg-slate-950/35 p-3">
@@ -1448,8 +1479,8 @@ function FinancingTab({
                 }`}
               >
                 {netMonthly >= 0
-                  ? `Day 1 savings: ${formatMoney(netMonthly)} / mo`
-                  : `Breakeven gap: ${formatMoney(Math.abs(netMonthly))} / mo`}
+                  ? `Modeled energy savings less payment: ${formatMoney(netMonthly)} / mo`
+                  : `Modeled payment gap: ${formatMoney(Math.abs(netMonthly))} / mo`}
               </p>
             </div>
           </div>
@@ -1458,36 +1489,54 @@ function FinancingTab({
           {financingMode === "buy" ? (
             <>
               <MiniReadout label="System cost" source="illustrative" value={formatMoney(values.installedCost)} />
-              <MiniReadout label="Federal tax credit" source="illustrative" value={formatMoney(values.taxCredit)} />
-              <MiniReadout label="Net cost after credit" source="illustrative" value={formatMoney(values.netCostAfterCredit)} />
+              <MiniReadout label="Modeled federal credit" source="illustrative" value={formatMoney(values.taxCredit)} />
+              <MiniReadout label="Estimated net cost" source="illustrative" value={formatMoney(values.netCostAfterCredit)} />
               <MiniReadout label="Payback" source="modeled" value={`${values.paybackYears.toFixed(1)} years`} />
             </>
           ) : null}
           {financingMode === "lease" ? (
             <>
-              <MiniReadout label="$0 down" source="illustrative" value="$0" />
-              <MiniReadout label="Monthly lease estimate" source="illustrative" value={formatMoney(values.leaseMonthlyEstimate)} />
+              <MiniReadout label="Upfront payment" source="illustrative" value="Provider quote required" />
+              <MiniReadout label="Monthly lease or PPA price" source="illustrative" value="Provider quote required" />
               <MiniReadout label="Monthly bill savings" source="user-adjusted" value={formatMoney(values.monthlySavings)} />
             </>
           ) : null}
           <MiniReadout
-            label="Upfront after incentives"
+            label={financingMode === "buy" ? "Estimated cash cost" : "Selected down payment"}
             note={
               financingMode === "buy"
-                ? "Cash purchase estimate after incentive placeholder."
-                : "Assumes no upfront payment for this financing type."
+                ? "Uses current federal residential credit guidance; Arizona credit is shown separately and is not deducted here."
+                : financingMode === "loan"
+                  ? "No tax credit is automatically deducted from this loan principal."
+                  : "Lease and PPA terms require a provider quote."
             }
             source="illustrative"
-            value={formatMoney(values.upfrontAfterIncentives)}
+            value={
+              financingMode === "buy"
+                ? formatMoney(values.netCostAfterCredit)
+                : financingMode === "loan"
+                  ? formatMoney(downPaymentAmount)
+                  : "Provider quote required"
+            }
           />
-          <MiniReadout label="20-year savings" source="illustrative" value={formatMoney(values.totalSavings)} />
+          <MiniReadout
+            label="20-year net savings"
+            source="illustrative"
+            value={
+              financingMode === "buy"
+                ? formatMoney(values.twentyYearSavings)
+                : financingMode === "loan"
+                  ? formatMoney(loanCosts.totalSavings)
+                  : "Not modeled without provider terms"
+            }
+          />
         </div>
       </div>
       <div className="grid gap-3">
         <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
           <MiniReadout label="Cash net cost" source="illustrative" value={formatMoney(values.netCostAfterCredit)} />
           <MiniReadout label="Loan payment basis" source="illustrative" value={formatMoney(monthlyLoanPayment)} />
-          <MiniReadout label="Lease estimate" source="illustrative" value={formatMoney(values.leaseMonthlyEstimate)} />
+          <MiniReadout label="Lease / PPA pricing" source="illustrative" value="Provider quote required" />
         </div>
         <button
           type="button"
@@ -1498,7 +1547,14 @@ function FinancingTab({
         </button>
         {showDetails ? (
           <div className="grid gap-4">
-            <EstimateTable rows={values.financingRows} />
+            {financingMode === "lease" ? (
+              <p className="rounded-[1rem] border border-amber-200/15 bg-amber-300/8 p-4 text-sm leading-6 text-amber-50/80">
+                A lease or PPA cannot be modeled responsibly without a provider
+                price, escalator, term, buyout schedule, and production guarantee.
+              </p>
+            ) : (
+              <EstimateTable rows={values.financingRows} />
+            )}
             <AssumptionTable rows={values.financingAssumptions} />
           </div>
         ) : null}
@@ -1565,6 +1621,7 @@ function SendReportTab({
   );
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function NextStepsTab() {
   return (
     <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-center">
@@ -1593,6 +1650,7 @@ function NextStepsTab() {
   );
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function GuidedProgressStrip() {
   const steps = [
     "Roof found",
@@ -1761,6 +1819,7 @@ function SourceBadge({ source }: { source: MetricSource }) {
   );
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function KeyMetric({
   icon: Icon,
   label,
@@ -1959,14 +2018,10 @@ function buildDashboardValues(
   const recommendedKw = selectedPanelFit.systemKw;
   const annualSavings = selectedPanelFit.annualSavings;
   const monthlySavings = Math.round(selectedPanelFit.annualSavings / 12);
-  const azRatePerKwh = 0.13;
-  const energyOffsetPct = Math.min(
-    Math.round(((annualKwh * azRatePerKwh) / (monthlyBill * 12)) * 100),
-    100
-  );
+  const azRatePerKwh = ARIZONA_AVG_RATE_PER_KWH;
+  const energyOffsetPct = calculateEnergyOffsetPct(annualKwh, monthlyBill, azRatePerKwh);
   const billWithSolar = Math.max(monthlyBill - monthlySavings, 0);
   const recommendedPanelCount = findRecommendedPanelCount(analysis, monthlyBill, maxPanelCount);
-  const twentyYearSavings = Math.round(annualSavings * 20);
   const panelAreaSqFt =
     analysis.panelWidthMeters > 0 && analysis.panelHeightMeters > 0
       ? analysis.panelWidthMeters * analysis.panelHeightMeters * 10.7639
@@ -1981,32 +2036,48 @@ function buildDashboardValues(
   const carbonMetricTons = roundTo(metrics.co2OffsetLbs / 2205, 1);
   const carsRemoved = roundTo(carbonMetricTons / 4.6, 1);
   const treesEquivalent = roundTo(carbonMetricTons * 16.7, 1);
-  const buyIncentiveRate = 0.3;
+  const federalCreditRate = getFederalResidentialSolarCreditRate();
   const utilityEscalationRate = 0.03;
-  const loanPaymentMultiplier = 1.38;
+  const defaultLoanRate = 6.49;
+  const defaultLoanTermYears = 20;
   const batteryCost = selectedBattery?.cost ?? 0;
   const installedCost = selectedPanelFit.systemCost + batteryCost;
-  const taxCredit = Math.round(installedCost * 0.3);
+  const taxCredit = calculateFederalResidentialSolarCredit(installedCost);
   const netCostAfterCredit = Math.max(installedCost - taxCredit, 0);
   const paybackYears =
     annualSavings > 0 ? roundTo(netCostAfterCredit / annualSavings, 1) : 0;
-  const leaseMonthlyEstimate = Math.round((recommendedKw * 1000 * 8) / 12);
-  const totalCostWithoutSolar = Math.round(
-    Array.from({ length: 20 }).reduce<number>(
-      (sum, _, year) => sum + monthlyBill * 12 * (1 + utilityEscalationRate) ** year,
-      0
-    )
+  const totalCostWithoutSolar = calculateTwentyYearUtilityCost(
+    monthlyBill,
+    utilityEscalationRate
   );
   const upfrontAfterIncentives =
-    financingMode === "buy" ? Math.round(installedCost * (1 - buyIncentiveRate)) : 0;
+    financingMode === "buy" ? netCostAfterCredit : 0;
+  const baselineLoanPayment = calculateMonthlyLoanPayment(
+    installedCost,
+    defaultLoanRate,
+    defaultLoanTermYears
+  );
   const totalPayments =
     financingMode === "buy"
       ? upfrontAfterIncentives
       : financingMode === "lease"
-        ? Math.round(Math.max(totalCostWithoutSolar - twentyYearSavings * 0.55, 0))
-        : Math.round(installedCost * loanPaymentMultiplier);
-  const totalCostWithSolar = Math.max(totalCostWithoutSolar - twentyYearSavings, totalPayments);
-  const totalSavings = Math.max(totalCostWithoutSolar - totalCostWithSolar, 0);
+        ? 0
+        : baselineLoanPayment * defaultLoanTermYears * 12;
+  const {
+    totalCostWithSolar,
+    totalSavings,
+  } = calculateTwentyYearSolarCosts({
+    annualSavings,
+    monthlyBill,
+    totalSolarPayments: totalPayments,
+    utilityEscalationRate,
+  });
+  const cashTwentyYearSavings = calculateTwentyYearSolarCosts({
+    annualSavings,
+    monthlyBill,
+    totalSolarPayments: netCostAfterCredit,
+    utilityEscalationRate,
+  }).totalSavings;
 
   return {
     advisor,
@@ -2030,14 +2101,20 @@ function buildDashboardValues(
         }`,
       },
       { label: "Utility escalation", value: `${Math.round(utilityEscalationRate * 100)}% / yr` },
-      { label: "Buy incentive placeholder", value: `${Math.round(buyIncentiveRate * 100)}%` },
-      { label: "Loan payment multiplier", value: `${loanPaymentMultiplier.toFixed(2)}x installed cost` },
+      {
+        label: "Modeled federal residential credit",
+        value:
+          federalCreditRate > 0
+            ? `${Math.round(federalCreditRate * 100)}% (eligibility not guaranteed)`
+            : "0% for new 2026 expenditures under current IRS guidance",
+      },
+      { label: "Baseline loan scenario", value: `${defaultLoanRate.toFixed(2)}% APR / ${defaultLoanTermYears} years, before fees` },
+      { label: "Remaining utility charges", value: "Not fully modeled; fixed and demand charges may remain" },
     ],
     installationSqFt,
     energyOffsetPct,
     batteryCost,
     installedCost,
-    leaseMonthlyEstimate,
     maxPanelCount,
     monthlyBill,
     monthlySavings,
@@ -2060,7 +2137,7 @@ function buildDashboardValues(
     sunlightHours: analysis.annualSunlightHours,
     totalSavings,
     treesEquivalent,
-    twentyYearSavings,
+    twentyYearSavings: cashTwentyYearSavings,
     taxCredit,
     upfrontAfterIncentives,
     usableAreaSqFt,

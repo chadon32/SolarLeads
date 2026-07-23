@@ -1,10 +1,11 @@
 "use client";
 
+import Link from "next/link";
+
 import {
   ArrowRight,
   ShieldCheck,
   Sparkles,
-  Star,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AddressSearch } from "@/components/address-search";
@@ -24,6 +25,7 @@ import {
   getBatteryById,
 } from "@/lib/batteries";
 import type { RoofAnalysis } from "@/lib/roof-analysis";
+import type { RoofAnalysisProof } from "@/lib/roof-analysis-proof";
 import { buildSolarMetrics } from "@/lib/solar-metrics";
 import {
   DEFAULT_SOLAR_PANEL_ID,
@@ -44,7 +46,7 @@ const featureCards = [
   },
   {
     title: "Roof-aware placement",
-    copy: "See exactly where panels go on your roof before anyone calls, visits, or pressures you.",
+    copy: "Preview where panels may fit before deciding whether to request installer verification.",
   },
   {
     title: "Fast homeowner estimate",
@@ -52,26 +54,9 @@ const featureCards = [
   },
 ] as const;
 
-const testimonials = [
-  {
-    name: "Mike T., Chandler AZ",
-    quote:
-      "I saw exactly where panels would go on my roof before anyone knocked on my door. Made the whole process feel way less pushy.",
-  },
-  {
-    name: "Sandra R., Scottsdale AZ",
-    quote:
-      "The estimate was within $200 of what we actually got quoted. Really impressed.",
-  },
-  {
-    name: "James K., Mesa AZ",
-    quote:
-      "No spam after I submitted. Got my report, reviewed it, and called them when I was ready.",
-  },
-] as const;
-
 type HomeClientProps = {
   initialAddress?: string;
+  nativeApp?: boolean;
 };
 
 type SavedProgress = {
@@ -84,16 +69,16 @@ type SavedProgress = {
   systemKw?: number;
 };
 
-type NeighborhoodData = {
-  rate: number;
-  solarHomes: number;
-  totalEstimateCount?: number;
-  zip: string;
-};
-
-export function HomeClient({ initialAddress = "" }: HomeClientProps) {
+export function HomeClient({
+  initialAddress = "",
+  nativeApp = false,
+}: HomeClientProps) {
   const [selectedAddress, setSelectedAddress] = useState(initialAddress);
   const [solarData, setSolarData] = useState<RoofAnalysis | null>(null);
+  const [signedRoofAnalysis, setSignedRoofAnalysis] =
+    useState<RoofAnalysis | null>(null);
+  const [roofAnalysisProof, setRoofAnalysisProof] =
+    useState<RoofAnalysisProof | null>(null);
   const [activePanelCount, setActivePanelCount] = useState(0);
   const [monthlyBill, setMonthlyBill] = useState(200);
   const [selectedPanelId, setSelectedPanelId] = useState(DEFAULT_SOLAR_PANEL_ID);
@@ -105,8 +90,6 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
   const [shareStatus, setShareStatus] = useState("");
   const [savedProgress, setSavedProgress] = useState<SavedProgress | null>(null);
   const [showReturnBanner, setShowReturnBanner] = useState(false);
-  const [neighborhoodData, setNeighborhoodData] =
-    useState<NeighborhoodData | null>(null);
   const [totalEstimateCount, setTotalEstimateCount] = useState<number | null>(
     null
   );
@@ -175,35 +158,6 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
   }, [initialAddress]);
 
   useEffect(() => {
-    const zip = extractArizonaZip(selectedAddress);
-
-    if (!zip) {
-      const frame = window.requestAnimationFrame(() => setNeighborhoodData(null));
-      return () => window.cancelAnimationFrame(frame);
-    }
-
-    let cancelled = false;
-
-    void fetch(`/api/neighborhood?zip=${encodeURIComponent(zip)}`, {
-      cache: "no-store",
-    })
-      .then((response) => response.json())
-      .then((payload: NeighborhoodData) => {
-        if (!cancelled && payload?.zip) {
-          setNeighborhoodData(payload);
-          if (typeof payload.totalEstimateCount === "number") {
-            setTotalEstimateCount(payload.totalEstimateCount);
-          }
-        }
-      })
-      .catch(() => undefined);
-
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedAddress]);
-
-  useEffect(() => {
     if (!solarData?.validSite) {
       return;
     }
@@ -227,15 +181,17 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
       return;
     }
 
-    const maxPanelCount = buildSolarMetrics(solarData).maxPanelCount;
+    const recommendedPanelCount = buildSolarMetrics(solarData, {
+      monthlyBill,
+    }).panelCount;
     const frame = window.requestAnimationFrame(() => {
-      if (maxPanelCount > 0) {
-        setActivePanelCount(maxPanelCount);
+      if (recommendedPanelCount > 0) {
+        setActivePanelCount(recommendedPanelCount);
       }
     });
 
     return () => window.cancelAnimationFrame(frame);
-  }, [activePanelCount, solarData]);
+  }, [activePanelCount, monthlyBill, solarData]);
 
   useEffect(() => {
     if (!shareStatus) {
@@ -296,7 +252,7 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
       monthlyBill,
       selectedPanelCount: activePanelCount || undefined,
     });
-    const livePanelCount = activePanelCount || baseMetrics.panelCount;
+    const livePanelCount = baseMetrics.panelCount;
     const selectedFit = getPanelFit(selectedPanel, {
       roofData: solarData,
       monthlyBill,
@@ -345,6 +301,8 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
     setSelectedAddress(savedProgress.address);
     setSelectedLocation(null);
     setSolarData(null);
+    setSignedRoofAnalysis(null);
+    setRoofAnalysisProof(null);
     setMonthlyBill(savedProgress.monthlyBill || 200);
     setActivePanelCount(savedProgress.panelCount || 0);
     setSelectedPanelId(savedProgress.selectedPanelId || DEFAULT_SOLAR_PANEL_ID);
@@ -389,6 +347,22 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
     });
   };
 
+  const handleNewAddress = () => {
+    setSelectedAddress("");
+    setSolarData(null);
+    setSignedRoofAnalysis(null);
+    setRoofAnalysisProof(null);
+    setActivePanelCount(0);
+    setShareStatus("");
+    setSelectedLocation(null);
+    setReportTab("overview");
+    window.requestAnimationFrame(() => {
+      document
+        .getElementById("address-estimate")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  };
+
   const showAnalysis = Boolean(selectedAddress);
   const reportCtaHref = hasValidAnalysis
     ? "#report-dashboard"
@@ -396,40 +370,52 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
       ? "#solar-workspace"
       : "#address-estimate";
   return (
-    <main className="relative isolate min-h-screen overflow-hidden bg-black text-white">
-      <CinematicVideoBackground />
-      <div className="pointer-events-none fixed inset-0 z-[1] bg-[radial-gradient(circle_at_22%_20%,rgba(103,232,249,0.16),transparent_34%),linear-gradient(90deg,rgba(0,0,0,0.78)_0%,rgba(0,0,0,0.34)_45%,rgba(0,0,0,0.72)_100%)]" />
-      <div className="pointer-events-none fixed inset-x-0 bottom-0 z-[1] h-1/2 bg-gradient-to-t from-black via-black/58 to-transparent" />
-      <ProgressNav
-        activeSection={activeProgressSection}
-        show={showProgressNav && hasValidAnalysis}
-        onNavigate={handleProgressNavClick}
-      />
-      {showReturnBanner && savedProgress ? (
+    <main
+      className={`relative isolate min-h-screen overflow-x-hidden bg-black text-white ${
+        nativeApp ? "native-app-estimate" : ""
+      }`}
+      data-native-app={nativeApp ? "ios" : undefined}
+    >
+      {nativeApp ? null : <CinematicVideoBackground />}
+      {nativeApp ? null : (
+        <>
+          <div className="pointer-events-none fixed inset-0 z-[1] bg-[radial-gradient(circle_at_22%_20%,rgba(103,232,249,0.16),transparent_34%),linear-gradient(90deg,rgba(0,0,0,0.78)_0%,rgba(0,0,0,0.34)_45%,rgba(0,0,0,0.72)_100%)]" />
+          <div className="pointer-events-none fixed inset-x-0 bottom-0 z-[1] h-1/2 bg-gradient-to-t from-black via-black/58 to-transparent" />
+        </>
+      )}
+      {nativeApp ? null : (
+        <ProgressNav
+          activeSection={activeProgressSection}
+          show={showProgressNav && hasValidAnalysis}
+          onNavigate={handleProgressNavClick}
+        />
+      )}
+      {!nativeApp && showReturnBanner && savedProgress ? (
         <ReturnBanner
           address={savedProgress.address}
           onDismiss={dismissReturnBanner}
           onRestore={restoreProgress}
         />
       ) : null}
-      {shareStatus ? (
+      {!nativeApp && shareStatus ? (
         <div className="fixed right-5 top-20 z-[60] hidden rounded-full border border-emerald-200/20 bg-emerald-400/18 px-4 py-2 text-sm font-semibold text-emerald-50 shadow-[0_18px_45px_rgba(6,95,70,0.28)] backdrop-blur-xl md:block">
           {shareStatus}
         </div>
       ) : null}
 
+      {!nativeApp || !showAnalysis ? (
       <section
         className={`relative z-10 mx-auto flex w-full max-w-7xl flex-col px-5 pt-5 sm:px-7 md:px-10 lg:px-12 ${
           heroCompact ? "pb-4" : "pb-10"
         }`}
       >
         <nav className="liquid-glass relative z-20 mx-auto flex w-full max-w-6xl items-center justify-between gap-4 rounded-full px-4 py-3 sm:px-6 sm:py-4">
-          <a href="#" className="flex min-w-0 items-center gap-3">
-            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-cyan-200/14 text-cyan-100 shadow-[0_0_34px_rgba(103,232,249,0.22)]">
+          <a href="#" className="flex min-h-11 min-w-0 items-center gap-0 sm:gap-3">
+            <span className="hidden h-9 w-9 shrink-0 place-items-center rounded-full bg-cyan-200/14 text-cyan-100 shadow-[0_0_34px_rgba(103,232,249,0.22)] sm:grid">
               <Sparkles className="h-4 w-4" aria-hidden="true" />
             </span>
             <span className="min-w-0">
-              <span className="block truncate text-[0.68rem] font-semibold uppercase tracking-[0.34em] text-white">
+              <span className="block truncate text-[0.64rem] font-semibold uppercase tracking-[0.18em] text-white sm:text-[0.68rem] sm:tracking-[0.34em]">
                 {APP_NAME}
               </span>
               <span className="hidden text-xs text-white/52 sm:block">
@@ -442,8 +428,8 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
             <a className="transition hover:text-white" href="#how-it-works">
               How It Works
             </a>
-            <a className="transition hover:text-white" href="#reviews">
-              Reviews
+            <a className="transition hover:text-white" href="#faq">
+              FAQ
             </a>
             <a className="transition hover:text-white" href="#solar-workspace">
               Analysis
@@ -456,13 +442,13 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
                 Menu
               </summary>
               <div className="absolute right-0 top-14 z-30 grid min-w-48 gap-1 rounded-[1rem] border border-white/10 bg-slate-950/92 p-2 text-left text-sm text-white shadow-[0_18px_55px_rgba(0,0,0,0.4)] backdrop-blur-xl">
-                <a className="rounded-[0.8rem] px-3 py-2 hover:bg-white/[0.06]" href="#how-it-works">
+                <a className="flex min-h-11 items-center rounded-[0.8rem] px-3 py-2 hover:bg-white/[0.06]" href="#how-it-works">
                   How It Works
                 </a>
-                <a className="rounded-[0.8rem] px-3 py-2 hover:bg-white/[0.06]" href="#reviews">
-                  Reviews
+                <a className="flex min-h-11 items-center rounded-[0.8rem] px-3 py-2 hover:bg-white/[0.06]" href="#faq">
+                  FAQ
                 </a>
-                <a className="rounded-[0.8rem] px-3 py-2 hover:bg-white/[0.06]" href="#solar-workspace">
+                <a className="flex min-h-11 items-center rounded-[0.8rem] px-3 py-2 hover:bg-white/[0.06]" href="#solar-workspace">
                   Analysis
                 </a>
               </div>
@@ -524,23 +510,23 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
               <>
             <div className="liquid-glass mx-auto inline-flex items-center gap-3 rounded-full px-4 py-2 text-sm font-medium text-white/78">
               <span className="h-2 w-2 rounded-full bg-cyan-300 shadow-[0_0_20px_rgba(103,232,249,0.85)]" />
-              Arizona residential analysis
+              Arizona · real satellite roof scan
             </div>
 
             <h1
               className="mt-6 max-w-5xl text-5xl leading-[0.88] tracking-[-0.05em] text-white drop-shadow-[0_14px_50px_rgba(0,0,0,0.48)] md:text-6xl lg:text-7xl"
-              style={{ fontFamily: "'Instrument Serif', serif" }}
+              style={{ fontFamily: "var(--font-editorial), serif" }}
             >
-              Your Arizona roof could save{" "}
+              See your roof&rsquo;s solar potential{" "}
               <span className="block italic text-white/90">
-                $1,400-$2,800/year with solar.
+                in 3D.
               </span>
             </h1>
 
             <p className="mx-auto mt-5 max-w-2xl text-base leading-7 text-white/68 sm:text-lg">
-              Enter your address to see real satellite roof imagery, panel
-              placement, and your personalized savings estimate. No obligation.
-              Takes 60 seconds.
+              Enter your address and watch your real Arizona roof render in 3D
+              &mdash; panels placed, sunlight mapped, and your savings estimated.
+              Free, about 60 seconds, no sales call.
             </p>
               </>
             )}
@@ -559,12 +545,12 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
                   const displayAddress = formatDisplayAddress(property.address);
                   setSelectedAddress(displayAddress);
                   setSolarData(null);
+                  setSignedRoofAnalysis(null);
+                  setRoofAnalysisProof(null);
                   setActivePanelCount(0);
                   setShareStatus("");
                   if (displayAddress) {
-                    trackEvent("address_selected", {
-                      address: displayAddress,
-                    });
+                      trackEvent("address_selected");
                   }
                   setSelectedLocation(
                     displayAddress &&
@@ -585,18 +571,8 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
                   <span className="font-semibold">
                     {formatNumber(totalEstimateCount)}
                   </span>{" "}
-                  Arizona homeowners who have gotten their free estimate.
-                </div>
-              ) : null}
-              {neighborhoodData ? (
-                <div className="mt-3 rounded-[1.15rem] border border-emerald-300/12 bg-emerald-300/[0.055] px-4 py-3 text-sm text-emerald-50">
-                  <span className="mr-2 rounded-full border border-emerald-200/20 bg-emerald-200/10 px-2 py-0.5 text-[0.58rem] font-bold uppercase tracking-[0.16em] text-emerald-100">
-                    Estimated
-                  </span>
-                  <span className="font-semibold">
-                    <AnimatedCount value={neighborhoodData.solarHomes} /> nearby homes
-                  </span>{" "}
-                  may already have solar based on local adoption data.
+                  {totalEstimateCount === 1 ? "solar report" : "solar reports"} requested
+                  through Solartelligence.
                 </div>
               ) : null}
               <label className="mt-4 block rounded-[1.35rem] border border-white/10 bg-black/18 px-4 py-3 text-left">
@@ -613,7 +589,7 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
                       setMonthlyBill(Math.max(1, Number(event.target.value) || 1))
                     }
                     placeholder="$ 200"
-                    className="min-w-0 flex-1 bg-transparent text-lg font-semibold text-white outline-none placeholder:text-white/35"
+                    className="min-h-11 min-w-0 flex-1 bg-transparent text-lg font-semibold text-white outline-none placeholder:text-white/35"
                     inputMode="decimal"
                   />
                 </span>
@@ -649,11 +625,11 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
             </div>
 
             <p className="mt-3 text-center text-xs font-semibold text-amber-200/90 sm:text-sm">
-              Federal 30% solar tax credit - check your savings
+              Check current Arizona incentives and modeled solar savings
             </p>
 
             <div className="mt-5 flex flex-wrap justify-center gap-2 text-[0.68rem] font-semibold uppercase tracking-[0.28em] text-white/70">
-              {["No obligation", "Estimated ranges", "Arizona only"].map((pill) => (
+              {["Free", "~60 seconds", "No sales call", "Arizona only"].map((pill) => (
                 <span key={pill} className="liquid-glass rounded-full px-3 py-2">
                   {pill}
                 </span>
@@ -666,12 +642,18 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
           </div>
         </div>
       </section>
+      ) : null}
 
       {showAnalysis ? (
         <section
           id="solar-workspace"
-          className="analysis-section relative z-10 mx-auto w-full max-w-7xl px-5 pb-8 sm:px-7 md:px-10 lg:px-12"
+          className={`analysis-section relative z-10 mx-auto w-full min-w-0 max-w-7xl overflow-x-clip ${
+            nativeApp
+              ? "px-2 pb-5 pt-2"
+              : "px-5 pb-8 sm:px-7 md:px-10 lg:px-12"
+          }`}
         >
+          {nativeApp ? null : (
           <div className="mb-4 flex flex-col justify-between gap-4 rounded-[1.4rem] border border-white/10 bg-slate-950/62 px-4 py-4 shadow-[0_16px_50px_rgba(2,8,20,0.3)] backdrop-blur-xl sm:px-5 sm:flex-row sm:items-end">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-100/82">
@@ -679,7 +661,7 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
               </p>
               <h2
                 className="mt-2 text-2xl leading-none tracking-[-0.035em] text-white md:text-4xl"
-                style={{ fontFamily: "'Instrument Serif', serif" }}
+                style={{ fontFamily: "var(--font-editorial), serif" }}
               >
                 Roof analysis workspace
               </h2>
@@ -692,8 +674,8 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
                 </p>
               ) : null}
             </div>
-            {hasValidAnalysis ? (
-              <div className="flex flex-col gap-2 sm:flex-row">
+            <div className="flex flex-col gap-2 sm:flex-row">
+              {hasValidAnalysis ? (
                 <button
                   type="button"
                   onClick={() => {
@@ -714,13 +696,27 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
                 >
                   {shareStatus || "Share estimate"}
                 </button>
-              </div>
-            ) : null}
+              ) : null}
+              <button
+                type="button"
+                onClick={handleNewAddress}
+                className="inline-flex min-h-11 items-center justify-center rounded-full border border-white/12 bg-white/[0.06] px-5 py-3 text-sm font-semibold text-white transition hover:-translate-y-0.5 hover:bg-white/[0.1]"
+              >
+                Try another address
+              </button>
+            </div>
           </div>
+          )}
 
-          <div className="grid gap-4 lg:grid-cols-12">
-            <div id="rooftop-analysis" className={`${hasValidAnalysis ? "lg:col-span-7" : "lg:col-span-12"} scroll-mt-24`}>
-              <div className="overflow-hidden rounded-[1.5rem] border border-cyan-200/14 bg-slate-950/78 p-2 shadow-[0_22px_75px_rgba(0,0,0,0.38)] backdrop-blur-xl sm:p-3">
+          <div className="grid w-full min-w-0 max-w-full grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-12">
+            <div id="rooftop-analysis" className={`${hasValidAnalysis ? "lg:col-span-7" : "lg:col-span-12"} w-full min-w-0 max-w-full scroll-mt-24`}>
+              <div
+                className={`min-w-0 overflow-hidden border border-cyan-200/14 bg-slate-950/78 shadow-[0_22px_75px_rgba(0,0,0,0.38)] backdrop-blur-xl ${
+                  nativeApp
+                    ? "rounded-[1.15rem] p-1"
+                    : "rounded-[1.5rem] p-2 sm:p-3"
+                }`}
+              >
                 <SolarAnalysis
                   key={selectedAddress}
                   address={selectedAddress}
@@ -728,9 +724,12 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
                   location={selectedLocation}
                   monthlyBill={monthlyBill}
                   onAnalysisChange={setSolarData}
+                  onAnalysisProofChange={setRoofAnalysisProof}
+                  onSignedAnalysisChange={setSignedRoofAnalysis}
                   activePanelCount={activePanelCount || null}
                   onActivePanelCountChange={setActivePanelCount}
                   selectedPanel={selectedPanel}
+                  onSelectedPanelIdChange={setSelectedPanelId}
                 />
               </div>
             </div>
@@ -756,6 +755,8 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
                   <LeadCaptureForm
                     initialAddress={selectedAddress}
                     analysis={solarData}
+                    analysisProof={roofAnalysisProof}
+                    signedRoofAnalysis={signedRoofAnalysis}
                     activePanelCount={activePanelCount}
                     initialMonthlyBill={monthlyBill}
                     lat={selectedLocation?.lat}
@@ -773,14 +774,24 @@ export function HomeClient({ initialAddress = "" }: HomeClientProps) {
         </section>
       ) : null}
 
-      <OptionalTrustSections />
+      {nativeApp ? null : <OptionalTrustSections />}
 
-      <footer className="relative z-10 mx-auto flex w-full max-w-7xl items-center justify-center px-5 pb-10 text-center text-sm text-white/56 sm:px-7 md:px-10 lg:px-12">
-        <div className="liquid-glass inline-flex items-center gap-3 rounded-full px-5 py-3">
+      {nativeApp ? null : (
+      <footer className="relative z-10 mx-auto flex w-full max-w-7xl flex-col items-center justify-center gap-3 px-5 pb-10 text-center text-sm text-white/64 sm:px-7 md:px-10 lg:px-12">
+        <div className="liquid-glass inline-flex max-w-3xl items-center gap-3 rounded-full px-5 py-3">
           <ShieldCheck className="h-4 w-4 text-cyan-100" aria-hidden="true" />
           <span>{APP_PRIVACY_COPY}</span>
         </div>
+        <nav aria-label="Legal information" className="flex items-center gap-4 text-xs">
+          <Link className="inline-flex min-h-11 items-center underline-offset-4 hover:underline" href="/privacy">
+            Privacy notice
+          </Link>
+          <Link className="inline-flex min-h-11 items-center underline-offset-4 hover:underline" href="/terms">
+            Estimate terms
+          </Link>
+        </nav>
       </footer>
+      )}
     </main>
   );
 }
@@ -836,6 +847,10 @@ function CinematicVideoBackground() {
   }, []);
 
   const handleLoadedData = () => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      return;
+    }
+
     void videoRef.current?.play().catch(() => undefined);
   };
 
@@ -869,6 +884,11 @@ function CinematicVideoBackground() {
       return;
     }
 
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      video.pause();
+      return;
+    }
+
     cancelFade();
     video.style.opacity = "0";
 
@@ -889,9 +909,8 @@ function CinematicVideoBackground() {
         ref={videoRef}
         src={VIDEO_SRC}
         muted
-        autoPlay
         playsInline
-        preload="auto"
+        preload="metadata"
         onLoadedData={handleLoadedData}
         onPlaying={handlePlaying}
         onTimeUpdate={handleTimeUpdate}
@@ -955,7 +974,7 @@ function ReturnBanner({
   onRestore: () => void;
 }) {
   return (
-    <div className="print-static-ui fixed inset-x-4 bottom-4 z-[70] mx-auto flex max-w-5xl flex-col gap-3 rounded-[1.3rem] border border-cyan-200/18 bg-slate-950/92 px-4 py-3 text-sm text-white shadow-[0_24px_80px_rgba(0,0,0,0.42)] backdrop-blur-xl sm:flex-row sm:items-center sm:justify-between">
+    <div className="print-static-ui relative z-[70] mx-4 mt-4 flex max-w-5xl flex-col gap-3 rounded-[1.3rem] border border-cyan-200/18 bg-slate-950/92 px-4 py-3 text-sm text-white shadow-[0_24px_80px_rgba(0,0,0,0.42)] backdrop-blur-xl sm:fixed sm:inset-x-4 sm:bottom-4 sm:mx-auto sm:mt-0 sm:flex-row sm:items-center sm:justify-between">
       <p className="leading-6 text-white/72">
         Welcome back. Your estimate for{" "}
         <span className="font-semibold text-white">
@@ -967,14 +986,14 @@ function ReturnBanner({
         <button
           type="button"
           onClick={onRestore}
-          className="rounded-full bg-cyan-200 px-4 py-2 text-xs font-semibold text-slate-950 transition hover:bg-white"
+          className="min-h-11 rounded-full bg-cyan-200 px-4 py-2 text-xs font-semibold text-slate-950 transition hover:bg-white"
         >
           Continue my estimate
         </button>
         <button
           type="button"
           onClick={onDismiss}
-          className="rounded-full border border-white/10 bg-white/[0.055] px-4 py-2 text-xs font-semibold text-white/72 transition hover:bg-white/[0.1] hover:text-white"
+          className="min-h-11 rounded-full border border-white/10 bg-white/[0.055] px-4 py-2 text-xs font-semibold text-white/72 transition hover:bg-white/[0.1] hover:text-white"
         >
           Start fresh
         </button>
@@ -983,6 +1002,7 @@ function ReturnBanner({
   );
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function SectionIntro({
   eyebrow,
   title,
@@ -1008,7 +1028,7 @@ function SectionIntro({
       </span>
       <h2
         className="mt-4 text-3xl leading-[0.98] tracking-[-0.04em] text-white md:text-5xl"
-        style={{ fontFamily: "'Instrument Serif', serif" }}
+        style={{ fontFamily: "var(--font-editorial), serif" }}
       >
         {displayTitle}
       </h2>
@@ -1039,22 +1059,6 @@ function OptionalTrustSections() {
           </div>
         </div>
 
-        <div id="reviews" className="pt-5">
-          <div className="rounded-[1rem] px-2 py-3 text-left sm:px-3">
-            <span className="block text-xs font-semibold uppercase tracking-[0.28em] text-cyan-100/82">
-              Homeowner reviews
-            </span>
-            <span className="mt-2 block text-xl font-semibold text-white">
-              What Arizona homeowners are saying
-            </span>
-          </div>
-          <div className="grid gap-3 px-2 pt-2 sm:px-3 lg:grid-cols-3">
-            {testimonials.map((item) => (
-              <ReviewCard key={item.name} name={item.name} quote={item.quote} />
-            ))}
-          </div>
-        </div>
-
         <TrustIndicatorRow />
 
         <FaqSection />
@@ -1067,7 +1071,7 @@ const faqItems = [
   {
     question: "Will this damage my roof?",
     answer:
-      "No. Solar panels are mounted above your existing roof surface with non-invasive racking. Most installations take 1-2 days and include a roof inspection beforehand.",
+      "A qualified installer should inspect the roof and select an attachment system appropriate for its condition and construction. Final mounting, flashing, and warranty details belong in the installer proposal.",
   },
   {
     question: "What if I sell my house?",
@@ -1077,17 +1081,17 @@ const faqItems = [
   {
     question: "Is this a sales call?",
     answer:
-      "No. Your estimate is generated automatically. You only hear from a solar advisor if you request it by sending your full report.",
+      "No installer contact is required to receive your report. You can separately opt in to installer follow-up when submitting the report form.",
   },
   {
     question: "How accurate is the estimate?",
     answer:
-      "Roof geometry, panel placement, and sunlight data come from Google Solar API using satellite imagery. Savings are modeled from your monthly bill and Arizona utility assumptions. Final pricing requires installer confirmation.",
+      "When available, roof geometry and sunlight inputs come from Google Solar data and satellite imagery. Savings are modeled from your monthly bill and stated assumptions. Final layout, pricing, incentives, and savings require installer confirmation.",
   },
   {
     question: "Do I need good credit?",
     answer:
-      "Many Arizona homeowners qualify for $0-down solar loans. Cash and lease options may also be available. Your report compares common options.",
+      "Financing eligibility and terms vary by lender and homeowner. The report can illustrate common cash and loan scenarios, but it does not represent approval or a financing offer.",
   },
   {
     question: "How long does installation take?",
@@ -1099,23 +1103,26 @@ const faqItems = [
 function TrustIndicatorRow() {
   return (
     <div className="mx-2 mt-5 flex flex-wrap items-center justify-center gap-3 rounded-[1rem] border border-white/8 bg-white/[0.04] px-4 py-3 text-xs font-semibold text-white/62 sm:mx-3">
-      <span>Powered by</span>
+      <span>Roof data via</span>
       <span className="rounded-full border border-cyan-200/18 bg-cyan-300/10 px-3 py-1 text-cyan-100">
         Google Solar API
       </span>
       <span className="hidden text-white/25 sm:inline">•</span>
       <span>SSL secured</span>
       <span className="hidden text-white/25 sm:inline">•</span>
-      <span>No spam, ever</span>
+      <span>Installer contact is optional</span>
       <span className="hidden text-white/25 sm:inline">•</span>
-      <span>Arizona licensed installers</span>
+      <span>Preliminary estimates</span>
     </div>
   );
 }
 
 function FaqSection() {
   return (
-    <div className="mx-2 mt-5 rounded-[1.15rem] border border-white/8 bg-slate-950/40 p-3 sm:mx-3">
+    <div
+      id="faq"
+      className="mx-2 mt-5 scroll-mt-24 rounded-[1.15rem] border border-white/8 bg-slate-950/40 p-3 sm:mx-3"
+    >
       <div className="px-2 py-2">
         <p className="text-xs font-semibold uppercase tracking-[0.28em] text-cyan-100/82">
           Common questions
@@ -1159,39 +1166,10 @@ function formatMoney(value: number) {
   }).format(value);
 }
 
-function AnimatedCount({ value }: { value: number }) {
-  const [displayValue, setDisplayValue] = useState(0);
-
-  useEffect(() => {
-    const durationMs = 1000;
-    const startedAt = window.performance.now();
-    let frameId = 0;
-
-    const tick = (time: number) => {
-      const progress = Math.min((time - startedAt) / durationMs, 1);
-      setDisplayValue(Math.round(value * progress));
-
-      if (progress < 1) {
-        frameId = window.requestAnimationFrame(tick);
-      }
-    };
-
-    frameId = window.requestAnimationFrame(tick);
-
-    return () => window.cancelAnimationFrame(frameId);
-  }, [value]);
-
-  return <>{formatNumber(displayValue)}</>;
-}
-
 function formatNumber(value: number) {
   return new Intl.NumberFormat("en-US", {
     maximumFractionDigits: 0,
   }).format(value);
-}
-
-function extractArizonaZip(address: string) {
-  return address.match(/\bAZ\s+(\d{5})(?:-\d{4})?\b/i)?.[1] ?? "";
 }
 
 function FeatureCard({ title, copy }: { title: string; copy: string }) {
@@ -1200,27 +1178,6 @@ function FeatureCard({ title, copy }: { title: string; copy: string }) {
       <div className="mb-5 h-px w-20 bg-gradient-to-r from-cyan-200/80 to-transparent" />
       <h3 className="text-xl font-semibold tracking-tight text-white">{title}</h3>
       <p className="mt-3 text-sm leading-6 text-white/62">{copy}</p>
-    </article>
-  );
-}
-
-function ReviewCard({ name, quote }: { name: string; quote: string }) {
-  return (
-    <article className="liquid-glass h-full rounded-[1.25rem] p-4 shadow-[0_18px_60px_rgba(0,0,0,0.28)]">
-      <div className="flex gap-1 text-amber-200">
-        {Array.from({ length: 5 }).map((_, index) => (
-          <Star
-            key={`${name}-${index}`}
-            className="h-4 w-4 fill-current"
-            aria-hidden="true"
-          />
-        ))}
-      </div>
-      <p className="mt-5 text-sm leading-7 text-white/72">&ldquo;{quote}&rdquo;</p>
-      <p className="mt-5 text-sm font-semibold text-white">{name}</p>
-      <p className="mt-2 text-[0.62rem] font-semibold uppercase tracking-[0.22em] text-cyan-100/66">
-        Verified Arizona homeowner
-      </p>
     </article>
   );
 }

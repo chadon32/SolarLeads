@@ -25,6 +25,7 @@ type ThankYouPayload = {
   batteryCost?: number;
   batteryModel?: string;
   email?: string;
+  emailDeliveryStatus?: "sent" | "delayed";
   firstName?: string;
   panelBrand?: string;
   panelCount?: number;
@@ -48,12 +49,13 @@ const fallbackPayload: Required<Omit<ThankYouPayload, "reportUrl">> & {
   batteryCost: 0,
   batteryModel: "",
   email: "",
+  emailDeliveryStatus: "delayed",
   firstName: "there",
   panelBrand: "",
   panelCount: 0,
   panelModel: "",
   paybackYears: 0,
-  preferredContactMethod: "Phone",
+  preferredContactMethod: "",
   quoteRequested: false,
   referralCode: null,
   systemKw: 0,
@@ -69,6 +71,7 @@ export function ThankYouClient() {
     try {
       const stored =
         window.sessionStorage.getItem("solarLeadData") ||
+        window.sessionStorage.getItem("solartelligenceThankYou") ||
         window.sessionStorage.getItem("arizonaSolarThankYou");
       const parsed = stored ? (JSON.parse(stored) as ThankYouPayload) : {};
       frame = window.requestAnimationFrame(() => setPayload(parsed));
@@ -91,7 +94,9 @@ export function ThankYouClient() {
       panelBrand: source.panelBrand || "",
       panelModel: source.panelModel || "",
       paybackYears: safeNumber(source.paybackYears),
-      preferredContactMethod: source.preferredContactMethod || "Phone",
+      emailDeliveryStatus:
+        source.emailDeliveryStatus === "sent" ? "sent" : "delayed",
+      preferredContactMethod: source.preferredContactMethod || "Not requested",
       quoteRequested: Boolean(source.quoteRequested),
       referralCode: source.referralCode || null,
       systemKw: safeNumber(source.systemKw),
@@ -104,12 +109,12 @@ export function ThankYouClient() {
       : "";
   const whatsappUrl = referralUrl
     ? `https://wa.me/?text=${encodeURIComponent(
-        `I just got my free solar estimate - my roof could save $${summary.annualSavings}/yr. Get yours: ${referralUrl}`
+        `I used Solartelligence to check my roof's solar potential. Check yours: ${referralUrl}`
       )}`
     : "";
   const smsUrl = referralUrl
     ? `sms:?body=${encodeURIComponent(
-        `Free Arizona solar estimate tool: ${referralUrl}`
+        `Check your home's solar potential with Solartelligence: ${referralUrl}`
       )}`
     : "";
 
@@ -135,18 +140,22 @@ export function ThankYouClient() {
               </h1>
               <p className="mt-4 max-w-2xl text-base leading-7 text-slate-300">
                 {summary.quoteRequested
-                  ? "Your request was received. A solar specialist can follow up with your report details."
-                  : `We emailed your personalized ${APP_NAME} proposal and saved the roof model summary for your next step.`}
+                  ? "Your report is available and your optional installer follow-up request was recorded."
+                  : summary.emailDeliveryStatus === "sent"
+                    ? `We emailed your personalized ${APP_NAME} report. No installer follow-up was requested.`
+                    : `Your personalized ${APP_NAME} report is available now. Email delivery may be delayed, and no installer follow-up was requested.`}
               </p>
               <p className="mt-4 rounded-[1rem] border border-white/8 bg-slate-950/28 px-4 py-3 text-sm leading-6 text-slate-300">
                 {APP_PRIVACY_COPY}
               </p>
-              <p className="mt-2 text-xs leading-6 text-slate-500">
-                {APP_LEAD_DISCLOSURE_COPY}
-              </p>
+              {summary.quoteRequested ? (
+                <p className="mt-2 text-xs leading-6 text-slate-500">
+                  {APP_LEAD_DISCLOSURE_COPY}
+                </p>
+              ) : null}
               {summary.utilityBillUploaded ? (
                 <p className="mt-4 inline-flex rounded-full border border-emerald-300/18 bg-emerald-300/10 px-4 py-2 text-sm font-semibold text-emerald-100">
-                  Your utility bill was received. We will use it to prepare a more accurate quote.
+                  Your utility bill was received for this saved analysis.
                 </p>
               ) : null}
             </div>
@@ -194,11 +203,15 @@ export function ThankYouClient() {
                 />
                 <SummaryMetric
                   label="Quote request"
-                  value={summary.quoteRequested ? "Received" : "Pending"}
+                  value={summary.quoteRequested ? "Received" : "Not requested"}
                 />
                 <SummaryMetric
                   label="Preferred contact"
-                  value={summary.preferredContactMethod}
+                  value={
+                    summary.quoteRequested
+                      ? summary.preferredContactMethod
+                      : "Not requested"
+                  }
                 />
               </div>
 
@@ -223,77 +236,55 @@ export function ThankYouClient() {
                 <NextStep
                   index="1"
                   icon={Mail}
-                  title="Your report has been emailed to you"
-                  body="Your PDF proposal is sent to the email you entered."
+                  title={
+                    summary.emailDeliveryStatus === "sent"
+                      ? "Your report email was sent"
+                      : "Your report is available now"
+                  }
+                  body={
+                    summary.emailDeliveryStatus === "sent"
+                      ? "A secure report link was sent to the email you entered."
+                      : "Use the report button here while email delivery is retried or reviewed."
+                  }
                 />
                 <NextStep
                   index="2"
                   icon={SunMedium}
-                  title="Get matched with local quote options"
-                  body="A solar specialist can follow up with your report details and final review preferences."
+                  title={
+                    summary.quoteRequested
+                      ? "Installer follow-up requested"
+                      : "Review the estimate at your pace"
+                  }
+                  body={
+                    summary.quoteRequested
+                      ? "A solar professional may contact you using your selected preference."
+                      : "No solar-provider contact was requested with this report."
+                  }
                 />
                 <NextStep
                   index="3"
                   icon={CheckCircle2}
-                  title="Free on-site quote scheduled"
-                  body="Final layout, pricing, incentives, and installation details are confirmed in person."
+                  title="Compare before deciding"
+                  body="Final layout, pricing, incentives, eligibility, and savings require installer verification."
                 />
               </div>
             </article>
           </div>
 
-          <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_0.85fr]">
-            <section className="rounded-[1.5rem] border border-white/10 bg-slate-950/42 p-5">
-              <p className="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-200">
-                What happens next?
-              </p>
-              <h2 className="mt-3 text-2xl font-semibold text-white">
-                A solar advisor follows up within 24 hours
-              </h2>
-              <p className="mt-2 text-sm leading-6 text-slate-400">
-                A solar advisor will reach out to review your report and answer
-                any questions. No pressure - you&apos;re in control of the timeline.
-              </p>
-              <div className="mt-4 grid gap-2 text-sm font-semibold text-emerald-50">
-                <span className="rounded-full border border-emerald-300/18 bg-emerald-300/10 px-4 py-2">
-                  Report emailed to you
-                </span>
-                <span className="rounded-full border border-emerald-300/18 bg-emerald-300/10 px-4 py-2">
-                  Advisor follows up by phone
-                </span>
-                <span className="rounded-full border border-emerald-300/18 bg-emerald-300/10 px-4 py-2">
-                  Free on-site quote when ready
-                </span>
-              </div>
-            </section>
-
-            {summary.referralCode ? (
-              <section className="rounded-[1.5rem] border border-emerald-300/14 bg-emerald-300/[0.055] p-5">
-                <p className="text-xs font-semibold uppercase tracking-[0.3em] text-emerald-100">
-                  Share Your Report
-                </p>
-                <h2 className="mt-3 text-2xl font-semibold text-white">
-                  Know someone curious about solar?
-                </h2>
-                <p className="mt-2 text-sm leading-6 text-slate-300">
-                  Share your report link so friends, family, or neighbors can
-                  check their home&apos;s solar potential too.
-                </p>
-                <div className="mt-4 rounded-[1rem] border border-white/10 bg-slate-950/45 p-3">
-                  <p className="break-all text-sm font-semibold text-white">
-                    {referralUrl}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void navigator.clipboard?.writeText(referralUrl);
-                    }}
-                    className="mt-3 w-full rounded-full bg-white px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100"
-                  >
-                    Copy link
-                  </button>
-                </div>
-                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          <section className="mt-5 rounded-[1.5rem] border border-amber-300/14 bg-amber-300/[0.055] p-5">
+            <p className="text-xs font-semibold uppercase tracking-[0.3em] text-amber-100">
+              Share Solartelligence
+            </p>
+            <h2 className="mt-3 text-2xl font-semibold text-white">
+              Know someone curious about solar?
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-slate-300">
+              Share the solar-readiness tool so friends, family, or neighbors can
+              check their own property.
+            </p>
+            {referralUrl ? (
+              <>
+                <div className="mt-4 grid gap-2 sm:grid-cols-3">
                   <a
                     href={whatsappUrl}
                     target="_blank"
@@ -308,58 +299,26 @@ export function ThankYouClient() {
                   >
                     Share via text
                   </a>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void navigator.clipboard?.writeText(referralUrl);
+                    }}
+                    className="rounded-full bg-white px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100"
+                  >
+                    Copy link
+                  </button>
                 </div>
-              </section>
-            ) : null}
-            <section className="rounded-[1.5rem] border border-amber-300/14 bg-amber-300/[0.055] p-5">
-              <p className="text-xs font-semibold uppercase tracking-[0.3em] text-amber-100">
-                Share your savings
-              </p>
-              <h2 className="mt-3 text-2xl font-semibold text-white">
-                Your roof could save {formatMoney(summary.annualSavings)}/year
-              </h2>
-              <p className="mt-2 text-sm leading-6 text-slate-300">
-                Share this with friends who pay high Arizona electric bills.
-              </p>
-              {referralUrl ? (
-                <>
-                  <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                    <a
-                      href={whatsappUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="rounded-full border border-white/10 bg-white/[0.06] px-4 py-2.5 text-center text-sm font-semibold text-white transition hover:bg-white/[0.1]"
-                    >
-                      Share on WhatsApp
-                    </a>
-                    <a
-                      href={smsUrl}
-                      className="rounded-full border border-white/10 bg-white/[0.06] px-4 py-2.5 text-center text-sm font-semibold text-white transition hover:bg-white/[0.1]"
-                    >
-                      Share via text
-                    </a>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void navigator.clipboard?.writeText(referralUrl);
-                      }}
-                      className="rounded-full bg-white px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100"
-                    >
-                      Copy link
-                    </button>
-                  </div>
-                  <p className="mt-3 text-xs leading-5 text-slate-400">
-                    Share this link with anyone interested in seeing their home&apos;s
-                    solar potential.
-                  </p>
-                </>
-              ) : (
-                <p className="mt-3 text-sm leading-6 text-slate-400">
-                  Your share link will appear here when the report data is loaded.
+                <p className="mt-3 break-all text-xs leading-5 text-slate-400">
+                  {referralUrl}
                 </p>
-              )}
-            </section>
-          </div>
+              </>
+            ) : (
+              <p className="mt-3 text-sm leading-6 text-slate-400">
+                The sharing link will appear when the saved report data is loaded.
+              </p>
+            )}
+          </section>
         </div>
       </section>
     </main>

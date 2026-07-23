@@ -6,18 +6,28 @@ import {
   logAbuseSignal,
   maintenanceModeResponse,
   payloadTooLargeResponse,
+  readJsonWithLimit,
   rateLimitResponse,
 } from "@/lib/abuse-protection";
 import { createFollowUpSequence } from "@/lib/follow-ups";
+import { requireDashboardAuth } from "@/lib/dashboard-auth";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { markInitialFollowUpDelivered } from "@/lib/follow-up-processing";
+import { z } from "zod";
 
 type FollowUpBody = {
   leadId?: string;
 };
+const followUpSchema = z.object({ leadId: z.string().uuid() });
 
 export async function POST(request: Request) {
   try {
+    const authError = requireDashboardAuth(request);
+
+    if (authError) {
+      return authError;
+    }
+
     const maintenance = maintenanceModeResponse();
 
     if (maintenance) {
@@ -50,7 +60,14 @@ export async function POST(request: Request) {
       );
     }
 
-    const body = (await request.json().catch(() => ({}))) as FollowUpBody;
+    const jsonBody = await readJsonWithLimit(request, 16 * 1024);
+
+    if (!jsonBody.ok && jsonBody.reason === "too_large") {
+      return payloadTooLargeResponse("The follow-up request is too large.");
+    }
+
+    const parsed = followUpSchema.safeParse(jsonBody.ok ? jsonBody.data : null);
+    const body: FollowUpBody = parsed.success ? parsed.data : {};
 
     if (!body.leadId) {
       return NextResponse.json(
@@ -82,14 +99,24 @@ export async function POST(request: Request) {
 
     const { data: lead, error: leadError } = await supabase
       .from("leads")
-      .select("id, name, address, monthly_bill, annual_savings, estimated_savings, created_at")
+      .select("id, name, address, monthly_bill, annual_savings, estimated_savings, created_at, installer_contact_consent, marketing_email_consent")
       .eq("id", body.leadId)
       .single();
 
     if (leadError || !lead) {
       return NextResponse.json(
-        { message: leadError?.message || "Lead not found." },
+        { message: "Lead not found." },
         { status: 404 }
+      );
+    }
+
+    if (!lead.marketing_email_consent) {
+      return NextResponse.json(
+        {
+          message:
+            "Automated nurture email was not scheduled because marketing email consent is not recorded.",
+        },
+        { status: 409 }
       );
     }
 
@@ -121,7 +148,7 @@ export async function POST(request: Request) {
 
     if (error) {
       return NextResponse.json(
-        { message: error.message || "Unable to schedule follow-ups." },
+        { message: "Unable to schedule follow-ups." },
         { status: 500 }
       );
     }
@@ -160,13 +187,11 @@ export async function POST(request: Request) {
       })),
     });
   } catch (error) {
+    console.error("[follow-up-schedule:error]", {
+      errorType: error instanceof Error ? error.name : "unknown",
+    });
     return NextResponse.json(
-      {
-        message:
-          error instanceof Error
-            ? error.message
-            : "Unexpected follow-up scheduling error.",
-      },
+      { message: "Unable to schedule follow-ups." },
       { status: 500 }
     );
   }

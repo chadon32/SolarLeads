@@ -4,11 +4,12 @@ import {
   type RoofAnalysis,
   type RoofGeoBounds,
   type RoofPoint,
-  type SolarPanelPlacement,
 } from "@/lib/roof-analysis";
 import {
   ARIZONA_AVG_RATE_PER_KWH,
   buildSolarMetrics,
+  calculateEnergyOffsetPct,
+  INSTALLED_COST_PER_WATT,
   STANDARD_PANEL_WATTS,
   type SharedSolarMetrics,
 } from "@/lib/solar-metrics";
@@ -17,6 +18,12 @@ import {
   type RoofAnalysisViewport,
   type RoofViewportPoint,
 } from "@/lib/roof-analysis-viewport";
+import { calculateFederalResidentialSolarCredit } from "@/lib/financial-model";
+import {
+  buildPanelCornerLatLngPoints,
+  inferPanelRotationDeg,
+} from "@/lib/panel-geometry";
+import { selectCohesiveSolarPanels } from "@/lib/panel-layout";
 
 export type ReportSnapshotMetrics = Pick<
   SharedSolarMetrics,
@@ -166,7 +173,7 @@ export function normalizeSolarReportSnapshot(
       annualKwh: numberOr(metrics.annualKwh, 0),
       annualSavings: numberOr(metrics.annualSavings, 0),
       avgPitchDeg: numberOr(metrics.avgPitchDeg, roofAnalysis.pitchDeg),
-      coveragePct: numberOr(metrics.coveragePct, 0),
+      coveragePct: clampScore(numberOr(metrics.coveragePct, 0)),
       grossRoofAreaM2: numberOr(metrics.grossRoofAreaM2, roofAnalysis.grossRoofAreaM2),
       monthlySavings: numberOr(metrics.monthlySavings, 0),
       panelCount,
@@ -194,6 +201,66 @@ export function normalizeSolarReportSnapshot(
   };
 }
 
+export function rebuildTrustedSolarReportSnapshot(
+  snapshot: SolarReportSnapshot,
+  options: {
+    batteryCost?: number | null;
+    installedCostPerWatt?: number | null;
+    monthlyBill?: number | null;
+    panelWatts?: number | null;
+  } = {}
+): SolarReportSnapshot {
+  const monthlyBill = Number.isFinite(Number(options.monthlyBill))
+    ? Number(options.monthlyBill)
+    : snapshot.monthlyBill;
+  const baseMetrics = buildSolarMetrics(snapshot.roofAnalysis, {
+    monthlyBill,
+    selectedPanelCount: snapshot.panelCount,
+  });
+  const panelWatts = positiveNumber(options.panelWatts) ?? STANDARD_PANEL_WATTS;
+  const providerPanelWatts =
+    positiveNumber(snapshot.roofAnalysis.panelCapacityWatts) ?? STANDARD_PANEL_WATTS;
+  const annualKwh = Math.round(
+    baseMetrics.annualKwh * (panelWatts / providerPanelWatts)
+  );
+  const annualBill = monthlyBill && monthlyBill > 0 ? monthlyBill * 12 : null;
+  const annualSavings = Math.round(
+    annualBill
+      ? Math.min(annualKwh * ARIZONA_AVG_RATE_PER_KWH, annualBill)
+      : annualKwh * ARIZONA_AVG_RATE_PER_KWH
+  );
+  const systemKw = roundTo((baseMetrics.panelCount * panelWatts) / 1000, 2);
+  const installedCostPerWatt =
+    positiveNumber(options.installedCostPerWatt) ?? INSTALLED_COST_PER_WATT;
+  const installedCost =
+    systemKw * 1000 * installedCostPerWatt +
+    Math.max(0, numberOr(options.batteryCost, 0));
+  const netCost =
+    installedCost - calculateFederalResidentialSolarCredit(installedCost);
+  const metrics: SharedSolarMetrics = {
+    ...baseMetrics,
+    annualKwh,
+    annualSavings,
+    coveragePct: annualBill
+      ? calculateEnergyOffsetPct(annualKwh, monthlyBill)
+      : baseMetrics.coveragePct,
+    monthlySavings: Math.round(annualSavings / 12),
+    paybackYears:
+      annualSavings > 0 ? roundTo(netCost / annualSavings, 1) : 0,
+    systemKw,
+  };
+
+  return buildSolarReportSnapshot({
+    activePanelCount: metrics.panelCount,
+    address: snapshot.address,
+    analysis: snapshot.roofAnalysis,
+    lat: snapshot.home?.lat,
+    lng: snapshot.home?.lng,
+    metrics,
+    monthlyBill,
+  });
+}
+
 export function buildAcceptedPanelAnalysisForReport(
   analysis: RoofAnalysis
 ): RoofAnalysis {
@@ -214,14 +281,16 @@ export function buildAcceptedPanelAnalysisForReport(
   }
 
   const modeledAcceptedCount = clampInteger(
-    Math.round(analysis.usableRoofAreaM2 / 5.9),
-    Math.min(analysis.solarPanels.length, 4),
+    analysis.acceptedPanelCount ?? analysis.panelCount,
+    1,
     analysis.solarPanels.length
   );
-  const acceptedPanels = getOrderedPanelCandidatesForReport(analysis).slice(
-    0,
-    modeledAcceptedCount
-  );
+  const acceptedPanels = selectCohesiveSolarPanels({
+    panels: analysis.solarPanels,
+    targetCount: modeledAcceptedCount,
+    panelWidthMeters: analysis.panelWidthMeters,
+    panelHeightMeters: analysis.panelHeightMeters,
+  });
   const acceptedPanelCount = acceptedPanels.length;
   const selectedConfig = findNearestPanelConfigForReport(
     analysis.solarPanelConfigs,
@@ -346,160 +415,7 @@ export function boundsToLatLngPoints(
   ];
 }
 
-export function buildPanelCornerLatLngPoints({
-  analysis,
-  panel,
-  panels,
-}: {
-  analysis: RoofAnalysis;
-  panel: SolarPanelPlacement;
-  panels: SolarPanelPlacement[];
-}) {
-  const segment = analysis.roofSegments[panel.segmentIndex];
-  const azimuth = Number.isFinite(panel.azimuthDeg)
-    ? panel.azimuthDeg
-    : segment?.azimuthDeg ?? analysis.primaryRoofAzimuth;
-  const corners = buildPanelCornerPoints({
-    centerLat: panel.center.lat,
-    centerLng: panel.center.lng,
-    orientation: panel.orientation,
-    panelHeightMeters: analysis.panelHeightMeters,
-    panelWidthMeters: analysis.panelWidthMeters,
-    rotationDeg: inferPanelRotationDeg(panel, panels, azimuth),
-  });
-
-  return [panel.center, ...corners].filter(isValidLatLngPoint);
-}
-
-export function inferPanelRotationDeg(
-  panel: SolarPanelPlacement,
-  panels: SolarPanelPlacement[],
-  fallbackAzimuth: number
-) {
-  const rowNeighbor = panels
-    .filter(
-      (candidate) =>
-        candidate !== panel &&
-        candidate.segmentIndex === panel.segmentIndex &&
-        candidate.rowIndex !== null &&
-        candidate.rowIndex === panel.rowIndex &&
-        candidate.columnIndex !== null &&
-        panel.columnIndex !== null
-    )
-    .sort(
-      (left, right) =>
-        Math.abs((left.columnIndex ?? 0) - (panel.columnIndex ?? 0)) -
-        Math.abs((right.columnIndex ?? 0) - (panel.columnIndex ?? 0))
-    )[0];
-
-  if (rowNeighbor) {
-    return normalizeDegrees(
-      bearingDegrees(
-        panel.center.lat,
-        panel.center.lng,
-        rowNeighbor.center.lat,
-        rowNeighbor.center.lng
-      ) - 90
-    );
-  }
-
-  const columnNeighbor = panels
-    .filter(
-      (candidate) =>
-        candidate !== panel &&
-        candidate.segmentIndex === panel.segmentIndex &&
-        candidate.columnIndex !== null &&
-        candidate.columnIndex === panel.columnIndex &&
-        candidate.rowIndex !== null &&
-        panel.rowIndex !== null
-    )
-    .sort(
-      (left, right) =>
-        Math.abs((left.rowIndex ?? 0) - (panel.rowIndex ?? 0)) -
-        Math.abs((right.rowIndex ?? 0) - (panel.rowIndex ?? 0))
-    )[0];
-
-  if (columnNeighbor) {
-    return normalizeDegrees(
-      bearingDegrees(
-        panel.center.lat,
-        panel.center.lng,
-        columnNeighbor.center.lat,
-        columnNeighbor.center.lng
-      )
-    );
-  }
-
-  return normalizeDegrees(fallbackAzimuth - 90);
-}
-
-function buildPanelCornerPoints(params: {
-  centerLat: number;
-  centerLng: number;
-  orientation: "PORTRAIT" | "LANDSCAPE";
-  panelWidthMeters: number;
-  panelHeightMeters: number;
-  rotationDeg: number;
-}) {
-  const shortSide = Math.min(params.panelWidthMeters, params.panelHeightMeters);
-  const longSide = Math.max(params.panelWidthMeters, params.panelHeightMeters);
-  const baseWidthMeters = params.orientation === "LANDSCAPE" ? longSide : shortSide;
-  const baseHeightMeters = params.orientation === "LANDSCAPE" ? shortSide : longSide;
-  const halfWidth = baseWidthMeters / 2;
-  const halfHeight = baseHeightMeters / 2;
-  const rotation = (params.rotationDeg * Math.PI) / 180;
-  const corners = [
-    { east: -halfWidth, north: -halfHeight },
-    { east: halfWidth, north: -halfHeight },
-    { east: halfWidth, north: halfHeight },
-    { east: -halfWidth, north: halfHeight },
-  ];
-
-  return corners.map((corner) => {
-    const rotatedEast =
-      corner.east * Math.cos(rotation) + corner.north * Math.sin(rotation);
-    const rotatedNorth =
-      -corner.east * Math.sin(rotation) + corner.north * Math.cos(rotation);
-
-    return offsetLatLngMeters({
-      lat: params.centerLat,
-      lng: params.centerLng,
-      eastMeters: rotatedEast,
-      northMeters: rotatedNorth,
-    });
-  });
-}
-
-function getOrderedPanelCandidatesForReport(analysis: RoofAnalysis) {
-  const segmentRank = new Map(
-    analysis.roofSegments
-      .map((segment, index) => ({ index, segment }))
-      .sort((left, right) => {
-        if (left.segment.usable !== right.segment.usable) {
-          return left.segment.usable ? -1 : 1;
-        }
-
-        return (
-          right.segment.areaM2 - left.segment.areaM2 ||
-          right.segment.panelsFit - left.segment.panelsFit ||
-          left.index - right.index
-        );
-      })
-      .map((entry, rank) => [entry.index, rank])
-  );
-
-  return [...analysis.solarPanels].sort((left, right) => {
-    const leftRank = segmentRank.get(left.segmentIndex) ?? Number.MAX_SAFE_INTEGER;
-    const rightRank = segmentRank.get(right.segmentIndex) ?? Number.MAX_SAFE_INTEGER;
-
-    return (
-      leftRank - rightRank ||
-      nullableSortValue(left.rowIndex) - nullableSortValue(right.rowIndex) ||
-      nullableSortValue(left.columnIndex) - nullableSortValue(right.columnIndex) ||
-      right.yearlyEnergyDcKwh - left.yearlyEnergyDcKwh
-    );
-  });
-}
+export { buildPanelCornerLatLngPoints, inferPanelRotationDeg };
 
 function findNearestPanelConfigForReport(
   configs: RoofAnalysis["solarPanelConfigs"],
@@ -521,10 +437,6 @@ function findNearestPanelConfigForReport(
         : closest
     )
   );
-}
-
-function nullableSortValue(value: number | null) {
-  return value === null ? Number.MAX_SAFE_INTEGER : value;
 }
 
 function normalizeSnapshotViewport(
@@ -585,7 +497,23 @@ function getRoofBoundsCenter(bounds: RoofGeoBounds | null) {
 }
 
 function getValidPoint(point: unknown) {
-  const candidate = point as Partial<RoofViewportPoint> | null | undefined;
+  const candidate = point as
+    | { lat?: unknown; lng?: unknown }
+    | null
+    | undefined;
+
+  if (
+    !candidate ||
+    candidate.lat === null ||
+    candidate.lat === undefined ||
+    candidate.lat === "" ||
+    candidate.lng === null ||
+    candidate.lng === undefined ||
+    candidate.lng === ""
+  ) {
+    return null;
+  }
+
   const lat = Number(candidate?.lat);
   const lng = Number(candidate?.lng);
 
@@ -606,53 +534,14 @@ function isValidLatLngPoint(
   return Boolean(getValidPoint(point));
 }
 
-function offsetLatLngMeters({
-  eastMeters,
-  lat,
-  lng,
-  northMeters,
-}: {
-  eastMeters: number;
-  lat: number;
-  lng: number;
-  northMeters: number;
-}) {
-  const metersPerDegreeLat = 111_320;
-  const metersPerDegreeLng =
-    metersPerDegreeLat * Math.max(Math.cos((lat * Math.PI) / 180), 0.01);
-
-  return {
-    lat: lat + northMeters / metersPerDegreeLat,
-    lng: lng + eastMeters / metersPerDegreeLng,
-  };
-}
-
-function bearingDegrees(
-  fromLat: number,
-  fromLng: number,
-  toLat: number,
-  toLng: number
-) {
-  const toRadians = (value: number) => (value * Math.PI) / 180;
-  const toDegrees = (value: number) => (value * 180) / Math.PI;
-  const lat1 = toRadians(fromLat);
-  const lat2 = toRadians(toLat);
-  const deltaLng = toRadians(toLng - fromLng);
-  const y = Math.sin(deltaLng) * Math.cos(lat2);
-  const x =
-    Math.cos(lat1) * Math.sin(lat2) -
-    Math.sin(lat1) * Math.cos(lat2) * Math.cos(deltaLng);
-
-  return normalizeDegrees(toDegrees(Math.atan2(y, x)));
-}
-
-function normalizeDegrees(value: number) {
-  return ((value % 360) + 360) % 360;
-}
-
 function positiveInteger(value: unknown) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : null;
+}
+
+function positiveNumber(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
 function clampInteger(value: number, min: number, max: number) {
@@ -660,8 +549,17 @@ function clampInteger(value: number, min: number, max: number) {
 }
 
 function numberOr(value: unknown, fallback: number) {
+  if (value === null || value === undefined || value === "") {
+    return fallback;
+  }
+
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function roundTo(value: number, precision: number) {
+  const factor = 10 ** precision;
+  return Math.round(value * factor) / factor;
 }
 
 function clampScore(value: unknown) {

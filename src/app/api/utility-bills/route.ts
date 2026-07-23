@@ -125,6 +125,15 @@ export async function POST(request: Request) {
       );
     }
 
+    const fileBuffer = Buffer.from(await file.arrayBuffer());
+
+    if (!hasExpectedFileSignature(fileBuffer, file.type)) {
+      return NextResponse.json(
+        { message: "The uploaded file does not match its PDF, JPG, or PNG type.", uploaded: false },
+        { status: 400 }
+      );
+    }
+
     const supabase = createClient(supabaseUrl, supabaseServiceRoleKey, {
       auth: {
         autoRefreshToken: false,
@@ -153,7 +162,7 @@ export async function POST(request: Request) {
     const filePath = `pending/${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}${extension}`;
     const upload = await supabase.storage
       .from(bucketName)
-      .upload(filePath, Buffer.from(await file.arrayBuffer()), {
+      .upload(filePath, fileBuffer, {
         contentType: file.type,
         upsert: false,
       });
@@ -190,17 +199,43 @@ export async function POST(request: Request) {
       uploaded: true,
     });
   } catch (error) {
+    console.error("[utility-bill-upload:error]", {
+      errorType: error instanceof Error ? error.name : "unknown",
+    });
     return NextResponse.json(
       {
-        message:
-          error instanceof Error
-            ? error.message
-            : "Unable to upload the utility bill. You can still submit without it.",
+        message: "Unable to upload the utility bill. You can still submit without it.",
         uploaded: false,
       },
       { status: 500 }
     );
   }
+}
+
+function hasExpectedFileSignature(buffer: Buffer, mimeType: string) {
+  if (mimeType === "application/pdf") {
+    return buffer.subarray(0, 5).toString("ascii") === "%PDF-";
+  }
+
+  if (mimeType === "image/jpeg") {
+    return (
+      buffer.length >= 3 &&
+      buffer[0] === 0xff &&
+      buffer[1] === 0xd8 &&
+      buffer[2] === 0xff
+    );
+  }
+
+  if (mimeType === "image/png") {
+    return (
+      buffer.length >= 8 &&
+      buffer.subarray(0, 8).equals(
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+      )
+    );
+  }
+
+  return false;
 }
 
 function isUploadFile(value: FormDataEntryValue | null): value is File {

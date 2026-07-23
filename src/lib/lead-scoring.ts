@@ -51,7 +51,6 @@ export function calculateLeadScore(input: LeadScoreInput): LeadScoreResult {
   const panelCount = finite(input.panelCount);
   const roofSuitability = clamp(finite(input.solarSuitabilityScore) ?? 0, 0, 100);
   const systemSizeKw = finite(input.systemSizeKw);
-  const usableRoofAreaM2 = finite(input.usableRoofAreaM2);
   const monthlyBill = finite(input.monthlyBill);
 
   let score = 0;
@@ -215,12 +214,21 @@ function scoreSystemSize(systemSizeKw: number | null) {
 }
 
 function scoreElectricBill(range: string | null | undefined, monthlyBill: number | null) {
-  const normalized = range?.trim().toLowerCase() ?? "";
+  const normalized = (range?.trim().toLowerCase() ?? "")
+    .replace(/[–—]/g, "-")
+    .replace(/\s+/g, "");
 
-  if (normalized.includes("400") || normalized.includes("over_600") || normalized.includes("400+")) return 10;
-  if (normalized.includes("300") || normalized.includes("250_400")) return 8;
-  if (normalized.includes("200") || normalized.includes("150_250")) return 6;
-  if (normalized.includes("100") || normalized.includes("under")) return 3;
+  if (normalized.includes("400+") || normalized.includes("over_600")) return 10;
+  if (normalized.includes("$300-$400") || normalized.includes("300-400")) return 8;
+  if (
+    normalized.includes("$200-$300") ||
+    normalized.includes("200-300") ||
+    normalized.includes("150_250")
+  ) {
+    return 6;
+  }
+  if (normalized.includes("$100-$200") || normalized.includes("100-200")) return 3;
+  if (normalized.includes("under$100") || normalized.includes("under100")) return 1;
 
   if (monthlyBill === null) return 0;
   if (monthlyBill >= 400) return 10;

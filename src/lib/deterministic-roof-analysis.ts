@@ -11,6 +11,7 @@ import {
   type RoofShape,
   type ShadingRisk,
 } from "@/lib/roof-analysis";
+import { ARIZONA_AVG_RATE_PER_KWH } from "@/lib/solar-assumptions";
 
 type DeterministicParams = {
   address: string;
@@ -202,7 +203,9 @@ export function analyzeRoofDeterministically(
     const productionFactor =
       shadingRisk === "high" ? 1470 : shadingRisk === "medium" ? 1590 : 1715;
     const annualKwh = Math.round(systemKw * productionFactor);
-    const annualSavingsUSD = Math.round(annualKwh * 0.13);
+    const annualSavingsUSD = Math.round(
+      annualKwh * ARIZONA_AVG_RATE_PER_KWH
+    );
     const confidence = classifyConfidence(component, obstructionRatio);
     const normalized = normalizeRoofAnalysis(
       {

@@ -1,4 +1,5 @@
-import { createHash } from "node:crypto";
+import "server-only";
+import { createHmac } from "node:crypto";
 import { NextResponse } from "next/server";
 import { getClientIp } from "@/lib/rate-limit";
 
@@ -12,11 +13,10 @@ type TurnstileResult =
 export function getRequestAbuseMeta(request: Request) {
   const ip = getClientIp(request);
   const userAgent = request.headers.get("user-agent") ?? "unknown";
-  const userAgentHash = createHash("sha256").update(userAgent).digest("hex").slice(0, 16);
 
   return {
-    ip,
-    userAgentHash,
+    ipHash: privacyHash(ip),
+    userAgentHash: privacyHash(userAgent),
   };
 }
 
@@ -29,10 +29,35 @@ export function logAbuseSignal(
 
   console.info("[abuse-protection]", {
     event,
-    ip: meta.ip,
+    ipHash: meta.ipHash,
     userAgentHash: meta.userAgentHash,
-    ...details,
+    ...sanitizeLogDetails(details),
   });
+}
+
+function privacyHash(value: string) {
+  const secret = process.env.RATE_LIMIT_SECRET?.trim();
+
+  if (!secret && process.env.NODE_ENV === "production") {
+    return "unavailable";
+  }
+
+  return createHmac("sha256", secret || "local-abuse-log-key")
+    .update(value)
+    .digest("hex")
+    .slice(0, 16);
+}
+
+function sanitizeLogDetails(details: Record<string, unknown>) {
+  return Object.fromEntries(
+    Object.entries(details).map(([key, value]) => {
+      if (/address|email|phone|name|token|secret|url|lead.?id/i.test(key)) {
+        return [`${key}Hash`, privacyHash(String(value ?? ""))];
+      }
+
+      return [key, value];
+    })
+  );
 }
 
 export function rateLimitResponse(message: string, retryAfterSeconds: number) {
@@ -51,6 +76,74 @@ export function isRequestTooLarge(request: Request, maxBytes: number) {
   const contentLength = Number(request.headers.get("content-length") ?? 0);
 
   return Number.isFinite(contentLength) && contentLength > maxBytes;
+}
+
+export type LimitedJsonResult =
+  | { ok: true; data: unknown }
+  | { ok: false; reason: "invalid" | "too_large" };
+
+export type LimitedTextResult =
+  | { ok: true; data: string }
+  | { ok: false; reason: "invalid" | "too_large" };
+
+export async function readJsonWithLimit(
+  request: Request,
+  maxBytes: number
+): Promise<LimitedJsonResult> {
+  const body = await readTextWithLimit(request, maxBytes);
+
+  if (!body.ok) {
+    return body;
+  }
+
+  try {
+    return { ok: true, data: JSON.parse(body.data) };
+  } catch {
+    return { ok: false, reason: "invalid" };
+  }
+}
+
+export async function readTextWithLimit(
+  request: Request,
+  maxBytes: number
+): Promise<LimitedTextResult> {
+  if (isRequestTooLarge(request, maxBytes)) {
+    return { ok: false, reason: "too_large" };
+  }
+
+  if (!request.body) {
+    return { ok: false, reason: "invalid" };
+  }
+
+  const reader = request.body.getReader();
+  const decoder = new TextDecoder();
+  let body = "";
+  let bytesRead = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+
+      if (done) {
+        break;
+      }
+
+      bytesRead += value.byteLength;
+      if (bytesRead > maxBytes) {
+        await reader.cancel();
+        return { ok: false, reason: "too_large" };
+      }
+
+      body += decoder.decode(value, { stream: true });
+    }
+
+    body += decoder.decode();
+    return { ok: true, data: body };
+  } catch {
+    return { ok: false, reason: "invalid" };
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 export function payloadTooLargeResponse(message = "The submitted payload is too large.") {

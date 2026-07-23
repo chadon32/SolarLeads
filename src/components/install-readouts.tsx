@@ -9,7 +9,7 @@ const scanLog = [
   "Measuring usable area...",
   "Mapping panel rows...",
   "Checking shade exposure...",
-  "Confirming final placement...",
+  "Calculating preliminary capacity...",
 ] as const;
 
 type InstallReadoutsProps = {
@@ -108,10 +108,10 @@ export function InstallReadouts({
 
         <article className="glass-panel h-full rounded-[1.75rem] p-6">
           <p className="text-xs font-semibold uppercase tracking-[0.34em] text-cyan-300">
-            Final placement
+            Roof model
           </p>
           <h3 className="mt-3 text-xl font-semibold tracking-tight text-white">
-            Panel placement by roof plane.
+            Raw panel candidates by roof plane.
           </h3>
           <p className="mt-2 text-xs uppercase tracking-[0.28em] text-slate-400">
             Matched to {selectedAddress}
@@ -122,7 +122,7 @@ export function InstallReadouts({
                 <div key={segment.label} className="space-y-1">
                   <div className="flex items-center justify-between text-[0.65rem] uppercase tracking-[0.24em] text-slate-400">
                     <span>{segment.label}</span>
-                    <span>{segment.panelsFit} panels</span>
+                    <span>{segment.panelsFit} candidates</span>
                   </div>
                   <div className="h-3 rounded-full bg-white/10">
                     <div

@@ -28,5 +28,11 @@ export function formatPhoneForSms(input?: string | null) {
 }
 
 export function isValidUsPhoneNumber(input?: string | null) {
-  return normalizePhoneNumber(input).length === 10;
+  const digits = normalizePhoneNumber(input);
+
+  return (
+    digits.length === 10 &&
+    /^[2-9]\d{2}[2-9]\d{6}$/.test(digits) &&
+    !/^(\d)\1{9}$/.test(digits)
+  );
 }

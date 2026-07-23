@@ -39,6 +39,7 @@ export const metadata: Metadata = {
     description:
       "Manage solar leads, download reports, and track your pipeline.",
   },
+  robots: { index: false, follow: false },
 };
 
 export const dynamic = "force-dynamic";
@@ -47,7 +48,7 @@ type DashboardLead = {
   id: string;
   name: string;
   email: string;
-  phone: string;
+  phone: string | null;
   address: string;
   monthly_bill: number;
   estimated_savings: number | null;
@@ -240,7 +241,7 @@ export default async function DashboardPage({
       panelCount: report.panelCount,
       pdfDownloaded: lead.pdf_downloaded,
       pdfGenerated: lead.pdf_generated ?? true,
-      phone: lead.phone,
+      phone: lead.phone ?? "",
       quoteRequested: lead.quote_requested,
       roofAreaM2: lead.roof_area_m2,
       selectedPanelBrand: lead.selected_panel_brand,
@@ -249,7 +250,7 @@ export default async function DashboardPage({
       solarSuitabilityScore: lead.solar_suitability_score,
       systemSizeKw,
       twentyYearSavings:
-        Number(lead.twenty_year_savings ?? 0) || report.annualSavings * 20,
+        Number(lead.twenty_year_savings ?? 0) || report.twentyYearSavings,
       utilityBillUploaded: lead.utility_bill_uploaded,
     });
     const leadScore = calculatedScore.score;
@@ -258,7 +259,7 @@ export default async function DashboardPage({
       id: lead.id,
       name: formatName(lead.name),
       email: lead.email,
-      phone: lead.phone,
+      phone: lead.phone ?? "",
       address: lead.address,
       monthlyBill: Number(lead.monthly_bill ?? 0),
       createdAt: lead.created_at,
@@ -312,7 +313,12 @@ export default async function DashboardPage({
     (sum, lead) =>
       sum +
       (lead.systemCostBeforeIncentives ??
-        Math.round(Math.max(lead.systemSizeKw, 0) * 1000 * 2.75)),
+        buildSolarReportFromSolarValues({
+          annualSavings: lead.annualSavings,
+          panelCount: lead.panelCount,
+          systemKw: lead.systemSizeKw,
+          monthlyBill: lead.monthlyBill,
+        }).systemCostBeforeIncentives),
     0
   );
 

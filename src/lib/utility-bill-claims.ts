@@ -1,3 +1,4 @@
+import "server-only";
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 const UPLOAD_CLAIM_TTL_SECONDS = 60 * 60;
