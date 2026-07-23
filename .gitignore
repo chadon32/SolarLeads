@@ -34,6 +34,7 @@ dev-start.log
 .codex-artifacts/
 .codex-dev*.log
 .dev-logs/
+.claude/settings.local.json
 .codex-home-verification.png
 /Drone_shot_over_solar_neighborhood_202605281518.mp4
 /tmp/
