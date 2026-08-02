@@ -1,13 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 import {
   ArrowRight,
   ShieldCheck,
   Sparkles,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AddressSearch } from "@/components/address-search";
 import { AnalysisSequence } from "@/components/analysis-sequence";
 import { LeadCaptureForm } from "@/components/lead-capture-form";
@@ -15,6 +16,7 @@ import { SolarAnalysis } from "@/components/solar-analysis";
 import { SolarReportDashboard, type DetailTab } from "@/components/solar-report-dashboard";
 import { formatDisplayAddress } from "@/lib/address-format";
 import { trackEvent } from "@/lib/analytics";
+import { faqItems } from "@/lib/faq";
 import {
   APP_NAME,
   APP_PRIVACY_COPY,
@@ -26,18 +28,24 @@ import {
 } from "@/lib/batteries";
 import type { RoofAnalysis } from "@/lib/roof-analysis";
 import type { RoofAnalysisProof } from "@/lib/roof-analysis-proof";
-import { buildSolarMetrics } from "@/lib/solar-metrics";
+import { buildActiveSolarEstimate } from "@/lib/active-solar-estimate";
 import {
   DEFAULT_SOLAR_PANEL_ID,
   getInverterOption,
   getPanelById,
-  getPanelFit,
   getShortPanelName,
   type InverterType,
 } from "@/lib/solarPanels";
 
 const VIDEO_SRC =
   "/Drone_shot_over_solar_neighborhood_202605281518.mp4";
+/**
+ * First frame of the hero clip (~62 KB). The video is `preload="metadata"`, so
+ * without a poster the hero is an empty black rectangle until enough of the
+ * clip has buffered to paint — and it stays black permanently for anyone with
+ * reduced-motion enabled, where playback never starts.
+ */
+const VIDEO_POSTER_SRC = "/hero-poster.jpg";
 
 const featureCards = [
   {
@@ -56,6 +64,14 @@ const featureCards = [
 
 type HomeClientProps = {
   initialAddress?: string;
+  initialAddBattery?: boolean;
+  initialBatteryOption?: string;
+  initialInverterType?: InverterType;
+  initialLatitude?: number;
+  initialLongitude?: number;
+  initialMonthlyBill?: number;
+  initialPanelCount?: number;
+  initialPanelId?: string;
   nativeApp?: boolean;
 };
 
@@ -65,27 +81,107 @@ type SavedProgress = {
   monthlyBill?: number;
   panelCount?: number;
   savedAt: string;
+  addBattery?: boolean;
+  batteryOption?: string;
+  inverterType?: InverterType;
+  latitude?: number;
+  longitude?: number;
   selectedPanelId?: string;
   systemKw?: number;
 };
 
+const MAX_MONTHLY_BILL = 5_000;
+
+function normalizeMonthlyBill(value: unknown, fallback = 200) {
+  const parsed = Number(value);
+
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.min(MAX_MONTHLY_BILL, Math.max(1, Math.round(parsed)));
+}
+
+function getEstimateHref({
+  address,
+  addBattery,
+  batteryOption,
+  inverterType,
+  monthlyBill,
+  nativeApp,
+  panelCount,
+  location,
+  selectedPanelId,
+}: {
+  address: string;
+  addBattery: boolean;
+  batteryOption: string;
+  inverterType: InverterType;
+  monthlyBill: number;
+  nativeApp: boolean;
+  panelCount: number;
+  location?: { lat: number; lng: number } | null;
+  selectedPanelId: string;
+}) {
+  const params = new URLSearchParams({
+    address,
+    bill: String(normalizeMonthlyBill(monthlyBill)),
+    panel: selectedPanelId,
+    inverter: inverterType,
+  });
+
+  if (panelCount > 0) {
+    params.set("panels", String(Math.floor(panelCount)));
+  }
+
+  if (addBattery) {
+    params.set("battery", batteryOption);
+    params.set("addBattery", "1");
+  }
+
+  if (location && Number.isFinite(location.lat) && Number.isFinite(location.lng)) {
+    params.set("lat", String(location.lat));
+    params.set("lng", String(location.lng));
+  }
+
+  if (nativeApp) {
+    params.set("app", "ios");
+  }
+
+  return `/estimate?${params.toString()}`;
+}
+
 export function HomeClient({
   initialAddress = "",
+  initialAddBattery = false,
+  initialBatteryOption = DEFAULT_BATTERY_OPTION_ID,
+  initialInverterType,
+  initialLatitude,
+  initialLongitude,
+  initialMonthlyBill = 200,
+  initialPanelCount = 0,
+  initialPanelId = DEFAULT_SOLAR_PANEL_ID,
   nativeApp = false,
 }: HomeClientProps) {
-  const [selectedAddress, setSelectedAddress] = useState(initialAddress);
+  const router = useRouter();
+  const startingMonthlyBill = normalizeMonthlyBill(initialMonthlyBill);
+  const selectedAddress = initialAddress;
   const [solarData, setSolarData] = useState<RoofAnalysis | null>(null);
   const [signedRoofAnalysis, setSignedRoofAnalysis] =
     useState<RoofAnalysis | null>(null);
   const [roofAnalysisProof, setRoofAnalysisProof] =
     useState<RoofAnalysisProof | null>(null);
-  const [activePanelCount, setActivePanelCount] = useState(0);
-  const [monthlyBill, setMonthlyBill] = useState(200);
-  const [selectedPanelId, setSelectedPanelId] = useState(DEFAULT_SOLAR_PANEL_ID);
-  const [addBattery, setAddBattery] = useState(false);
-  const [batteryOption, setBatteryOption] = useState(DEFAULT_BATTERY_OPTION_ID);
+  const [activePanelCount, setActivePanelCount] = useState(initialPanelCount);
+  const [monthlyBill, setMonthlyBill] = useState(startingMonthlyBill);
+  const [monthlyBillInput, setMonthlyBillInput] = useState(
+    String(startingMonthlyBill)
+  );
+  const [monthlyBillError, setMonthlyBillError] = useState("");
+  const [selectedPanelId, setSelectedPanelId] = useState(initialPanelId);
+  const [addBattery, setAddBattery] = useState(initialAddBattery);
+  const [batteryOption, setBatteryOption] = useState(initialBatteryOption);
   const [selectedInverterType, setSelectedInverterType] =
-    useState<InverterType>("string");
+    useState<InverterType>(initialInverterType ?? "string");
   const [reportTab, setReportTab] = useState<DetailTab>("overview");
   const [shareStatus, setShareStatus] = useState("");
   const [savedProgress, setSavedProgress] = useState<SavedProgress | null>(null);
@@ -96,16 +192,50 @@ export function HomeClient({
   const [showProgressNav, setShowProgressNav] = useState(false);
   const [activeProgressSection, setActiveProgressSection] =
     useState("rooftop-analysis");
-  const [selectedLocation, setSelectedLocation] = useState<{
-    address: string;
-    lat: number;
-    lng: number;
-  } | null>(null);
+  const selectedLocation = useMemo(
+    () =>
+      Number.isFinite(initialLatitude) && Number.isFinite(initialLongitude) && initialAddress
+        ? {
+            address: initialAddress,
+            lat: Number(initialLatitude),
+            lng: Number(initialLongitude),
+          }
+        : null,
+    [initialAddress, initialLatitude, initialLongitude]
+  );
   const roofAnalysis = solarData;
   const hasValidAnalysis = Boolean(solarData?.validSite);
   const heroCompact = Boolean(selectedAddress);
   const selectedPanel = getPanelById(selectedPanelId);
   const selectedBattery = addBattery ? getBatteryById(batteryOption) : null;
+  const selectPanel = useCallback(
+    (nextPanelId: string) => {
+      setSelectedPanelId(nextPanelId);
+
+      if (!solarData?.validSite) {
+        return;
+      }
+
+      const estimate = buildActiveSolarEstimate({
+        analysis: solarData,
+        batteryCost: selectedBattery?.cost,
+        inverterCostAdderPerWatt:
+          getInverterOption(selectedInverterType).costAdderPerWatt,
+        monthlyBill,
+        selectedPanel: getPanelById(nextPanelId),
+        selectedPanelCount: activePanelCount || undefined,
+      });
+
+      setActivePanelCount(estimate.panelCount);
+    },
+    [
+      activePanelCount,
+      monthlyBill,
+      selectedBattery?.cost,
+      selectedInverterType,
+      solarData,
+    ]
+  );
 
   useEffect(() => {
     const referralCode = new URLSearchParams(window.location.search)
@@ -158,7 +288,7 @@ export function HomeClient({
   }, [initialAddress]);
 
   useEffect(() => {
-    if (!solarData?.validSite) {
+    if (initialInverterType || !solarData?.validSite) {
       return;
     }
 
@@ -174,24 +304,36 @@ export function HomeClient({
     });
 
     return () => window.cancelAnimationFrame(frame);
-  }, [solarData?.annualSunlightHours, solarData?.validSite]);
+  }, [initialInverterType, solarData?.annualSunlightHours, solarData?.validSite]);
 
   useEffect(() => {
     if (!solarData?.validSite || activePanelCount > 0) {
       return;
     }
 
-    const recommendedPanelCount = buildSolarMetrics(solarData, {
+    const estimate = buildActiveSolarEstimate({
+      analysis: solarData,
+      batteryCost: selectedBattery?.cost,
+      inverterCostAdderPerWatt:
+        getInverterOption(selectedInverterType).costAdderPerWatt,
       monthlyBill,
-    }).panelCount;
+      selectedPanel,
+    });
     const frame = window.requestAnimationFrame(() => {
-      if (recommendedPanelCount > 0) {
-        setActivePanelCount(recommendedPanelCount);
+      if (estimate.recommendedPanelCount > 0) {
+        setActivePanelCount(estimate.recommendedPanelCount);
       }
     });
 
     return () => window.cancelAnimationFrame(frame);
-  }, [activePanelCount, monthlyBill, solarData]);
+  }, [
+    activePanelCount,
+    monthlyBill,
+    selectedInverterType,
+    selectedBattery?.cost,
+    selectedPanel,
+    solarData,
+  ]);
 
   useEffect(() => {
     if (!shareStatus) {
@@ -248,25 +390,30 @@ export function HomeClient({
       return null;
     }
 
-    const baseMetrics = buildSolarMetrics(solarData, {
+    const estimate = buildActiveSolarEstimate({
+      analysis: solarData,
+      batteryCost: selectedBattery?.cost,
+      inverterCostAdderPerWatt:
+        getInverterOption(selectedInverterType).costAdderPerWatt,
       monthlyBill,
+      selectedPanel,
       selectedPanelCount: activePanelCount || undefined,
-    });
-    const livePanelCount = baseMetrics.panelCount;
-    const selectedFit = getPanelFit(selectedPanel, {
-      roofData: solarData,
-      monthlyBill,
-      selectedPanelCount: livePanelCount,
-      inverterCostAdderPerWatt: getInverterOption(selectedInverterType).costAdderPerWatt,
     });
 
     return {
-      annualSavings: selectedFit.annualSavings || baseMetrics.annualSavings,
-      panelCount: livePanelCount,
+      annualSavings: estimate.annualSavings,
+      panelCount: estimate.panelCount,
       score: solarData.rooftopConfidenceScore,
-      systemKw: selectedFit.systemKw || baseMetrics.systemKw,
+      systemKw: estimate.systemKw,
     };
-  }, [activePanelCount, monthlyBill, selectedInverterType, selectedPanel, solarData]);
+  }, [
+    activePanelCount,
+    monthlyBill,
+    selectedBattery?.cost,
+    selectedInverterType,
+    selectedPanel,
+    solarData,
+  ]);
 
   useEffect(() => {
     if (!solarData?.validSite || !selectedAddress || !reportMetrics) {
@@ -281,16 +428,60 @@ export function HomeClient({
         monthlyBill,
         panelCount: reportMetrics.panelCount,
         savedAt: new Date().toISOString(),
+        addBattery,
+        batteryOption,
+        inverterType: selectedInverterType,
+        latitude: selectedLocation?.lat,
+        longitude: selectedLocation?.lng,
         selectedPanelId,
         systemKw: reportMetrics.systemKw,
       })
     );
   }, [
+    addBattery,
+    batteryOption,
     monthlyBill,
     reportMetrics,
     selectedAddress,
+    selectedInverterType,
+    selectedLocation,
     selectedPanelId,
     solarData?.validSite,
+  ]);
+
+  useEffect(() => {
+    if (!selectedAddress || window.location.pathname !== "/estimate") {
+      return;
+    }
+
+    const estimateHref = getEstimateHref({
+      address: selectedAddress,
+      addBattery,
+      batteryOption,
+      inverterType: selectedInverterType,
+      monthlyBill,
+      nativeApp,
+      panelCount: activePanelCount,
+      location: selectedLocation,
+      selectedPanelId,
+    });
+    const currentHref = `${window.location.pathname}${window.location.search}`;
+
+    if (currentHref !== estimateHref) {
+      // Keep the shareable state refresh-safe without adding a history entry
+      // for every bill, panel, or equipment adjustment.
+      window.history.replaceState(window.history.state, "", estimateHref);
+    }
+  }, [
+    activePanelCount,
+    addBattery,
+    batteryOption,
+    monthlyBill,
+    nativeApp,
+    selectedAddress,
+    selectedInverterType,
+    selectedLocation,
+    selectedPanelId,
   ]);
 
   const restoreProgress = () => {
@@ -298,21 +489,29 @@ export function HomeClient({
       return;
     }
 
-    setSelectedAddress(savedProgress.address);
-    setSelectedLocation(null);
-    setSolarData(null);
-    setSignedRoofAnalysis(null);
-    setRoofAnalysisProof(null);
-    setMonthlyBill(savedProgress.monthlyBill || 200);
-    setActivePanelCount(savedProgress.panelCount || 0);
-    setSelectedPanelId(savedProgress.selectedPanelId || DEFAULT_SOLAR_PANEL_ID);
     setShowReturnBanner(false);
-
-    window.requestAnimationFrame(() => {
-      document
-        .getElementById("rooftop-analysis")
-        ?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
+    router.push(
+      getEstimateHref({
+        address: savedProgress.address,
+        addBattery: Boolean(savedProgress.addBattery),
+        batteryOption:
+          savedProgress.batteryOption ?? DEFAULT_BATTERY_OPTION_ID,
+        inverterType: savedProgress.inverterType ?? "string",
+        location:
+          Number.isFinite(savedProgress.latitude) &&
+          Number.isFinite(savedProgress.longitude)
+            ? {
+                lat: Number(savedProgress.latitude),
+                lng: Number(savedProgress.longitude),
+              }
+            : null,
+        monthlyBill: savedProgress.monthlyBill ?? 200,
+        nativeApp,
+        panelCount: savedProgress.panelCount ?? 0,
+        selectedPanelId:
+          savedProgress.selectedPanelId ?? DEFAULT_SOLAR_PANEL_ID,
+      })
+    );
   };
 
   const dismissReturnBanner = () => {
@@ -348,19 +547,35 @@ export function HomeClient({
   };
 
   const handleNewAddress = () => {
-    setSelectedAddress("");
-    setSolarData(null);
-    setSignedRoofAnalysis(null);
-    setRoofAnalysisProof(null);
-    setActivePanelCount(0);
     setShareStatus("");
-    setSelectedLocation(null);
     setReportTab("overview");
-    window.requestAnimationFrame(() => {
-      document
-        .getElementById("address-estimate")
-        ?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
+    router.push(nativeApp ? "/estimate?app=ios" : "/");
+  };
+
+  const applyMonthlyBill = (nextValue: number) => {
+    const normalizedBill = normalizeMonthlyBill(nextValue, monthlyBill);
+    setMonthlyBill(normalizedBill);
+    setMonthlyBillInput(String(normalizedBill));
+    setMonthlyBillError("");
+  };
+
+  const updateMonthlyBill = (rawValue: string) => {
+    setMonthlyBillInput(rawValue);
+
+    if (!rawValue.trim()) {
+      setMonthlyBillError("Enter your average monthly bill to personalize the estimate.");
+      return;
+    }
+
+    const parsed = Number(rawValue);
+    if (!Number.isInteger(parsed) || parsed < 1 || parsed > MAX_MONTHLY_BILL) {
+      setMonthlyBillError(
+        `Enter a whole-dollar bill from $1 to $${MAX_MONTHLY_BILL.toLocaleString()}.`
+      );
+      return;
+    }
+
+    applyMonthlyBill(parsed);
   };
 
   const showAnalysis = Boolean(selectedAddress);
@@ -406,11 +621,11 @@ export function HomeClient({
       {!nativeApp || !showAnalysis ? (
       <section
         className={`relative z-10 mx-auto flex w-full max-w-7xl flex-col px-5 pt-5 sm:px-7 md:px-10 lg:px-12 ${
-          heroCompact ? "pb-4" : "pb-10"
+          heroCompact ? "pb-4" : "pb-6 sm:pb-10"
         }`}
       >
         <nav className="liquid-glass relative z-20 mx-auto flex w-full max-w-6xl items-center justify-between gap-4 rounded-full px-4 py-3 sm:px-6 sm:py-4">
-          <a href="#" className="flex min-h-11 min-w-0 items-center gap-0 sm:gap-3">
+          <Link href="/" className="flex min-h-11 min-w-0 items-center gap-0 sm:gap-3">
             <span className="hidden h-9 w-9 shrink-0 place-items-center rounded-full bg-cyan-200/14 text-cyan-100 shadow-[0_0_34px_rgba(103,232,249,0.22)] sm:grid">
               <Sparkles className="h-4 w-4" aria-hidden="true" />
             </span>
@@ -422,7 +637,7 @@ export function HomeClient({
                 {APP_TAGLINE}
               </span>
             </span>
-          </a>
+          </Link>
 
           <div className="hidden items-center gap-7 text-sm font-medium text-white/68 lg:flex">
             <a className="transition hover:text-white" href="#how-it-works">
@@ -431,7 +646,10 @@ export function HomeClient({
             <a className="transition hover:text-white" href="#faq">
               FAQ
             </a>
-            <a className="transition hover:text-white" href="#solar-workspace">
+            <a
+              className="transition hover:text-white"
+              href={hasValidAnalysis ? "#solar-workspace" : "#address-estimate"}
+            >
               Analysis
             </a>
           </div>
@@ -448,7 +666,10 @@ export function HomeClient({
                 <a className="flex min-h-11 items-center rounded-[0.8rem] px-3 py-2 hover:bg-white/[0.06]" href="#faq">
                   FAQ
                 </a>
-                <a className="flex min-h-11 items-center rounded-[0.8rem] px-3 py-2 hover:bg-white/[0.06]" href="#solar-workspace">
+                <a
+                  className="flex min-h-11 items-center rounded-[0.8rem] px-3 py-2 hover:bg-white/[0.06]"
+                  href={hasValidAnalysis ? "#solar-workspace" : "#address-estimate"}
+                >
                   Analysis
                 </a>
               </div>
@@ -471,7 +692,7 @@ export function HomeClient({
           </div>
         </nav>
 
-        <div className={`flex flex-1 items-center ${heroCompact ? "py-5" : "py-10 lg:py-14"}`}>
+        <div className={`flex flex-1 items-center ${heroCompact ? "py-5" : "py-7 sm:py-10 lg:py-14"}`}>
           <div className={`mx-auto text-center ${heroCompact ? "max-w-5xl" : "max-w-4xl"}`}>
             {heroCompact ? (
               <div className="mx-auto mb-4 grid gap-3 rounded-[1.5rem] border border-cyan-200/12 bg-slate-950/58 px-4 py-4 text-left shadow-[0_18px_60px_rgba(2,8,20,0.36)] backdrop-blur-xl md:grid-cols-[1fr_auto] md:items-center md:px-5">
@@ -514,7 +735,7 @@ export function HomeClient({
             </div>
 
             <h1
-              className="mt-6 max-w-5xl text-5xl leading-[0.88] tracking-[-0.05em] text-white drop-shadow-[0_14px_50px_rgba(0,0,0,0.48)] md:text-6xl lg:text-7xl"
+              className="mt-5 max-w-5xl text-[2.6rem] leading-[0.9] tracking-[-0.05em] text-white drop-shadow-[0_14px_50px_rgba(0,0,0,0.48)] sm:mt-6 sm:text-5xl md:text-6xl lg:text-7xl"
               style={{ fontFamily: "var(--font-editorial), serif" }}
             >
               See your roof&rsquo;s solar potential{" "}
@@ -523,7 +744,7 @@ export function HomeClient({
               </span>
             </h1>
 
-            <p className="mx-auto mt-5 max-w-2xl text-base leading-7 text-white/68 sm:text-lg">
+            <p className="mx-auto mt-4 max-w-2xl text-[0.95rem] leading-6 text-white/68 sm:mt-5 sm:text-lg sm:leading-7">
               Enter your address and watch your real Arizona roof render in 3D
               &mdash; panels placed, sunlight mapped, and your savings estimated.
               Free, about 60 seconds, no sales call.
@@ -536,37 +757,40 @@ export function HomeClient({
             <div
               id="address-estimate"
               className={`liquid-glass liquid-glass-unclipped rounded-[1.75rem] p-4 shadow-[0_24px_80px_rgba(0,0,0,0.34)] sm:p-5 ${
-                heroCompact ? "mt-0" : "mt-7"
+                heroCompact ? "mt-0" : "mt-5 sm:mt-7"
               }`}
             >
               <AddressSearch
                 selectedAddress={selectedAddress}
                 onSelect={(property) => {
                   const displayAddress = formatDisplayAddress(property.address);
-                  setSelectedAddress(displayAddress);
-                  setSolarData(null);
-                  setSignedRoofAnalysis(null);
-                  setRoofAnalysisProof(null);
-                  setActivePanelCount(0);
-                  setShareStatus("");
                   if (displayAddress) {
-                      trackEvent("address_selected");
+                    trackEvent("address_selected");
+                    router.push(
+                      getEstimateHref({
+                        address: displayAddress,
+                        addBattery,
+                        batteryOption,
+                        inverterType: selectedInverterType,
+                        location:
+                          Number.isFinite(property.lat) &&
+                          Number.isFinite(property.lng)
+                            ? {
+                                lat: Number(property.lat),
+                                lng: Number(property.lng),
+                              }
+                            : null,
+                        monthlyBill,
+                        nativeApp,
+                        panelCount: 0,
+                        selectedPanelId,
+                      })
+                    );
                   }
-                  setSelectedLocation(
-                    displayAddress &&
-                      Number.isFinite(property.lat) &&
-                      Number.isFinite(property.lng)
-                      ? {
-                          address: displayAddress,
-                          lat: Number(property.lat),
-                          lng: Number(property.lng),
-                        }
-                      : null
-                  );
                 }}
               />
               {totalEstimateCount ? (
-                <div className="mt-3 rounded-[1.15rem] border border-emerald-300/12 bg-emerald-300/[0.055] px-4 py-3 text-sm text-emerald-50">
+                <div className="mt-3 hidden rounded-[1.15rem] border border-emerald-300/12 bg-emerald-300/[0.055] px-4 py-3 text-sm text-emerald-50 sm:block">
                   Join{" "}
                   <span className="font-semibold">
                     {formatNumber(totalEstimateCount)}
@@ -584,17 +808,25 @@ export function HomeClient({
                   <input
                     type="number"
                     min={1}
-                    value={monthlyBill}
-                    onChange={(event) =>
-                      setMonthlyBill(Math.max(1, Number(event.target.value) || 1))
-                    }
-                    placeholder="$ 200"
+                    max={MAX_MONTHLY_BILL}
+                    step={1}
+                    value={monthlyBillInput}
+                    onChange={(event) => updateMonthlyBill(event.target.value)}
+                    placeholder="200"
                     className="min-h-11 min-w-0 flex-1 bg-transparent text-lg font-semibold text-white outline-none placeholder:text-white/35"
-                    inputMode="decimal"
+                    inputMode="numeric"
+                    aria-describedby="monthly-bill-help"
+                    aria-invalid={Boolean(monthlyBillError)}
                   />
                 </span>
-                <span className="mt-1 block text-xs leading-5 text-white/58">
-                  Used to tune savings estimates to your actual bill.
+                <span
+                  id="monthly-bill-help"
+                  className={`mt-1 block text-xs leading-5 ${
+                    monthlyBillError ? "text-amber-200" : "text-white/58"
+                  }`}
+                >
+                  {monthlyBillError ||
+                    "Enter a whole-dollar average from $1 to $5,000. Used to personalize savings."}
                 </span>
               </label>
               {selectedAddress ? (
@@ -628,7 +860,7 @@ export function HomeClient({
               Check current Arizona incentives and modeled solar savings
             </p>
 
-            <div className="mt-5 flex flex-wrap justify-center gap-2 text-[0.68rem] font-semibold uppercase tracking-[0.28em] text-white/70">
+            <div className="mt-5 hidden flex-wrap justify-center gap-2 text-[0.68rem] font-semibold uppercase tracking-[0.28em] text-white/70 sm:flex">
               {["Free", "~60 seconds", "No sales call", "Arizona only"].map((pill) => (
                 <span key={pill} className="liquid-glass rounded-full px-3 py-2">
                   {pill}
@@ -683,9 +915,17 @@ export function HomeClient({
                       return;
                     }
 
-                    const shareUrl = `${window.location.origin}/estimate?address=${encodeURIComponent(
-                      selectedAddress
-                    )}`;
+                    const shareUrl = `${window.location.origin}${getEstimateHref({
+                      address: selectedAddress,
+                      addBattery,
+                      batteryOption,
+                      inverterType: selectedInverterType,
+                      location: selectedLocation,
+                      monthlyBill,
+                      nativeApp,
+                      panelCount: activePanelCount,
+                      selectedPanelId,
+                    })}`;
 
                     void navigator.clipboard
                       ?.writeText(shareUrl)
@@ -723,13 +963,17 @@ export function HomeClient({
                   compact
                   location={selectedLocation}
                   monthlyBill={monthlyBill}
+                  inverterCostAdderPerWatt={
+                    getInverterOption(selectedInverterType).costAdderPerWatt
+                  }
+                  batteryCost={selectedBattery?.cost}
                   onAnalysisChange={setSolarData}
                   onAnalysisProofChange={setRoofAnalysisProof}
                   onSignedAnalysisChange={setSignedRoofAnalysis}
                   activePanelCount={activePanelCount || null}
                   onActivePanelCountChange={setActivePanelCount}
                   selectedPanel={selectedPanel}
-                  onSelectedPanelIdChange={setSelectedPanelId}
+                  onSelectedPanelIdChange={selectPanel}
                 />
               </div>
             </div>
@@ -741,14 +985,14 @@ export function HomeClient({
                 activePanelCount={activePanelCount}
                 monthlyBill={monthlyBill}
                 onActivePanelCountChange={setActivePanelCount}
-                onMonthlyBillChange={setMonthlyBill}
+                onMonthlyBillChange={applyMonthlyBill}
                 onTabChange={setReportTab}
                 selectedInverterType={selectedInverterType}
                 selectedPanelId={selectedPanelId}
                 addBattery={addBattery}
                 batteryOption={batteryOption}
                 onSelectedInverterTypeChange={setSelectedInverterType}
-                onSelectedPanelIdChange={setSelectedPanelId}
+                onSelectedPanelIdChange={selectPanel}
                 onAddBatteryChange={setAddBattery}
                 onBatteryOptionChange={setBatteryOption}
                 sendReportContent={
@@ -765,7 +1009,6 @@ export function HomeClient({
                     selectedPanel={selectedPanel}
                     addBattery={addBattery}
                     selectedBattery={selectedBattery}
-                    onMonthlyBillChange={setMonthlyBill}
                   />
                 }
               />
@@ -789,6 +1032,9 @@ export function HomeClient({
           <Link className="inline-flex min-h-11 items-center underline-offset-4 hover:underline" href="/terms">
             Estimate terms
           </Link>
+          <a className="inline-flex min-h-11 items-center underline-offset-4 hover:underline" href="mailto:reports@solartelligence.com">
+            Support
+          </a>
         </nav>
       </footer>
       )}
@@ -848,6 +1094,11 @@ function CinematicVideoBackground() {
 
   const handleLoadedData = () => {
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      // Playback stays off, but the element must still be revealed: opacity
+      // only ever rises in `handlePlaying`, so leaving it at 0 here would give
+      // reduced-motion visitors a permanently black hero. Showing the poster
+      // gives them the still image instead of nothing.
+      fadeTo(1);
       return;
     }
 
@@ -908,6 +1159,7 @@ function CinematicVideoBackground() {
       <video
         ref={videoRef}
         src={VIDEO_SRC}
+        poster={VIDEO_POSTER_SRC}
         muted
         playsInline
         preload="metadata"
@@ -940,7 +1192,10 @@ function ProgressNav({
 
   return (
     <div
-      className={`print-static-ui fixed inset-x-0 top-0 z-50 hidden border-b border-white/10 bg-slate-950/88 px-5 py-2 shadow-[0_14px_42px_rgba(0,0,0,0.26)] backdrop-blur-xl transition-opacity duration-300 md:block ${
+      // Safe-area padding keeps this bar clear of the Dynamic Island in the iOS
+      // app: it is `fixed`, so the safe-area padding on #main-content does not
+      // reach it.
+      className={`print-static-ui fixed inset-x-0 top-0 z-50 hidden border-b border-white/10 bg-slate-950/88 px-5 py-2 pt-[max(0.5rem,env(safe-area-inset-top))] shadow-[0_14px_42px_rgba(0,0,0,0.26)] backdrop-blur-xl transition-opacity duration-300 md:block ${
         show ? "opacity-100" : "pointer-events-none opacity-0"
       }`}
     >
@@ -974,7 +1229,7 @@ function ReturnBanner({
   onRestore: () => void;
 }) {
   return (
-    <div className="print-static-ui relative z-[70] mx-4 mt-4 flex max-w-5xl flex-col gap-3 rounded-[1.3rem] border border-cyan-200/18 bg-slate-950/92 px-4 py-3 text-sm text-white shadow-[0_24px_80px_rgba(0,0,0,0.42)] backdrop-blur-xl sm:fixed sm:inset-x-4 sm:bottom-4 sm:mx-auto sm:mt-0 sm:flex-row sm:items-center sm:justify-between">
+    <div className="print-static-ui relative z-[70] mx-4 mt-4 flex max-w-5xl flex-col gap-3 rounded-[1.3rem] border border-cyan-200/18 bg-slate-950/92 px-4 py-3 text-sm text-white shadow-[0_24px_80px_rgba(0,0,0,0.42)] backdrop-blur-xl sm:fixed sm:inset-x-4 sm:bottom-[max(1rem,env(safe-area-inset-bottom))] sm:mx-auto sm:mt-0 sm:flex-row sm:items-center sm:justify-between">
       <p className="leading-6 text-white/72">
         Welcome back. Your estimate for{" "}
         <span className="font-semibold text-white">
@@ -1067,39 +1322,6 @@ function OptionalTrustSections() {
   );
 }
 
-const faqItems = [
-  {
-    question: "Will this damage my roof?",
-    answer:
-      "A qualified installer should inspect the roof and select an attachment system appropriate for its condition and construction. Final mounting, flashing, and warranty details belong in the installer proposal.",
-  },
-  {
-    question: "What if I sell my house?",
-    answer:
-      "Solar can add value. Homes with solar often attract buyers looking for lower utility costs, but final value depends on ownership structure, system age, and local market conditions.",
-  },
-  {
-    question: "Is this a sales call?",
-    answer:
-      "No installer contact is required to receive your report. You can separately opt in to installer follow-up when submitting the report form.",
-  },
-  {
-    question: "How accurate is the estimate?",
-    answer:
-      "When available, roof geometry and sunlight inputs come from Google Solar data and satellite imagery. Savings are modeled from your monthly bill and stated assumptions. Final layout, pricing, incentives, and savings require installer confirmation.",
-  },
-  {
-    question: "Do I need good credit?",
-    answer:
-      "Financing eligibility and terms vary by lender and homeowner. The report can illustrate common cash and loan scenarios, but it does not represent approval or a financing offer.",
-  },
-  {
-    question: "How long does installation take?",
-    answer:
-      "Installation commonly takes 1-2 days, plus additional time for permits, utility approval, and final inspection.",
-  },
-] as const;
-
 function TrustIndicatorRow() {
   return (
     <div className="mx-2 mt-5 flex flex-wrap items-center justify-center gap-3 rounded-[1rem] border border-white/8 bg-white/[0.04] px-4 py-3 text-xs font-semibold text-white/62 sm:mx-3">
@@ -1132,14 +1354,17 @@ function FaqSection() {
         {faqItems.map((item) => (
           <details
             key={item.question}
-            className="group rounded-[0.95rem] border border-white/8 bg-white/[0.035] px-4 py-3"
+            className="group rounded-[0.95rem] border border-white/8 bg-white/[0.035]"
           >
-            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-white">
+            {/* Padding lives on the summary, not the details wrapper: only the
+                summary toggles the disclosure, so padding on the parent looked
+                tappable but wasn't, leaving a ~20px target on touch screens. */}
+            <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-semibold text-white">
               {item.question}
               <span className="text-cyan-100 group-open:hidden">+</span>
               <span className="hidden text-cyan-100 group-open:inline">-</span>
             </summary>
-            <p className="mt-3 text-sm leading-6 text-white/66">{item.answer}</p>
+            <p className="px-4 pb-3 text-sm leading-6 text-white/66">{item.answer}</p>
           </details>
         ))}
       </div>

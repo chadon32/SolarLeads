@@ -20,9 +20,8 @@ import {
 } from "@/lib/solar-advisor";
 import {
   ARIZONA_AVG_RATE_PER_KWH,
-  buildSolarMetrics,
-  calculateEnergyOffsetPct,
 } from "@/lib/solar-metrics";
+import { buildActiveSolarEstimate } from "@/lib/active-solar-estimate";
 import {
   BATTERY_OPTIONS,
   getBatteryById,
@@ -32,7 +31,6 @@ import {
   calculateArizonaStateSolarCredit,
   calculateFederalResidentialSolarCredit,
   calculateTwentyYearSolarCosts,
-  calculateTwentyYearUtilityCost,
   getFederalResidentialSolarCreditRate,
 } from "@/lib/financial-model";
 import {
@@ -215,13 +213,19 @@ export function SolarReportDashboard({
               max={values.maxPanelCount}
               value={values.panelCount}
               onChange={(event) => onActivePanelCountChange?.(Number(event.target.value))}
-              className="mt-2 w-full accent-cyan-300"
+              className="mt-2 h-11 w-full cursor-pointer accent-cyan-300"
             />
           </label>
-          {values.rejectedPanelCandidateCount > 0 ? (
+          {values.excludedCandidateCount > 0 ? (
             <p className="mt-2 text-xs leading-5 text-amber-100/85">
-              {values.rejectedPanelCandidateCount} Solar API candidates were not placed due to
-              spacing, overlap, or estimated setback limits.
+              {values.excludedCandidateCount} raw Solar API candidate positions were excluded
+              by preliminary spacing, overlap, or estimated setback limits.
+            </p>
+          ) : null}
+          {values.remainingPanelCapacity > 0 ? (
+            <p className="mt-2 text-xs leading-5 text-white/58">
+              This selected layout leaves {values.remainingPanelCapacity} additional
+              preliminary positions unused.
             </p>
           ) : null}
           <p className="mt-2 text-xs leading-5 text-white/46">
@@ -268,11 +272,13 @@ export function SolarReportDashboard({
           {detailTabs.map((tab) => (
             <button
               key={tab.id}
+              id={`report-tab-${tab.id}`}
               role="tab"
               type="button"
               aria-selected={activeTab === tab.id}
+              aria-controls="report-tabpanel"
               onClick={() => setActiveTab(tab.id)}
-              className={`shrink-0 rounded-full px-4 py-2.5 text-xs font-semibold uppercase tracking-[0.14em] transition ${
+              className={`min-h-11 shrink-0 rounded-full px-4 py-3 text-xs font-semibold uppercase tracking-[0.14em] transition ${
                 activeTab === tab.id
                   ? "bg-white text-slate-950"
                   : "text-white/58 hover:text-white"
@@ -283,7 +289,12 @@ export function SolarReportDashboard({
           ))}
         </div>
 
-        <div className="mt-4">
+        <div
+          id="report-tabpanel"
+          role="tabpanel"
+          aria-labelledby={`report-tab-${activeTab}`}
+          className="mt-4"
+        >
           {activeTab === "overview" ? (
             <ReportOverviewTab
               onSendReport={openSendReport}
@@ -384,11 +395,12 @@ function PanelsTab({
         fits[panel.id] = getPanelFit(panel, {
           roofData: analysis,
           monthlyBill,
+          selectedPanelCount: values.panelCount,
           inverterCostAdderPerWatt: selectedInverter.costAdderPerWatt,
         });
         return fits;
       }, {}),
-    [analysis, monthlyBill, selectedInverter.costAdderPerWatt]
+    [analysis, monthlyBill, selectedInverter.costAdderPerWatt, values.panelCount]
   );
 
   const panelFits = useMemo(
@@ -401,9 +413,7 @@ function PanelsTab({
   );
   const selectedPanel = getPanelById(selectedPanelId);
   const selectedBattery = addBattery ? getBatteryById(batteryOption) : null;
-  const selectedFit =
-    panelFits.find((item) => item.panel.id === selectedPanel.id)?.fit ??
-    values.selectedPanelFit;
+  const selectedFit = values.selectedPanelFit;
   const utility = detectArizonaUtility(address);
   const federalCredit = calculateFederalResidentialSolarCredit(
     selectedFit.systemCost + (selectedBattery?.cost ?? 0)
@@ -653,7 +663,7 @@ function PanelOptionCard({
 
       <div className="mt-auto grid gap-1.5 pt-4 text-xs text-white/58">
         <PanelFinancialRow label="System size" value={`${fit.systemKw.toFixed(1)} kW`} />
-        <PanelFinancialRow label="Panels needed" value={`${fit.maxPanelsFit}`} />
+        <PanelFinancialRow label="Current layout" value={`${fit.maxPanelsFit} panels`} />
         {isFeatured ? (
           <PanelFinancialRow label="Total cost" value={formatMoney(fit.systemCost)} />
         ) : null}
@@ -666,7 +676,7 @@ function PanelOptionCard({
         type="button"
         onClick={onSelect}
         disabled={!fit.fits}
-        className={`mt-4 w-full rounded-full px-4 py-2.5 text-sm font-semibold transition ${
+        className={`mt-4 min-h-11 w-full rounded-full px-4 py-3 text-sm font-semibold transition ${
           isSelected
             ? "bg-white text-slate-950"
             : "border border-white/10 bg-white/[0.06] text-white hover:bg-white/[0.1]"
@@ -715,7 +725,7 @@ function getTierBadgeClass(tier: SolarPanel["tier"]) {
 function PanelSpec({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0 overflow-hidden rounded-[0.75rem] border border-white/8 bg-black/20 p-2">
-      <p className="text-[0.62rem] font-semibold uppercase tracking-[0.12em] text-white/52">
+      <p className="text-[0.62rem] font-semibold uppercase tracking-[0.12em] text-white/70">
         {label}
       </p>
       <p className="mt-1 truncate font-semibold text-white">{value}</p>
@@ -853,7 +863,7 @@ function BatteryStorageSection({
         <button
           type="button"
           onClick={() => onAddBatteryChange?.(!addBattery)}
-          className={`inline-flex min-w-32 items-center justify-center rounded-full px-4 py-2.5 text-sm font-semibold transition ${
+          className={`inline-flex min-h-11 min-w-32 items-center justify-center rounded-full px-4 py-3 text-sm font-semibold transition ${
             addBattery
               ? "bg-cyan-200 text-slate-950"
               : "border border-white/10 bg-white/[0.06] text-white/76 hover:bg-white/[0.1]"
@@ -1176,7 +1186,7 @@ function RoofShadeTab({
         </p>
       </div>
       <div className="rounded-[1rem] border border-white/10 bg-black/20 p-4">
-        <p className="text-[0.62rem] font-semibold uppercase tracking-[0.24em] text-white/48">
+        <p className="text-[0.62rem] font-semibold uppercase tracking-[0.24em] text-white/70">
           Estimated sunlight quality
         </p>
         <p className="mt-2 text-lg font-semibold text-white">
@@ -1314,7 +1324,7 @@ function BillComparisonCard({ values }: { values: DashboardValues }) {
   return (
     <div className="mt-4 rounded-[1rem] border border-white/10 bg-black/22 p-3">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-[0.58rem] font-semibold uppercase tracking-[0.2em] text-white/54">
+        <p className="text-[0.58rem] font-semibold uppercase tracking-[0.2em] text-white/70">
           Bill after solar
         </p>
         <SourceBadge source="user-adjusted" />
@@ -1698,7 +1708,7 @@ function SuitabilityExplanationCard({
   return (
     <div className="mt-4 rounded-[1.05rem] border border-white/10 bg-black/24 p-3">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-[0.62rem] font-semibold uppercase tracking-[0.24em] text-white/48">
+        <p className="text-[0.62rem] font-semibold uppercase tracking-[0.24em] text-white/70">
           {advisor.suitability.headline}
         </p>
         <span className="rounded-full border border-cyan-200/18 bg-cyan-200/10 px-2.5 py-1 text-[0.58rem] font-semibold uppercase tracking-[0.16em] text-cyan-100">
@@ -1753,7 +1763,7 @@ function AiSolarAdvisorCard({
       </p>
       <div className="mt-3 rounded-[0.9rem] border border-white/10 bg-black/22 p-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-[0.62rem] font-semibold uppercase tracking-[0.2em] text-white/44">
+          <p className="text-[0.62rem] font-semibold uppercase tracking-[0.2em] text-white/70">
             Estimated sunlight quality
           </p>
           <span className="rounded-full border border-emerald-200/18 bg-emerald-200/10 px-2.5 py-1 text-[0.56rem] font-semibold uppercase tracking-[0.14em] text-emerald-100">
@@ -1844,7 +1854,7 @@ function KeyMetric({
         <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-full ${accent}`}>
           <Icon className="h-4 w-4" aria-hidden="true" />
         </span>
-        <span className="text-[0.58rem] font-semibold uppercase tracking-[0.18em] text-white/45">
+        <span className="text-[0.58rem] font-semibold uppercase tracking-[0.18em] text-white/70">
           {label}
         </span>
       </div>
@@ -1902,7 +1912,7 @@ function MiniReadout({
   return (
     <div className="rounded-[0.9rem] border border-white/10 bg-black/22 px-3 py-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-[0.62rem] font-semibold uppercase tracking-[0.18em] text-white/42">
+        <p className="text-[0.62rem] font-semibold uppercase tracking-[0.18em] text-white/70">
           {label}
         </p>
         <SourceBadge source={source} />
@@ -1946,7 +1956,7 @@ function AssumptionTable({
   return (
     <div className="mt-4 overflow-hidden rounded-[0.9rem] border border-white/10 bg-black/20">
       <div className="border-b border-white/8 px-3 py-2">
-        <p className="text-[0.58rem] font-semibold uppercase tracking-[0.22em] text-white/42">
+        <p className="text-[0.58rem] font-semibold uppercase tracking-[0.22em] text-white/70">
           Estimate assumptions
         </p>
       </div>
@@ -1974,54 +1984,61 @@ function buildDashboardValues(
   inverterCostAdderPerWatt = 0,
   selectedBattery: BatteryOption | null = null
 ) {
-  const baseMetrics = buildSolarMetrics(analysis);
-  const maxPanelCount = Math.max(1, baseMetrics.maxPanelCount);
-  const panelCount = Math.round(
-    clamp(activePanelCount || maxPanelCount, 1, maxPanelCount)
-  );
-  const metrics = buildSolarMetrics(analysis, {
-    monthlyBill,
-    selectedPanelCount: panelCount,
-  });
-  const selectedPanelFit = getPanelFit(selectedPanel, {
-    roofData: analysis,
-    monthlyBill,
-    selectedPanelCount: panelCount,
+  const activeEstimate = buildActiveSolarEstimate({
+    analysis,
+    batteryCost: selectedBattery?.cost,
     inverterCostAdderPerWatt,
+    monthlyBill,
+    selectedPanel,
+    selectedPanelCount: activePanelCount,
   });
+  const {
+    annualKwh,
+    annualSavings,
+    baseMetrics,
+    billWithSolar,
+    energyOffsetPct,
+    excludedCandidateCount,
+    installedCost,
+    maxPanelCount,
+    monthlySavings,
+    netCostAfterCredit,
+    panelCount,
+    paybackYears,
+    recommendedPanelCount,
+    remainingPanelCapacity,
+    selectedPanelFit,
+    systemKw,
+    taxCredit,
+    twentyYearCashCosts,
+  } = activeEstimate;
   const panelAdjustedMetrics = {
-    ...metrics,
-    annualKwh: selectedPanelFit.annualKwh,
-    annualSavings: selectedPanelFit.annualSavings,
-    monthlySavings: Math.round(selectedPanelFit.annualSavings / 12),
-    panelCount: selectedPanelFit.maxPanelsFit,
-    paybackYears: selectedPanelFit.paybackYears,
-    systemKw: selectedPanelFit.systemKw,
+    ...baseMetrics,
+    annualKwh,
+    annualSavings,
+    coveragePct: energyOffsetPct,
+    monthlySavings,
+    panelCount,
+    paybackYears,
+    systemKw,
   };
   const advisor = buildSolarAdvisorProfile(
     buildSolarAdvisorInputFromAnalysis(
       {
         ...analysis,
-        annualKwh: selectedPanelFit.annualKwh,
-        annualSavingsUSD: selectedPanelFit.annualSavings,
+        annualKwh,
+        annualSavingsUSD: annualSavings,
         panelCapacityWatts: selectedPanel.watts,
-        panelCount: selectedPanelFit.maxPanelsFit,
-        systemKw: selectedPanelFit.systemKw,
+        panelCount,
+        systemKw,
       },
       panelAdjustedMetrics,
       monthlyBill
     )
   );
-  const usableAreaSqFt = Math.round(metrics.usableRoofAreaM2 * 10.7639);
-  const rejectedPanelCandidateCount = metrics.rejectedCandidateCount;
-  const annualKwh = selectedPanelFit.annualKwh;
-  const recommendedKw = selectedPanelFit.systemKw;
-  const annualSavings = selectedPanelFit.annualSavings;
-  const monthlySavings = Math.round(selectedPanelFit.annualSavings / 12);
+  const usableAreaSqFt = Math.round(baseMetrics.usableRoofAreaM2 * 10.7639);
+  const recommendedKw = systemKw;
   const azRatePerKwh = ARIZONA_AVG_RATE_PER_KWH;
-  const energyOffsetPct = calculateEnergyOffsetPct(annualKwh, monthlyBill, azRatePerKwh);
-  const billWithSolar = Math.max(monthlyBill - monthlySavings, 0);
-  const recommendedPanelCount = findRecommendedPanelCount(analysis, monthlyBill, maxPanelCount);
   const panelAreaSqFt =
     analysis.panelWidthMeters > 0 && analysis.panelHeightMeters > 0
       ? analysis.panelWidthMeters * analysis.panelHeightMeters * 10.7639
@@ -2033,7 +2050,14 @@ function buildDashboardValues(
       Math.max(usableAreaSqFt, panelCount * panelAreaSqFt)
     )
   );
-  const carbonMetricTons = roundTo(metrics.co2OffsetLbs / 2205, 1);
+  const carbonFactorKgPerMwh =
+    analysis.carbonOffsetFactorKgPerMwh && analysis.carbonOffsetFactorKgPerMwh > 0
+      ? analysis.carbonOffsetFactorKgPerMwh
+      : 390;
+  const carbonMetricTons = roundTo(
+    ((annualKwh / 1000) * carbonFactorKgPerMwh * 2.205) / 2205,
+    1
+  );
   const carsRemoved = roundTo(carbonMetricTons / 4.6, 1);
   const treesEquivalent = roundTo(carbonMetricTons * 16.7, 1);
   const federalCreditRate = getFederalResidentialSolarCreditRate();
@@ -2041,15 +2065,6 @@ function buildDashboardValues(
   const defaultLoanRate = 6.49;
   const defaultLoanTermYears = 20;
   const batteryCost = selectedBattery?.cost ?? 0;
-  const installedCost = selectedPanelFit.systemCost + batteryCost;
-  const taxCredit = calculateFederalResidentialSolarCredit(installedCost);
-  const netCostAfterCredit = Math.max(installedCost - taxCredit, 0);
-  const paybackYears =
-    annualSavings > 0 ? roundTo(netCostAfterCredit / annualSavings, 1) : 0;
-  const totalCostWithoutSolar = calculateTwentyYearUtilityCost(
-    monthlyBill,
-    utilityEscalationRate
-  );
   const upfrontAfterIncentives =
     financingMode === "buy" ? netCostAfterCredit : 0;
   const baselineLoanPayment = calculateMonthlyLoanPayment(
@@ -2063,21 +2078,12 @@ function buildDashboardValues(
       : financingMode === "lease"
         ? 0
         : baselineLoanPayment * defaultLoanTermYears * 12;
-  const {
-    totalCostWithSolar,
-    totalSavings,
-  } = calculateTwentyYearSolarCosts({
+  const financingCosts = calculateTwentyYearSolarCosts({
     annualSavings,
     monthlyBill,
     totalSolarPayments: totalPayments,
     utilityEscalationRate,
   });
-  const cashTwentyYearSavings = calculateTwentyYearSolarCosts({
-    annualSavings,
-    monthlyBill,
-    totalSolarPayments: netCostAfterCredit,
-    utilityEscalationRate,
-  }).totalSavings;
 
   return {
     advisor,
@@ -2088,9 +2094,9 @@ function buildDashboardValues(
     financingRows: [
       { label: "Up-front cost of installation", source: "illustrative" as const, value: upfrontAfterIncentives },
       { label: "Total payments over 20 years", source: "illustrative" as const, value: totalPayments },
-      { label: "Total 20-year cost with solar", source: "illustrative" as const, value: totalCostWithSolar },
-      { label: "Total 20-year cost without solar", source: "modeled" as const, value: totalCostWithoutSolar },
-      { label: "Total 20-year savings", source: "illustrative" as const, value: totalSavings },
+      { label: "Total 20-year cost with solar", source: "illustrative" as const, value: financingCosts.totalCostWithSolar },
+      { label: "Total 20-year cost without solar", source: "modeled" as const, value: financingCosts.totalCostWithoutSolar },
+      { label: "Total 20-year savings", source: "illustrative" as const, value: financingCosts.totalSavings },
     ],
     financingAssumptions: [
       { label: "Arizona electricity rate", value: `$${azRatePerKwh.toFixed(2)}/kWh` },
@@ -2110,6 +2116,10 @@ function buildDashboardValues(
       },
       { label: "Baseline loan scenario", value: `${defaultLoanRate.toFixed(2)}% APR / ${defaultLoanTermYears} years, before fees` },
       { label: "Remaining utility charges", value: "Not fully modeled; fixed and demand charges may remain" },
+      { label: "Production degradation", value: "Not modeled; installer production warranty required" },
+      { label: "Export compensation", value: "Not modeled; verify the applicable utility tariff" },
+      { label: "Dealer or origination fees", value: "Not modeled; confirm with the lender or installer" },
+      { label: "Maintenance and replacement reserve", value: "Not modeled; verify warranty and long-term service terms" },
     ],
     installationSqFt,
     energyOffsetPct,
@@ -2124,45 +2134,25 @@ function buildDashboardValues(
     paybackYears,
     recommendedKw,
     recommendedPanelCount,
-    rejectedPanelCandidateCount,
+    excludedCandidateCount,
+    remainingPanelCapacity,
     selectedPanelFit,
     selectedPanel,
     selectedBattery,
     savingsRows: [
       { label: "Average annual savings", source: "user-adjusted" as const, value: annualSavings },
-      { label: "Total 20-year cost with solar", source: "illustrative" as const, value: totalCostWithSolar },
-      { label: "Total 20-year cost without solar", source: "modeled" as const, value: totalCostWithoutSolar },
-      { label: "Total 20-year savings", source: "modeled" as const, value: totalSavings },
+      { label: "Total 20-year cost with solar", source: "illustrative" as const, value: twentyYearCashCosts.totalCostWithSolar },
+      { label: "Total 20-year cost without solar", source: "modeled" as const, value: twentyYearCashCosts.totalCostWithoutSolar },
+      { label: "Total 20-year cash savings", source: "modeled" as const, value: twentyYearCashCosts.totalSavings },
     ],
     sunlightHours: analysis.annualSunlightHours,
-    totalSavings,
+    totalSavings: twentyYearCashCosts.totalSavings,
     treesEquivalent,
-    twentyYearSavings: cashTwentyYearSavings,
+    twentyYearSavings: twentyYearCashCosts.totalSavings,
     taxCredit,
     upfrontAfterIncentives,
     usableAreaSqFt,
   };
-}
-
-function findRecommendedPanelCount(
-  analysis: RoofAnalysis,
-  monthlyBill: number,
-  maxPanelCount: number
-) {
-  const annualBill = Math.max(monthlyBill * 12, 1);
-
-  for (let panelCount = 1; panelCount <= maxPanelCount; panelCount += 1) {
-    const metrics = buildSolarMetrics(analysis, {
-      monthlyBill,
-      selectedPanelCount: panelCount,
-    });
-
-    if (metrics.annualSavings >= annualBill) {
-      return panelCount;
-    }
-  }
-
-  return maxPanelCount;
 }
 
 function formatMoney(value: number) {

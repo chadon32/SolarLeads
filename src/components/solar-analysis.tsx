@@ -22,17 +22,14 @@ import {
   type RasterData,
 } from "@/lib/geotiff-utils";
 import type { RoofAnalysisProof } from "@/lib/roof-analysis-proof";
-import { INSTALLED_COST_PER_WATT } from "@/lib/solar-assumptions";
+import { buildActiveSolarEstimate } from "@/lib/active-solar-estimate";
+import { STANDARD_PANEL_WATTS } from "@/lib/solar-assumptions";
 import {
-  buildSolarMetrics,
   formatCompassDirection,
   getMaxPanelCount,
   getProviderPanelCandidateCount,
-  getRecommendedPanelCount,
-  STANDARD_PANEL_WATTS,
 } from "@/lib/solar-metrics";
 import {
-  getPanelFit,
   getShortPanelName,
   SOLAR_PANELS,
   type SolarPanel,
@@ -41,6 +38,7 @@ import {
   buildPanelCornerLatLngPoints,
   buildPanelPolygonPath,
   getPanelFallbackAzimuthDeg,
+  haversineMeters,
   isValidLatLngPoint,
   offsetLatLngMeters,
   SOLAR_PANEL_SEAM_INSET_METERS,
@@ -61,6 +59,8 @@ type SolarAnalysisProps = {
     lat?: number;
     lng?: number;
   } | null;
+  batteryCost?: number | null;
+  inverterCostAdderPerWatt?: number | null;
   monthlyBill?: number;
   activePanelCount?: number | null;
   onAnalysisChange?: (analysis: RoofAnalysis | null) => void;
@@ -213,8 +213,7 @@ const viewModes: Array<{ id: ViewMode; label: string }> = [
 function getInitialRoofAnalysisLayers(): LayerVisibility {
   return {
     panels: true,
-    // Planes off by default so the module array is the hero on first paint.
-    roofPlanes: false,
+    roofPlanes: true,
     sunlight: false,
   };
 }
@@ -227,7 +226,9 @@ const VISUAL_USABLE_INSET_PERCENT = 2.2;
 export function SolarAnalysis({
   address,
   activePanelCount,
+  batteryCost,
   compact = false,
+  inverterCostAdderPerWatt,
   location,
   monthlyBill,
   onAnalysisChange,
@@ -248,6 +249,11 @@ export function SolarAnalysis({
   const [roofData, setRoofData] = useState<RoofAnalysis | null>(null);
   const [resolvedProperty, setResolvedProperty] =
     useState<ResolvedProperty | null>(null);
+  const selectedPanelRef = useRef(selectedPanel);
+  const activePanelCountRef = useRef(activePanelCount);
+  const batteryCostRef = useRef(batteryCost);
+  const inverterCostAdderPerWattRef = useRef(inverterCostAdderPerWatt);
+  const monthlyBillRef = useRef(monthlyBill);
   const [notice, setNotice] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string>("");
   const [viewMode, setViewMode] = useState<ViewMode>("overview");
@@ -255,6 +261,21 @@ export function SolarAnalysis({
     getInitialRoofAnalysisLayers
   );
   const selectedPanelCount = activePanelCount ?? 0;
+  useEffect(() => {
+    selectedPanelRef.current = selectedPanel;
+  }, [selectedPanel]);
+  useEffect(() => {
+    activePanelCountRef.current = activePanelCount;
+  }, [activePanelCount]);
+  useEffect(() => {
+    batteryCostRef.current = batteryCost;
+  }, [batteryCost]);
+  useEffect(() => {
+    inverterCostAdderPerWattRef.current = inverterCostAdderPerWatt;
+  }, [inverterCostAdderPerWatt]);
+  useEffect(() => {
+    monthlyBillRef.current = monthlyBill;
+  }, [monthlyBill]);
   const setSelectedPanelCount = useCallback(
     (nextPanelCount: number) => {
       onActivePanelCountChange?.(nextPanelCount);
@@ -403,9 +424,21 @@ export function SolarAnalysis({
         }
 
         setRoofData(nextRoofData);
-        // Default to a practical bill-offset size, not Google's max packing.
+        // Restore an explicit selection when available; otherwise use the
+        // shared bill-offset recommendation. Roof data itself never depends on
+        // a bill edit, so later estimate tuning cannot restart this request.
+        const activeEstimate = buildActiveSolarEstimate({
+          analysis: nextRoofData,
+          batteryCost: batteryCostRef.current,
+          inverterCostAdderPerWatt: inverterCostAdderPerWattRef.current,
+          monthlyBill: monthlyBillRef.current,
+          selectedPanel: selectedPanelRef.current ?? SOLAR_PANELS[0],
+          selectedPanelCount: activePanelCountRef.current || undefined,
+        });
         setSelectedPanelCount(
-          getRecommendedPanelCount(nextRoofData, { monthlyBill })
+          activePanelCountRef.current && activePanelCountRef.current > 0
+            ? activeEstimate.panelCount
+            : activeEstimate.recommendedPanelCount
         );
         onAnalysisChange?.(nextRoofData);
         onAnalysisProofChange?.(analysisPayload.analysisProof ?? null);
@@ -483,7 +516,6 @@ export function SolarAnalysis({
     onAnalysisChange,
     onAnalysisProofChange,
     onSignedAnalysisChange,
-    monthlyBill,
     setSelectedPanelCount,
   ]);
 
@@ -492,31 +524,17 @@ export function SolarAnalysis({
       return null;
     }
 
-    const maxPanels = getMaxSelectablePanelCount(roofData);
-    const livePanelCount = clampNumber(
-      selectedPanelCount ||
-        getRecommendedPanelCount(roofData, { monthlyBill }),
-      1,
-      maxPanels
-    );
-    const sharedMetrics = buildSolarMetrics(roofData, {
+    const activeEstimate = buildActiveSolarEstimate({
+      analysis: roofData,
+      batteryCost,
+      inverterCostAdderPerWatt,
       monthlyBill,
-      selectedPanelCount: livePanelCount,
+      selectedPanel: selectedPanel ?? SOLAR_PANELS[0],
+      selectedPanelCount: selectedPanelCount || undefined,
     });
-    const panelWatts = selectedPanel?.watts ?? STANDARD_PANEL_WATTS;
-    const selectedPanelFit = selectedPanel
-      ? getPanelFit(selectedPanel, {
-          roofData,
-          monthlyBill,
-          selectedPanelCount: livePanelCount,
-        })
-      : null;
-    const estimatedNetCost =
-      selectedPanelFit?.netCost ??
-      livePanelCount * panelWatts * INSTALLED_COST_PER_WATT;
-    const selectedAnnualKwh = selectedPanelFit?.annualKwh ?? sharedMetrics.annualKwh;
-    const selectedAnnualSavingsUSD =
-      selectedPanelFit?.annualSavings ?? sharedMetrics.annualSavings;
+    const sharedMetrics = activeEstimate.baseMetrics;
+    const selectedAnnualKwh = activeEstimate.annualKwh;
+    const selectedAnnualSavingsUSD = activeEstimate.annualSavings;
     const carbonFactorKgPerMwh =
       roofData.carbonOffsetFactorKgPerMwh && roofData.carbonOffsetFactorKgPerMwh > 0
         ? roofData.carbonOffsetFactorKgPerMwh
@@ -536,26 +554,28 @@ export function SolarAnalysis({
       usableArea: sharedMetrics.usableRoofAreaM2,
       averageRoofPitch: sharedMetrics.avgPitchDeg,
       annualSunlightHours: sharedMetrics.annualSunlightHours,
-      selectedPanelCount: sharedMetrics.panelCount,
-      selectedSystemKw:
-        selectedPanelFit?.systemKw ??
-        Math.round(((livePanelCount * panelWatts) / 1000) * 10) / 10,
+      selectedPanelCount: activeEstimate.panelCount,
+      maxSelectablePanelCount: activeEstimate.maxPanelCount,
+      selectedSystemKw: activeEstimate.systemKw,
       selectedAnnualKwh,
       selectedAnnualSavingsUSD,
-      monthlySavings: Math.round(selectedAnnualSavingsUSD / 12),
-      roiYears:
-        selectedPanelFit?.paybackYears ??
-        (selectedAnnualSavingsUSD > 0
-          ? Math.round((estimatedNetCost / selectedAnnualSavingsUSD) * 10) / 10
-          : 0),
+      monthlySavings: activeEstimate.monthlySavings,
+      roiYears: activeEstimate.paybackYears,
       carbonOffsetLbs,
       carbonOffsetTons,
       treesEquivalent,
       recommendedSegment,
-      financingFrom: Math.round(estimatedNetCost / 300),
+      financingFrom: Math.round(activeEstimate.netCostAfterCredit / 300),
       orientationLabel: sharedMetrics.primaryOrientationLabel,
     };
-  }, [monthlyBill, roofData, selectedPanel, selectedPanelCount]);
+  }, [
+    batteryCost,
+    inverterCostAdderPerWatt,
+    monthlyBill,
+    roofData,
+    selectedPanel,
+    selectedPanelCount,
+  ]);
 
   const stageStep =
     stage === "resolving"
@@ -675,7 +695,12 @@ export function SolarAnalysis({
               viewMode={viewMode}
               onSelectView={selectViewMode}
             />
-            <div className="border-t border-white/8 p-3">
+            <div
+              id="roof-analysis-viewport-panel"
+              role="tabpanel"
+              aria-labelledby={`roof-view-tab-${viewMode}`}
+              className="border-t border-white/8 p-3"
+            >
               <div className="relative overflow-hidden rounded-[1.1rem] border border-white/12 bg-slate-800/35">
                 <ViewportCanvas
                   annualFluxUrl={annualFluxUrl}
@@ -697,7 +722,7 @@ export function SolarAnalysis({
               <div className="mt-3">
                 <PanelSelectionSlider
                   value={metrics.selectedPanelCount}
-                  max={getMaxSelectablePanelCount(roofData)}
+                  max={metrics.maxSelectablePanelCount}
                   onChange={setSelectedPanelCount}
                   canRenderPanels={roofData.solarPanels.length > 0}
                 />
@@ -706,7 +731,7 @@ export function SolarAnalysis({
                 <CompactMapStat
                   label="Panel layout"
                   source="Recommended"
-                  value={`${metrics.selectedPanelCount} of ${getMaxSelectablePanelCount(roofData)} panels`}
+                  value={`${metrics.selectedPanelCount} of ${metrics.maxSelectablePanelCount} panels`}
                 />
                 <CompactMapStat
                   label="System size"
@@ -754,7 +779,12 @@ export function SolarAnalysis({
                 viewMode={viewMode}
                 onSelectView={selectViewMode}
               />
-              <div className="border-t border-white/8 p-4 sm:p-5">
+              <div
+                id="roof-analysis-viewport-panel"
+                role="tabpanel"
+                aria-labelledby={`roof-view-tab-${viewMode}`}
+                className="border-t border-white/8 p-4 sm:p-5"
+              >
                 <div className="relative overflow-hidden rounded-[1.7rem] border border-white/8">
                   <ViewportCanvas
                     annualFluxUrl={annualFluxUrl}
@@ -807,7 +837,7 @@ export function SolarAnalysis({
 
               <PanelSelectionSlider
                 value={metrics.selectedPanelCount}
-                max={getMaxSelectablePanelCount(roofData)}
+                max={metrics.maxSelectablePanelCount}
                 onChange={setSelectedPanelCount}
                 canRenderPanels={roofData.solarPanels.length > 0}
               />
@@ -827,10 +857,7 @@ export function SolarAnalysis({
                 </p>
                 <div className="mt-5 grid gap-3">
                   <ButtonLink href="#contact" variant="primary" className="w-full">
-                    Generate full report
-                  </ButtonLink>
-                  <ButtonLink href="#contact" variant="secondary" className="w-full">
-                    Send full report
+                    Send My Full Report
                   </ButtonLink>
                 </div>
               </SidebarPanel>
@@ -894,11 +921,13 @@ function ViewportHeader({
         className="grid grid-cols-3 gap-2 sm:flex sm:flex-wrap"
       >
         {viewModes.map((mode) => (
-          <button
-            key={mode.id}
-            type="button"
-            role="tab"
-            aria-selected={viewMode === mode.id}
+            <button
+              key={mode.id}
+              id={`roof-view-tab-${mode.id}`}
+              type="button"
+              role="tab"
+              aria-selected={viewMode === mode.id}
+              aria-controls="roof-analysis-viewport-panel"
             onClick={() =>
               onSelectView(
                 viewMode === mode.id && mode.id !== "overview"
@@ -1058,16 +1087,23 @@ function ViewportCanvas({
 
       if (!mapRef.current) {
         mapElementRef.current.replaceChildren();
+        const initialZoom = Math.max(
+          cameraTarget.zoom,
+          getRoofMapZoomFloor(mapElementRef.current)
+        );
         mapRef.current = new googleApi.maps.Map(mapElementRef.current, {
           center,
-          zoom: cameraTarget.zoom,
+          zoom: initialZoom,
           tilt: 0,
           heading: 0,
           mapTypeId: googleApi.maps.MapTypeId.SATELLITE,
           disableDefaultUI: true,
           clickableIcons: false,
           keyboardShortcuts: false,
-          gestureHandling: "greedy",
+          // Let a one-finger swipe keep scrolling the page on phones. Users
+          // can still zoom deliberately with two fingers inside the map.
+          gestureHandling: "cooperative",
+          scrollwheel: false,
           // Clean sales-render frame: no POI clutter over the roof.
           styles: [
             { featureType: "poi", stylers: [{ visibility: "off" }] },
@@ -1081,7 +1117,9 @@ function ViewportCanvas({
       }
 
       mapRef.current.setCenter(center);
-      mapRef.current.setZoom(cameraTarget.zoom);
+      mapRef.current.setZoom(
+        Math.max(cameraTarget.zoom, getRoofMapZoomFloor(mapElementRef.current))
+      );
       mapRef.current.setTilt(0);
       mapRef.current.setMapTypeId(googleApi.maps.MapTypeId.SATELLITE);
       setMapReady(true);
@@ -1266,6 +1304,7 @@ function ViewportCanvas({
           cameraFitTimeoutRef.current = fitMapToRoofTarget({
             map: mapRef.current,
             padding: getMapFitPadding(mapElementRef.current),
+            minimumZoom: getRoofMapZoomFloor(mapElementRef.current),
             target: cameraTarget,
           });
           cameraFitKeyRef.current = cameraTargetKey;
@@ -1317,7 +1356,12 @@ function ViewportCanvas({
   return (
     <div className="overflow-hidden bg-slate-950">
       <div className={`relative ${mapHeightClass}`}>
-        <div ref={mapElementRef} className="absolute inset-0" aria-label={`Satellite roof map for ${address}`} />
+        <div
+          ref={mapElementRef}
+          className="absolute inset-0"
+          role="img"
+          aria-label={`Satellite roof map for ${address}`}
+        />
         {is3dView ? (
           <RoofScene3D
             dsmUrl={dsmUrl}
@@ -1585,7 +1629,7 @@ function MobileMapControls({
               type="button"
               aria-label="Close map controls"
               onClick={() => setIsOpen(false)}
-              className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-white/12 bg-slate-950/60 text-lg leading-none text-slate-200 transition hover:bg-white/10 hover:text-white"
+              className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-white/12 bg-slate-950/60 text-lg leading-none text-slate-200 transition hover:bg-white/10 hover:text-white"
             >
               X
             </button>
@@ -1692,7 +1736,7 @@ function MapEvidenceOverlay({
           </span>
         ) : null}
       </div>
-      <div className="pointer-events-none absolute bottom-8 left-2 z-10 max-w-[min(16rem,calc(100%-1rem))] rounded-[0.85rem] border border-white/30 bg-white/76 p-2.5 text-[0.72rem] font-medium text-slate-900 shadow-[0_8px_18px_rgba(15,23,42,0.16)] backdrop-blur-md sm:bottom-3 sm:left-3">
+      <div className="pointer-events-none absolute left-2 top-20 z-10 max-w-[min(16rem,calc(100%-1rem))] rounded-[0.85rem] border border-white/30 bg-white/76 p-2.5 text-[0.72rem] font-medium text-slate-900 shadow-[0_8px_18px_rgba(15,23,42,0.16)] backdrop-blur-md sm:left-3">
         <div className="flex items-center justify-between gap-2 border-b border-slate-900/10 pb-1.5">
           <p className="text-[0.58rem] font-bold uppercase tracking-[0.18em] text-slate-700">
             Legend
@@ -1762,10 +1806,12 @@ type RoofMapFitTarget = {
 
 function fitMapToRoofTarget({
   map,
+  minimumZoom,
   padding,
   target,
 }: {
   map: GoogleMapInstance;
+  minimumZoom: number;
   padding: number;
   target: RoofMapFitTarget;
 }) {
@@ -1781,8 +1827,12 @@ function fitMapToRoofTarget({
 
       const currentZoom = map.getZoom?.();
       const framedZoom = Number.isFinite(currentZoom)
-        ? clampNumber(currentZoom ?? target.zoom, target.zoom, 21)
-        : target.zoom;
+        ? clampNumber(
+            currentZoom ?? target.zoom,
+            Math.max(target.zoom, minimumZoom),
+            21
+          )
+        : Math.max(target.zoom, minimumZoom);
       map.setZoom(framedZoom);
     }, 180);
   }
@@ -1790,7 +1840,7 @@ function fitMapToRoofTarget({
   if (target.center) {
     map.setCenter(target.center);
   }
-  map.setZoom(target.zoom);
+  map.setZoom(Math.max(target.zoom, minimumZoom));
 
   return null;
 }
@@ -1801,6 +1851,12 @@ function getMapFitPadding(element: HTMLElement | null) {
   }
 
   return element.clientWidth >= 768 ? 72 : 40;
+}
+
+function getRoofMapZoomFloor(element: HTMLElement | null) {
+  // A satellite map inside a phone-width card needs one tighter zoom level
+  // than desktop before individual modules are visually distinguishable.
+  return element && element.clientWidth < 480 ? 21 : 20;
 }
 
 function getRoofMapFitTargetKey(target: RoofMapFitTarget) {
@@ -1845,23 +1901,28 @@ function buildRoofMapFitTarget({
       panels: roofData.solarPanels,
     })
   );
-  const fallbackPoints = property ? [property] : [];
-  const allPoints = [
+  const roofGeometryPoints = [
     ...buildingPoints,
     ...segmentPoints,
     ...panelPoints,
-    ...fallbackPoints,
   ].filter(isValidLatLngPoint);
-  const centroidSource =
-    buildingPoints.filter(isValidLatLngPoint).length >= 3
-      ? buildingPoints
-      : segmentPoints.filter(isValidLatLngPoint).length >= 3
-        ? segmentPoints
-        : panelPoints.filter(isValidLatLngPoint).length
-          ? panelPoints
-          : fallbackPoints;
+  const focusedRoofGeometry = property
+    ? roofGeometryPoints.filter(
+        (point) =>
+          haversineMeters(property.lat, property.lng, point.lat, point.lng) <=
+          160
+      )
+    : roofGeometryPoints;
+  const viewportPoints =
+    focusedRoofGeometry.length >= 3
+      ? focusedRoofGeometry
+      : roofGeometryPoints.length >= 3
+        ? roofGeometryPoints
+        : property
+          ? [property]
+          : [];
 
-  if (!allPoints.length) {
+  if (!viewportPoints.length) {
     return {
       bounds: null,
       center: property,
@@ -1871,16 +1932,16 @@ function buildRoofMapFitTarget({
 
   const viewport = getRoofAnalysisViewport({
     fallbackCenter: property,
-    points: allPoints,
+    points: viewportPoints,
   });
 
   return {
     bounds: viewport.bounds,
     center:
-      getLatLngCentroid(centroidSource.filter(isValidLatLngPoint)) ??
+      getLatLngCentroid(viewportPoints) ??
       viewport.center ??
       getRoofBoundsCenter(roofData.roofBounds),
-    zoom: viewport.staticMapZoom,
+    zoom: Math.max(viewport.staticMapZoom, 20),
   };
 }
 
@@ -2314,6 +2375,20 @@ function createSolarPanelOverlays({
   container.appendChild(canvas);
 
   const overlay = new googleApi.maps.OverlayView();
+  let projectionRetryTimer: number | null = null;
+  let projectionRetryAttempts = 0;
+
+  const scheduleProjectionRetry = () => {
+    if (projectionRetryTimer !== null || projectionRetryAttempts >= 20) {
+      return;
+    }
+
+    projectionRetryAttempts += 1;
+    projectionRetryTimer = window.setTimeout(() => {
+      projectionRetryTimer = null;
+      overlay.draw();
+    }, 100);
+  };
 
   overlay.onAdd = function onAdd() {
     // floatPane sits above map polygons so modules always read on top.
@@ -2322,13 +2397,17 @@ function createSolarPanelOverlays({
       | null
       | undefined;
     (panes?.floatPane ?? panes?.overlayLayer)?.appendChild(container);
+    window.requestAnimationFrame(() => overlay.draw());
   };
 
   overlay.draw = function draw() {
     const projection = this.getProjection();
     if (!projection) {
+      scheduleProjectionRetry();
       return;
     }
+
+    projectionRetryAttempts = 0;
 
     const projected: PixelPoint[][] = [];
     let minX = Number.POSITIVE_INFINITY;
@@ -2401,11 +2480,35 @@ function createSolarPanelOverlays({
   };
 
   overlay.onRemove = function onRemove() {
+    if (projectionRetryTimer !== null) {
+      window.clearTimeout(projectionRetryTimer);
+      projectionRetryTimer = null;
+    }
     container.remove();
   };
 
+  const polygonOverlays = placements.map((placement) => {
+    const path = placement.displayPath.filter(isValidLatLngPoint);
+
+    if (path.length < 4) {
+      return null;
+    }
+
+    return new googleApi.maps.Polygon({
+      clickable: false,
+      fillColor: "#0284c7",
+      fillOpacity: 0.56,
+      map,
+      paths: path,
+      strokeColor: "#e0f2fe",
+      strokeOpacity: 0.98,
+      strokeWeight: 1.25,
+      zIndex: 35,
+    });
+  }).filter((polygon): polygon is GoogleMapOverlayInstance => Boolean(polygon));
+
   overlay.setMap(map);
-  return [overlay];
+  return [...polygonOverlays, overlay];
 }
 
 function toLocalQuad(quad: PixelPoint[], originX: number, originY: number) {
@@ -3475,9 +3578,12 @@ function PanelSelectionSlider({
         onChange={(event) => onChange(Number(event.target.value))}
         aria-label="Number of solar panels"
         aria-valuetext={`${Math.min(value, safeMax)} of ${safeMax} panels`}
-        className="mt-4 w-full accent-cyan-300"
+        // h-11 keeps the visual track thin while giving the control a ~44px
+        // touch area; the bare input was 16px tall and awkward to grab on a
+        // phone, which matters because this is the primary sizing interaction.
+        className="mt-4 h-11 w-full cursor-pointer accent-cyan-300"
       />
-      <div className="mt-2 flex items-center justify-between text-[0.65rem] uppercase tracking-[0.22em] text-slate-500">
+      <div className="mt-2 flex items-center justify-between text-[0.65rem] uppercase tracking-[0.22em] text-slate-400">
         <span>1 panel</span>
         <span>Preliminary max {safeMax}</span>
       </div>
@@ -3914,7 +4020,10 @@ function CompactMapStat({
   return (
     <div className="rounded-[0.9rem] border border-white/8 bg-white/[0.035] px-3 py-2.5">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-[0.55rem] font-semibold uppercase tracking-[0.22em] text-slate-500">
+        {/* slate-400, not slate-500: at 8.8px with wide tracking this label
+            names the number beneath it, and slate-500 measured 3.58:1 here —
+            under the 4.5:1 needed for text this size. */}
+        <p className="text-[0.55rem] font-semibold uppercase tracking-[0.22em] text-slate-400">
           {label}
         </p>
         <span className="rounded-full border border-white/10 bg-black/20 px-2 py-0.5 text-[0.5rem] font-semibold uppercase tracking-[0.14em] text-slate-300">

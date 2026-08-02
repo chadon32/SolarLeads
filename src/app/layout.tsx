@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Instrument_Serif, Manrope, Space_Grotesk } from "next/font/google";
 import { GoogleAnalytics } from "@/components/google-analytics";
+import { StructuredData } from "@/components/structured-data";
 import { APP_CANONICAL_URL, APP_NAME, APP_TAGLINE } from "@/lib/brand";
 import "./globals.css";
 
@@ -96,6 +97,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
+      data-scroll-behavior="smooth"
       className={`${display.variable} ${body.variable} ${editorial.variable} h-full`}
     >
       <body className="min-h-full antialiased">
@@ -103,6 +105,7 @@ export default function RootLayout({
           Skip to main content
         </a>
         <GoogleAnalytics />
+        <StructuredData />
         <div id="main-content" tabIndex={-1}>
           {children}
         </div>

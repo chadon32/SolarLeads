@@ -157,6 +157,11 @@ export function AddressSearch({
   const [searching, setSearching] = useState(false);
   const [addressError, setAddressError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const activeIndexRef = useRef(-1);
+  const setActivePredictionIndex = useCallback((nextIndex: number) => {
+    activeIndexRef.current = nextIndex;
+    setActiveIndex(nextIndex);
+  }, []);
 
   const selectPrediction = useCallback(
     async (prediction: Prediction) => {
@@ -164,7 +169,7 @@ export function AddressSearch({
 
       setQuery(address);
       setPredictions([]);
-      setActiveIndex(-1);
+      setActivePredictionIndex(-1);
       setOpen(false);
 
       if (prediction.place_id.startsWith("manual-")) {
@@ -226,7 +231,7 @@ export function AddressSearch({
         onSelect({ address: "" });
       }
     },
-    [onSelect]
+    [onSelect, setActivePredictionIndex]
   );
 
   useEffect(() => {
@@ -246,7 +251,7 @@ export function AddressSearch({
 
       if (!trimmed) {
         setPredictions([]);
-        setActiveIndex(-1);
+        setActivePredictionIndex(-1);
         setStatus("Start typing to search Google Places.");
         setAddressError(null);
         setFallbackActive(false);
@@ -275,7 +280,7 @@ export function AddressSearch({
         if (!response.ok) {
           const fallback = buildFallbackSuggestions(trimmed);
           setPredictions(fallback);
-          setActiveIndex(fallback.length ? 0 : -1);
+          setActivePredictionIndex(fallback.length ? 0 : -1);
           setPlacesReady(false);
           setFallbackActive(true);
           setStatus(
@@ -294,7 +299,7 @@ export function AddressSearch({
           shouldAutoSelectPrediction(trimmed, nextPredictions[0])
         ) {
           setPredictions(nextPredictions);
-          setActiveIndex(0);
+          setActivePredictionIndex(0);
           setPlacesReady(true);
           setStatus("Exact property match found. Starting roof scan...");
           setAddressError(null);
@@ -304,7 +309,7 @@ export function AddressSearch({
         }
 
         setPredictions(nextPredictions);
-        setActiveIndex(nextPredictions.length ? 0 : -1);
+        setActivePredictionIndex(nextPredictions.length ? 0 : -1);
         setPlacesReady(true);
         setFallbackActive(false);
         setStatus(
@@ -325,7 +330,7 @@ export function AddressSearch({
 
         const fallback = buildFallbackSuggestions(trimmed);
         setPredictions(fallback);
-        setActiveIndex(fallback.length ? 0 : -1);
+        setActivePredictionIndex(fallback.length ? 0 : -1);
         setPlacesReady(false);
         setFallbackActive(true);
         setStatus("Local fallback active - Google Places search is unavailable.");
@@ -338,7 +343,7 @@ export function AddressSearch({
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [open, query, selectPrediction]);
+  }, [open, query, selectPrediction, setActivePredictionIndex]);
 
   const helperText =
     "Pick the matching address to start the solar report workflow.";
@@ -350,6 +355,9 @@ export function AddressSearch({
 
   const showPredictions = open && predictions.length > 0;
   const showLoadingShell = open && searching && predictions.length === 0;
+  const canSubmitAddress = Boolean(
+    exactPredictionMatch ?? predictions[activeIndex] ?? predictions[0]
+  );
   const activePredictionId =
     activeIndex >= 0 && predictions[activeIndex]
       ? `address-option-${predictions[activeIndex].place_id}`
@@ -402,19 +410,26 @@ export function AddressSearch({
             onChange={(event) => {
               setQuery(event.target.value);
               setOpen(true);
-              setActiveIndex(-1);
+              setActivePredictionIndex(-1);
               setFallbackActive(false);
               setAddressError(null);
             }}
             onFocus={() => setOpen(true)}
             onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setOpen(false);
+                setActivePredictionIndex(-1);
+                return;
+              }
+
               if (!predictions.length) return;
 
               if (event.key === "ArrowDown") {
                 event.preventDefault();
                 setOpen(true);
-                setActiveIndex((current) =>
-                  Math.min(current + 1, predictions.length - 1)
+                setActivePredictionIndex(
+                  Math.min(activeIndexRef.current + 1, predictions.length - 1)
                 );
                 return;
               }
@@ -422,47 +437,41 @@ export function AddressSearch({
               if (event.key === "ArrowUp") {
                 event.preventDefault();
                 setOpen(true);
-                setActiveIndex((current) => Math.max(current - 1, 0));
+                setActivePredictionIndex(Math.max(activeIndexRef.current - 1, 0));
                 return;
               }
 
-              if (event.key === "Enter" && activeIndex >= 0) {
+              if (event.key === "Enter") {
+                const selectedPrediction =
+                  predictions[activeIndexRef.current] ??
+                  exactPredictionMatch ??
+                  predictions[0];
+
+                if (!selectedPrediction) return;
+
                 event.preventDefault();
-                void selectPrediction(predictions[activeIndex]);
-                return;
+                void selectPrediction(selectedPrediction);
               }
 
-              if (
-                event.key === "Enter" &&
-                activeIndex < 0 &&
-                (exactPredictionMatch || predictions[0])
-              ) {
-                event.preventDefault();
-                void selectPrediction(exactPredictionMatch ?? predictions[0]);
-                return;
-              }
-
-              if (event.key === "Escape") {
-                event.preventDefault();
-                setOpen(false);
-              }
             }}
             onBlur={() => {
               window.setTimeout(() => setOpen(false), 140);
             }}
             placeholder="Enter your Arizona address..."
-            className={`w-full rounded-full border bg-black/24 py-4 pl-12 pr-16 text-base text-white outline-none transition placeholder:text-white/45 focus:border-cyan-200/50 focus:bg-black/32 ${
+            className={`w-full rounded-full border bg-black/24 py-4 pl-12 pr-28 text-base text-white outline-none transition placeholder:text-white/45 focus:border-cyan-200/50 focus:bg-black/32 ${
               addressError ? "border-rose-300/55" : "border-white/12"
             }`}
           />
           <button
             type="button"
-            aria-label="Use selected address"
+            aria-label="Start roof analysis with the selected address"
+            disabled={!canSubmitAddress}
             onMouseDown={(event) => event.preventDefault()}
             onClick={submitCurrentAddress}
-            className="absolute right-2 top-1/2 z-10 inline-flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white text-slate-950 shadow-[0_12px_30px_rgba(255,255,255,0.18)] transition hover:scale-105 hover:bg-cyan-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200"
+            className="absolute right-2 top-1/2 z-10 inline-flex h-11 -translate-y-1/2 items-center justify-center gap-1.5 rounded-full bg-white px-3 text-slate-950 shadow-[0_12px_30px_rgba(255,255,255,0.18)] transition hover:scale-105 hover:bg-cyan-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:scale-100"
           >
-            <ArrowRight className="h-5 w-5" aria-hidden="true" />
+            <span className="text-xs font-bold">Analyze</span>
+            <ArrowRight className="h-4 w-4" aria-hidden="true" />
           </button>
         </div>
 

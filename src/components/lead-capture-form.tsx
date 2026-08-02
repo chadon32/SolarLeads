@@ -34,7 +34,6 @@ import {
   normalizePhoneNumber,
 } from "@/lib/phone";
 import { formatCurrency } from "@/lib/number-format";
-import { calculateFederalResidentialSolarCredit } from "@/lib/financial-model";
 import {
   getRoofAreaM2,
   getUsableAreaM2,
@@ -42,10 +41,10 @@ import {
 } from "@/lib/roof-analysis";
 import type { RoofAnalysisProof } from "@/lib/roof-analysis-proof";
 import { buildSolarReportSnapshot } from "@/lib/report-snapshot";
-import { buildSolarMetrics } from "@/lib/solar-metrics";
+import { buildActiveSolarEstimate } from "@/lib/active-solar-estimate";
 import {
   getInverterOption,
-  getPanelFit,
+  getPanelById,
   type InverterType,
   type SolarPanel,
 } from "@/lib/solarPanels";
@@ -59,7 +58,6 @@ type LeadCaptureFormProps = {
   initialMonthlyBill?: number;
   lat?: number;
   lng?: number;
-  onMonthlyBillChange?: (monthlyBill: number) => void;
   selectedInverterType?: InverterType;
   selectedPanel?: SolarPanel | null;
   addBattery?: boolean;
@@ -135,6 +133,18 @@ const emptyValues: FormValues = {
 const utilityBillMimeTypes = ["application/pdf", "image/jpeg", "image/png"];
 const utilityBillMaxBytes = 10 * 1024 * 1024;
 const turnstileSiteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
+const leadFieldIds: Partial<Record<keyof FormValues, string>> = {
+  name: "lead-name",
+  email: "lead-email",
+  phone: "lead-phone-optional",
+  electricBillRange: "lead-average-monthly-electric-bill",
+  monthlyBill: "lead-average-monthly-electric-bill",
+  address: "lead-address",
+  ownsHome: "lead-owns-home-or-rents",
+  solarTimeline: "lead-solar-timeline",
+  preferredContactMethod: "lead-preferred-contact-method",
+  bestTimeToContact: "lead-best-time-to-contact",
+};
 
 function isValidEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
@@ -176,7 +186,6 @@ export function LeadCaptureForm({
   initialMonthlyBill = 200,
   lat,
   lng,
-  onMonthlyBillChange,
   selectedInverterType = "string",
   selectedPanel,
   addBattery = false,
@@ -195,7 +204,7 @@ export function LeadCaptureForm({
     "idle" | "submitting" | "error"
   >("idle");
   const [message, setMessage] = useState(
-    "Your report is ready to send."
+    "Complete the form to receive your full report."
   );
   const [utilityBill, setUtilityBill] = useState<UtilityBillState>({
     status: "idle",
@@ -204,6 +213,7 @@ export function LeadCaptureForm({
   const [turnstileToken, setTurnstileToken] = useState("");
   const formStartedAt = useRef(0);
   const formRef = useRef<HTMLFormElement | null>(null);
+  const errorSummaryRef = useRef<HTMLDivElement | null>(null);
   const lastSubmittedFingerprint = useRef<string>("");
 
   useEffect(() => {
@@ -240,26 +250,27 @@ export function LeadCaptureForm({
   const estimatedSavings = useMemo(() => {
     if (analysis?.validSite) {
       const monthlyBill = Number(values.monthlyBill);
-      const baseMetrics = buildSolarMetrics(analysis, {
+      return buildActiveSolarEstimate({
+        analysis,
+        batteryCost: addBattery && selectedBattery ? selectedBattery.cost : 0,
+        inverterCostAdderPerWatt: getInverterOption(selectedInverterType)
+          .costAdderPerWatt,
         monthlyBill: Number.isFinite(monthlyBill) ? monthlyBill : undefined,
+        selectedPanel: selectedPanel ?? getPanelById(),
         selectedPanelCount: activePanelCount,
-      });
-      const inverter = getInverterOption(selectedInverterType);
-
-      if (selectedPanel) {
-        return getPanelFit(selectedPanel, {
-          roofData: analysis,
-          monthlyBill: Number.isFinite(monthlyBill) ? monthlyBill : undefined,
-          selectedPanelCount: activePanelCount ?? baseMetrics.panelCount,
-          inverterCostAdderPerWatt: inverter.costAdderPerWatt,
-        }).annualSavings;
-      }
-
-      return baseMetrics.annualSavings;
+      }).annualSavings;
     }
 
     return 0;
-  }, [activePanelCount, analysis, selectedInverterType, selectedPanel, values.monthlyBill]);
+  }, [
+    activePanelCount,
+    addBattery,
+    analysis,
+    selectedBattery,
+    selectedInverterType,
+    selectedPanel,
+    values.monthlyBill,
+  ]);
 
   const validate = () => {
     const nextErrors: Partial<Record<keyof FormValues, string>> = {};
@@ -335,9 +346,7 @@ export function LeadCaptureForm({
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) {
       window.requestAnimationFrame(() => {
-        formRef.current
-          ?.querySelector<HTMLElement>('[aria-invalid="true"]')
-          ?.focus();
+        errorSummaryRef.current?.focus();
       });
     }
     return Object.keys(nextErrors).length === 0;
@@ -446,43 +455,32 @@ export function LeadCaptureForm({
     const monthlyBill = Number(values.monthlyBill);
     const phoneForStorage = normalizePhoneNumber(values.phone);
     const formattedName = formatName(values.name);
-    const baseMetrics = analysis?.validSite
-      ? buildSolarMetrics(analysis, {
+    const activeEstimate = analysis?.validSite
+      ? buildActiveSolarEstimate({
+          analysis,
+          batteryCost: addBattery && selectedBattery ? selectedBattery.cost : 0,
+          inverterCostAdderPerWatt: getInverterOption(selectedInverterType)
+            .costAdderPerWatt,
           monthlyBill,
+          selectedPanel: selectedPanel ?? getPanelById(),
           selectedPanelCount: activePanelCount,
         })
       : null;
-    const selectedInverter = getInverterOption(selectedInverterType);
-    const panelFit =
-      analysis?.validSite && selectedPanel && baseMetrics
-        ? getPanelFit(selectedPanel, {
-            roofData: analysis,
-            monthlyBill,
-            selectedPanelCount: activePanelCount ?? baseMetrics.panelCount,
-            inverterCostAdderPerWatt: selectedInverter.costAdderPerWatt,
-          })
-        : null;
-    const batteryCost = addBattery && selectedBattery ? selectedBattery.cost : 0;
-    const totalSystemCost = (panelFit?.systemCost ?? 0) + batteryCost;
-    const totalFederalTaxCredit =
-      calculateFederalResidentialSolarCredit(totalSystemCost);
-    const totalNetSystemCost = Math.max(totalSystemCost - totalFederalTaxCredit, 0);
-    const totalPaybackYears =
-      panelFit && panelFit.annualSavings > 0
-        ? Number((totalNetSystemCost / panelFit.annualSavings).toFixed(1))
-        : panelFit?.paybackYears ?? baseMetrics?.paybackYears ?? 0;
-    const metrics =
-      baseMetrics && panelFit
-        ? {
-            ...baseMetrics,
-            annualKwh: panelFit.annualKwh,
-            annualSavings: panelFit.annualSavings,
-            monthlySavings: Math.round(panelFit.annualSavings / 12),
-            panelCount: panelFit.maxPanelsFit,
-            paybackYears: totalPaybackYears,
-            systemKw: panelFit.systemKw,
-          }
-        : baseMetrics;
+    const metrics = activeEstimate
+      ? {
+          ...activeEstimate.baseMetrics,
+          annualKwh: activeEstimate.annualKwh,
+          annualSavings: activeEstimate.annualSavings,
+          coveragePct: activeEstimate.energyOffsetPct,
+          monthlySavings: activeEstimate.monthlySavings,
+          panelCount: activeEstimate.panelCount,
+          paybackYears: activeEstimate.paybackYears,
+          systemKw: activeEstimate.systemKw,
+        }
+      : null;
+    const totalSystemCost = activeEstimate?.installedCost ?? 0;
+    const totalFederalTaxCredit = activeEstimate?.taxCredit ?? 0;
+    const totalNetSystemCost = activeEstimate?.netCostAfterCredit ?? 0;
 
     if (!analysis?.validSite || !metrics || !metrics.annualSavings) {
       setStatus("error");
@@ -569,9 +567,9 @@ export function LeadCaptureForm({
           selectedPanelBrand: selectedPanel?.brand,
           selectedPanelModel: selectedPanel?.model,
           selectedPanelWatts: selectedPanel?.watts,
-          systemCostBeforeIncentives: totalSystemCost || panelFit?.systemCost,
-          federalTaxCredit: totalFederalTaxCredit || panelFit?.taxCredit,
-          netSystemCost: totalNetSystemCost || panelFit?.netCost,
+          systemCostBeforeIncentives: totalSystemCost,
+          federalTaxCredit: totalFederalTaxCredit,
+          netSystemCost: totalNetSystemCost,
           selectedInverterType,
           turnstileToken,
           website: honeypot,
@@ -634,6 +632,10 @@ export function LeadCaptureForm({
     }
   };
 
+  const activeErrors = (
+    Object.entries(errors) as [keyof FormValues, string | undefined][]
+  ).filter(([, error]) => Boolean(error));
+
   return (
     <div className="grid gap-5">
       {turnstileSiteKey ? (
@@ -666,6 +668,41 @@ export function LeadCaptureForm({
               Protected submission
             </div>
           </div>
+
+          {activeErrors.length > 0 ? (
+            <div
+              ref={errorSummaryRef}
+              id="lead-form-errors"
+              tabIndex={-1}
+              role="alert"
+              className="mt-5 rounded-[1.05rem] border border-rose-300/25 bg-rose-300/10 px-4 py-3 text-left outline-none focus:ring-2 focus:ring-rose-200"
+            >
+              <p className="font-semibold text-rose-100">
+                Please review {activeErrors.length} highlighted field
+                {activeErrors.length === 1 ? "" : "s"}.
+              </p>
+              <ul className="mt-2 grid gap-1 text-sm text-rose-200">
+                {activeErrors.map(([field, error]) =>
+                  error ? (
+                    <li key={field}>
+                      <a
+                        className="underline underline-offset-2 hover:text-white"
+                        href={`#${leadFieldIds[field]}`}
+                        onClick={(event) => {
+                          const target = document.getElementById(leadFieldIds[field] ?? "");
+                          if (!target) return;
+                          event.preventDefault();
+                          target.focus();
+                        }}
+                      >
+                        {error}
+                      </a>
+                    </li>
+                  ) : null
+                )}
+              </ul>
+            </div>
+          ) : null}
 
           <div className="mt-6 grid gap-4 sm:grid-cols-2">
             <div aria-hidden="true" className="hidden">
@@ -714,7 +751,6 @@ export function LeadCaptureForm({
                 updateField("electricBillRange", value);
                 const nextMonthlyBill = getMonthlyBillFromRange(value);
                 updateField("monthlyBill", String(nextMonthlyBill));
-                onMonthlyBillChange?.(nextMonthlyBill);
               }}
               options={ELECTRIC_BILL_RANGE_OPTIONS}
               error={errors.electricBillRange || errors.monthlyBill}
@@ -768,14 +804,29 @@ export function LeadCaptureForm({
                 error={errors.bestTimeToContact}
               />
             ) : null}
-            <div className="sm:col-span-2">
-              <TextAreaField
-                label="Notes"
-                value={values.notes}
-                onChange={(value) => updateField("notes", value)}
-                placeholder="Anything a solar specialist should know? Roof concerns, battery interest, timeline, or utility questions..."
-              />
-            </div>
+            {/* Collapsed by default. It is the only free-text field here and
+                it is entirely optional, so an always-open textarea just adds
+                visible weight to the form for the majority who skip it. The
+                value is still submitted normally once opened. */}
+            <details className="group sm:col-span-2">
+              <summary className="inline-flex cursor-pointer list-none items-center gap-2 text-sm font-semibold text-cyan-100/85 transition hover:text-cyan-100 [&::-webkit-details-marker]:hidden">
+                <span
+                  aria-hidden="true"
+                  className="text-base leading-none transition-transform group-open:rotate-45"
+                >
+                  +
+                </span>
+                Add a note for the installer (optional)
+              </summary>
+              <div className="mt-3">
+                <TextAreaField
+                  label="Notes"
+                  value={values.notes}
+                  onChange={(value) => updateField("notes", value)}
+                  placeholder="Anything a solar specialist should know? Roof concerns, battery interest, timeline, or utility questions..."
+                />
+              </div>
+            </details>
           </div>
 
           <UtilityBillUploadCard
@@ -913,13 +964,13 @@ export function LeadCaptureForm({
               </p>
               <p className="mt-3 text-lg font-semibold tracking-tight text-white">
                 {status === "submitting"
-                    ? "Sending full report"
-                    : "Your AI solar report is being generated"}
+                  ? "Sending your full report"
+                  : "Ready to generate your report"}
               </p>
               <p className="mt-2 text-sm leading-6 text-slate-300">
                 {status === "submitting"
-                    ? "Saving your preferences, preparing the PDF email, and marking the report for follow-up."
-                    : "Submit when you are ready to receive the full homeowner PDF report."}
+                  ? "Saving your preferences and preparing the PDF report."
+                  : "Complete the form once, then receive your homeowner PDF report by email."}
               </p>
               {status === "submitting" ? <StatusSkeleton /> : null}
             </div>
