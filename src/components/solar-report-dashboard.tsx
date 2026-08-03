@@ -21,6 +21,7 @@ import {
 import {
   ARIZONA_AVG_RATE_PER_KWH,
 } from "@/lib/solar-metrics";
+import { ARIZONA_INSTALLED_COST_MARKET } from "@/lib/solar-assumptions";
 import { buildActiveSolarEstimate } from "@/lib/active-solar-estimate";
 import {
   BATTERY_OPTIONS,
@@ -36,6 +37,7 @@ import {
 import {
   detectArizonaUtility,
   getInverterOption,
+  getPanelAreaM2,
   getPanelById,
   getPanelFit,
   getRoofShadeRiskLabel,
@@ -69,7 +71,13 @@ type SolarReportDashboardProps = {
 
 export type DetailTab = "overview" | "roof" | "panels" | "savings" | "financing" | "send";
 type FinancingMode = "buy" | "lease" | "loan";
-type MetricSource = "solar-api" | "modeled" | "user-adjusted" | "illustrative" | "estimated";
+type MetricSource =
+  | "solar-api"
+  | "manufacturer"
+  | "modeled"
+  | "user-adjusted"
+  | "illustrative"
+  | "estimated";
 
 const monthlyBillOptions = [100, 150, 200, 250, 300, 350, 400, 450, 500];
 
@@ -176,7 +184,7 @@ export function SolarReportDashboard({
             Final panel placement, incentives, pricing, and savings require installer confirmation.
           </p>
           <div className="mt-4 grid grid-cols-2 gap-2">
-            <MiniReadout label="Solar score" source="solar-api" value={`${values.advisor.suitability.score}/100`} />
+            <MiniReadout label="Solar readiness" source="solar-api" value={`${values.advisor.suitability.score}/100`} />
             <MiniReadout label="Panels" source="solar-api" value={`${values.panelCount}`} />
             <MiniReadout label="Annual savings" source="user-adjusted" value={formatMoney(values.annualSavings)} />
             <MiniReadout label="System size" source="user-adjusted" value={`${values.recommendedKw.toFixed(1)} kW`} />
@@ -218,14 +226,14 @@ export function SolarReportDashboard({
           </label>
           {values.excludedCandidateCount > 0 ? (
             <p className="mt-2 text-xs leading-5 text-amber-100/85">
-              {values.excludedCandidateCount} raw Solar API candidate positions were excluded
-              by preliminary spacing, overlap, or estimated setback limits.
+              {values.excludedCandidateCount} raw Solar API positions were removed before
+              the preliminary ceiling because of spacing, overlap, or estimated setbacks.
             </p>
           ) : null}
           {values.remainingPanelCapacity > 0 ? (
             <p className="mt-2 text-xs leading-5 text-white/58">
-              This selected layout leaves {values.remainingPanelCapacity} additional
-              preliminary positions unused.
+              The selected {values.panelCount}-panel layout leaves {values.remainingPanelCapacity}{" "}
+              positions available below the preliminary ceiling.
             </p>
           ) : null}
           <p className="mt-2 text-xs leading-5 text-white/46">
@@ -267,7 +275,7 @@ export function SolarReportDashboard({
         <div
           role="tablist"
           aria-label="Solar report detail sections"
-          className="flex gap-2 overflow-x-auto rounded-full border border-white/10 bg-black/28 p-1"
+          className="grid grid-cols-3 gap-1 rounded-[1.15rem] border border-white/10 bg-black/28 p-1 xl:grid-cols-6 xl:rounded-full"
         >
           {detailTabs.map((tab) => (
             <button
@@ -278,7 +286,7 @@ export function SolarReportDashboard({
               aria-selected={activeTab === tab.id}
               aria-controls="report-tabpanel"
               onClick={() => setActiveTab(tab.id)}
-              className={`min-h-11 shrink-0 rounded-full px-4 py-3 text-xs font-semibold uppercase tracking-[0.14em] transition ${
+              className={`min-h-11 rounded-full px-2 py-2 text-[0.68rem] font-semibold uppercase leading-4 tracking-[0.05em] transition xl:px-4 xl:py-3 xl:text-xs xl:tracking-[0.14em] ${
                 activeTab === tab.id
                   ? "bg-white text-slate-950"
                   : "text-white/58 hover:text-white"
@@ -351,7 +359,7 @@ type PanelSortKey =
   | "model"
   | "watts"
   | "efficiency"
-  | "pricePerWatt"
+  | "installedCostPerWatt"
   | "warranty_years"
   | "azHeatLoss"
   | "netCost"
@@ -470,6 +478,12 @@ function PanelsTab({
             We show the current panel first, then a few alternatives. Open the
             comparison table only if you want the full equipment catalog.
           </p>
+          <p className="mt-2 max-w-3xl text-xs leading-5 text-white/48">
+            Manufacturer specifications are model-specific. Installed costs use
+            the Arizona market average of ${ARIZONA_INSTALLED_COST_MARKET.averagePerWatt.toFixed(2)}/W
+            as of {ARIZONA_INSTALLED_COST_MARKET.asOf}; actual equipment pricing,
+            availability, labor, and financing require an installer quote.
+          </p>
         </div>
         <SourceBadge source="modeled" />
       </div>
@@ -492,10 +506,10 @@ function PanelsTab({
                 current monthly bill.
               </p>
               <div className="mt-4 grid grid-cols-2 gap-2">
-                <MiniReadout label="Wattage" source="modeled" value={`${selectedPanel.watts}W`} />
-                <MiniReadout label="Efficiency" source="modeled" value={`${selectedPanel.efficiency}%`} />
-                <MiniReadout label="Warranty" source="modeled" value={`${selectedPanel.warranty_years} yrs`} />
-                <MiniReadout label="Payback" source="modeled" value={`${selectedFit.paybackYears.toFixed(1)} yrs`} />
+                <MiniReadout label="Wattage" source="manufacturer" value={`${selectedPanel.watts}W`} />
+                <MiniReadout label="Efficiency" source="manufacturer" value={`${selectedPanel.efficiency}%`} />
+                <MiniReadout label="Product warranty" source="manufacturer" value={`${selectedPanel.warranty_years} yrs`} />
+                <MiniReadout label="Modeled payback" source="modeled" value={`${selectedFit.paybackYears.toFixed(1)} yrs`} />
               </div>
             </div>
             {bestAlternatives.map(({ fit, panel }) => (
@@ -637,6 +651,14 @@ function PanelOptionCard({
             {panel.model}
           </h4>
           <p className="mt-1 line-clamp-2 text-xs leading-5 text-white/58">{panel.bestFor}</p>
+          <a
+            href={panel.specSourceUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-1 inline-flex text-[0.68rem] font-medium text-cyan-100/70 underline decoration-cyan-100/25 underline-offset-2 hover:text-cyan-100"
+          >
+            Manufacturer specifications
+          </a>
         </div>
         <span className={`shrink-0 rounded-full border px-2 py-1 text-[0.62rem] font-bold uppercase tracking-[0.12em] ${getTierBadgeClass(panel.tier)}`}>
           {getTierLabel(panel.tier)}
@@ -1036,12 +1058,12 @@ function PanelComparisonTable({
     { key: "brand", label: "Brand" },
     { key: "model", label: "Model" },
     { key: "watts", label: "Watts" },
-    { key: "pricePerWatt", label: "$/W" },
+    { key: "installedCostPerWatt", label: "AZ installed est. $/W" },
     { key: "efficiency", label: "Efficiency" },
     { key: "warranty_years", label: "Warranty" },
     { key: "azHeatLoss", label: "AZ Heat Loss" },
     { key: "netCost", label: "Net Cost" },
-    { key: "paybackYears", label: "Payback" },
+    { key: "paybackYears", label: "Modeled payback" },
   ];
 
   return (
@@ -1083,7 +1105,9 @@ function PanelComparisonTable({
               <td className="px-3 py-2 font-semibold text-white">{panel.brand}</td>
               <td className="px-3 py-2">{panel.model}</td>
               <td className="px-3 py-2">{panel.watts}W</td>
-              <td className="px-3 py-2">${panel.pricePerWatt.toFixed(2)}</td>
+              <td className="px-3 py-2">
+                ${panel.installedCostPerWatt.toFixed(2)}
+              </td>
               <td className="px-3 py-2">{panel.efficiency}%</td>
               <td className="px-3 py-2">{panel.warranty_years} yrs</td>
               <td className="px-3 py-2">{fit.azHeatLoss}</td>
@@ -1107,12 +1131,12 @@ function ReportOverviewTab({
 }) {
   return (
     <div className="grid gap-4 lg:grid-cols-[1fr_0.75fr]">
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid grid-cols-2 gap-2 sm:gap-3">
         <CompactInfo
           icon={Sun}
           source="solar-api"
           title={`${values.advisor.suitability.score}/100`}
-          body="Preliminary solar suitability score."
+          body="Preliminary Solar Readiness Score for this roof."
           tone="gold"
         />
         <CompactInfo
@@ -1125,7 +1149,7 @@ function ReportOverviewTab({
           icon={Zap}
           source="user-adjusted"
           title={`${values.recommendedKw.toFixed(1)} kW`}
-          body="Current system size from selected panel count."
+          body="Estimated panel capacity. One kW equals 1,000 watts of panel power."
         />
         <CompactInfo
           icon={TrendingUp}
@@ -1144,7 +1168,7 @@ function ReportOverviewTab({
         </p>
         <div className="mt-4 grid grid-cols-2 gap-2">
           <MiniReadout label="20-year savings" source="modeled" value={formatMoney(values.twentyYearSavings)} />
-          <MiniReadout label="Energy offset" source="modeled" value={`${values.energyOffsetPct}%`} />
+          <MiniReadout label="Estimated annual bill covered" source="modeled" value={`${values.energyOffsetPct}%`} />
         </div>
         <button
           type="button"
@@ -1184,6 +1208,19 @@ function RoofShadeTab({
           planes, and estimated sunlight quality. The heat layer is intentionally
           subtle so the roof remains readable.
         </p>
+        <div className="mt-4 rounded-[0.9rem] border border-white/8 bg-slate-950/34 p-3">
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-white/76">
+            Installer verification checklist
+          </p>
+          <ul className="mt-3 grid gap-2 text-xs leading-5 text-white/58">
+            <li>Confirm roof measurements, condition, obstructions, and fire setbacks.</li>
+            <li>Verify electrical service capacity and utility interconnection requirements.</li>
+            <li>Confirm equipment, tariff, incentives, production, and final pricing.</li>
+          </ul>
+          <p className="mt-3 text-xs leading-5 text-cyan-100/72">
+            These items require an on-site installer review and are not editable in this preliminary homeowner model.
+          </p>
+        </div>
       </div>
       <div className="rounded-[1rem] border border-white/10 bg-black/20 p-4">
         <p className="text-[0.62rem] font-semibold uppercase tracking-[0.24em] text-white/70">
@@ -1408,13 +1445,27 @@ function FinancingTab({
       className="grid scroll-mt-24 gap-4 lg:grid-cols-[0.95fr_1.05fr]"
     >
       <div className="rounded-[1rem] border border-white/10 bg-black/20 p-4">
+        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-[0.62rem] font-semibold uppercase tracking-[0.22em] text-cyan-100/78">
+              Financing comparison
+            </p>
+            <h3 className="mt-2 text-lg font-semibold text-white">
+              Illustrative financing scenarios
+            </h3>
+          </div>
+          <span className="rounded-full border border-amber-200/20 bg-amber-200/10 px-3 py-1.5 text-[0.62rem] font-semibold uppercase tracking-[0.14em] text-amber-100">
+            Not a loan offer
+          </span>
+        </div>
         <div className="grid grid-cols-3 rounded-full border border-white/10 bg-black/24 p-1">
           {(["buy", "lease", "loan"] as const).map((mode) => (
             <button
               key={mode}
               type="button"
+              aria-pressed={financingMode === mode}
               onClick={() => onFinancingModeChange(mode)}
-              className={`rounded-full px-3 py-2 text-[0.65rem] font-semibold uppercase tracking-[0.14em] transition ${
+              className={`min-h-11 rounded-full px-3 py-2 text-[0.65rem] font-semibold uppercase tracking-[0.14em] transition ${
                 financingMode === mode
                   ? "bg-white text-slate-950"
                   : "text-white/58 hover:text-white"
@@ -1501,7 +1552,7 @@ function FinancingTab({
               <MiniReadout label="System cost" source="illustrative" value={formatMoney(values.installedCost)} />
               <MiniReadout label="Modeled federal credit" source="illustrative" value={formatMoney(values.taxCredit)} />
               <MiniReadout label="Estimated net cost" source="illustrative" value={formatMoney(values.netCostAfterCredit)} />
-              <MiniReadout label="Payback" source="modeled" value={`${values.paybackYears.toFixed(1)} years`} />
+              <MiniReadout label="Modeled payback" source="modeled" value={`${values.paybackYears.toFixed(1)} years`} />
             </>
           ) : null}
           {financingMode === "lease" ? (
@@ -1550,13 +1601,15 @@ function FinancingTab({
         </div>
         <button
           type="button"
+          aria-controls="financing-assumptions"
+          aria-expanded={showDetails}
           onClick={() => setShowDetails((current) => !current)}
-          className="rounded-full border border-white/10 bg-white/[0.06] px-4 py-3 text-sm font-semibold text-white/78 transition hover:bg-white/[0.1] hover:text-white"
+          className="min-h-11 rounded-full border border-white/10 bg-white/[0.06] px-4 py-3 text-sm font-semibold text-white/78 transition hover:bg-white/[0.1] hover:text-white"
         >
-          {showDetails ? "Hide detailed assumptions" : "View detailed assumptions"}
+          {showDetails ? "Hide assumptions and exclusions" : "View assumptions and exclusions"}
         </button>
         {showDetails ? (
-          <div className="grid gap-4">
+          <div id="financing-assumptions" className="grid gap-4">
             {financingMode === "lease" ? (
               <p className="rounded-[1rem] border border-amber-200/15 bg-amber-300/8 p-4 text-sm leading-6 text-amber-50/80">
                 A lease or PPA cannot be modeled responsibly without a provider
@@ -1774,13 +1827,13 @@ function AiSolarAdvisorCard({
           {advisor.sunlightQuality.summary}
         </p>
       </div>
-      <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
+      <div className="mt-4 flex flex-wrap gap-2">
         {advisor.questions.map((item, index) => (
           <button
             key={item.question}
             type="button"
             onClick={() => onSelectQuestion(index)}
-            className={`shrink-0 rounded-full px-3 py-2 text-[0.62rem] font-semibold uppercase tracking-[0.14em] transition ${
+            className={`min-h-11 rounded-full px-3 py-2 text-[0.62rem] font-semibold uppercase tracking-[0.12em] transition ${
               index === selectedQuestion
                 ? "bg-white text-slate-950"
                 : "border border-white/10 bg-black/20 text-white/58 hover:text-white"
@@ -1807,6 +1860,7 @@ function AiSolarAdvisorCard({
 function SourceBadge({ source }: { source: MetricSource }) {
   const styles: Record<MetricSource, string> = {
     "solar-api": "border-cyan-200/18 bg-cyan-200/10 text-cyan-100",
+    manufacturer: "border-sky-200/18 bg-sky-200/10 text-sky-100",
     modeled: "border-amber-200/18 bg-amber-200/10 text-amber-100",
     "user-adjusted": "border-emerald-200/18 bg-emerald-200/10 text-emerald-100",
     illustrative: "border-slate-200/18 bg-white/8 text-slate-200",
@@ -1814,15 +1868,26 @@ function SourceBadge({ source }: { source: MetricSource }) {
   };
   const labels: Record<MetricSource, string> = {
     "solar-api": "Solar API",
+    manufacturer: "Manufacturer",
     modeled: "Modeled",
     "user-adjusted": "User-adjusted",
     illustrative: "Illustrative",
     estimated: "Estimated",
   };
+  const descriptions: Record<MetricSource, string> = {
+    "solar-api": "Based on available Google Solar API roof and sunlight data",
+    manufacturer: "Published by the named panel manufacturer",
+    modeled: "Calculated from stated assumptions and available report data",
+    "user-adjusted": "Updates when you change the bill or panel settings",
+    illustrative: "Example scenario only; not a quote or offer",
+    estimated: "Preliminary estimate requiring installer verification",
+  };
 
   return (
     <span
-      className={`shrink-0 rounded-full border px-2.5 py-1 text-[0.56rem] font-semibold uppercase tracking-[0.16em] ${styles[source]}`}
+      aria-label={`${labels[source]}: ${descriptions[source]}`}
+      title={descriptions[source]}
+      className={`shrink-0 rounded-full border px-2.5 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.12em] ${styles[source]}`}
     >
       {labels[source]}
     </span>
@@ -1885,15 +1950,15 @@ function CompactInfo({
       : "bg-cyan-200/12 text-cyan-100";
 
   return (
-    <article className="rounded-[1rem] border border-white/10 bg-black/20 p-4">
+    <article className="min-w-0 rounded-[1rem] border border-white/10 bg-black/20 p-3 sm:p-4">
       <span className={`grid h-9 w-9 place-items-center rounded-full ${accent}`}>
         <Icon className="h-4 w-4" aria-hidden="true" />
       </span>
       <div className="mt-3">
         <SourceBadge source={source} />
       </div>
-      <h3 className="mt-4 text-xl font-semibold text-white">{title}</h3>
-      <p className="mt-2 text-sm leading-6 text-white/56">{body}</p>
+      <h3 className="mt-3 break-words text-lg font-semibold text-white sm:mt-4 sm:text-xl">{title}</h3>
+      <p className="mt-2 text-xs leading-5 text-white/60 sm:text-sm sm:leading-6">{body}</p>
     </article>
   );
 }
@@ -2039,17 +2104,8 @@ function buildDashboardValues(
   const usableAreaSqFt = Math.round(baseMetrics.usableRoofAreaM2 * 10.7639);
   const recommendedKw = systemKw;
   const azRatePerKwh = ARIZONA_AVG_RATE_PER_KWH;
-  const panelAreaSqFt =
-    analysis.panelWidthMeters > 0 && analysis.panelHeightMeters > 0
-      ? analysis.panelWidthMeters * analysis.panelHeightMeters * 10.7639
-      : 20;
-  const installationSqFt = Math.round(
-    clamp(
-      panelCount * panelAreaSqFt,
-      Math.min(usableAreaSqFt, 120),
-      Math.max(usableAreaSqFt, panelCount * panelAreaSqFt)
-    )
-  );
+  const panelAreaSqFt = getPanelAreaM2(selectedPanel) * 10.7639;
+  const installationSqFt = Math.round(panelCount * panelAreaSqFt);
   const carbonFactorKgPerMwh =
     analysis.carbonOffsetFactorKgPerMwh && analysis.carbonOffsetFactorKgPerMwh > 0
       ? analysis.carbonOffsetFactorKgPerMwh
@@ -2102,7 +2158,7 @@ function buildDashboardValues(
       { label: "Arizona electricity rate", value: `$${azRatePerKwh.toFixed(2)}/kWh` },
       {
         label: "Installed cost basis",
-        value: `$${(selectedPanel.pricePerWatt + inverterCostAdderPerWatt).toFixed(2)}/W${
+        value: `$${(selectedPanel.installedCostPerWatt + inverterCostAdderPerWatt).toFixed(2)}/W${
           selectedBattery ? ` + ${formatMoney(batteryCost)} battery` : ""
         }`,
       },

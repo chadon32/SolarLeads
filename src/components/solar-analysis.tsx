@@ -30,6 +30,7 @@ import {
   getProviderPanelCandidateCount,
 } from "@/lib/solar-metrics";
 import {
+  getPanelDimensionsMeters,
   getShortPanelName,
   SOLAR_PANELS,
   type SolarPanel,
@@ -40,7 +41,6 @@ import {
   getPanelFallbackAzimuthDeg,
   haversineMeters,
   isValidLatLngPoint,
-  offsetLatLngMeters,
   SOLAR_PANEL_SEAM_INSET_METERS,
   type LatLngPoint,
 } from "@/lib/panel-geometry";
@@ -440,10 +440,6 @@ export function SolarAnalysis({
             ? activeEstimate.panelCount
             : activeEstimate.recommendedPanelCount
         );
-        onAnalysisChange?.(nextRoofData);
-        onAnalysisProofChange?.(analysisPayload.analysisProof ?? null);
-        onSignedAnalysisChange?.(nextRoofData);
-
         setStage("fetching");
         const [imageResponse, dataLayersResponse] = await Promise.all([
           fetch(
@@ -481,6 +477,11 @@ export function SolarAnalysis({
           setSolarRgbUrl(dataLayersPayload.rgbUrl ?? null);
         }
         setStage("done");
+        // Expose the report only after both the roof model and its canonical
+        // rooftop image are ready, so website and native loading states agree.
+        onAnalysisChange?.(nextRoofData);
+        onAnalysisProofChange?.(analysisPayload.analysisProof ?? null);
+        onSignedAnalysisChange?.(nextRoofData);
         trackEvent("solar_data_loaded", {
           panel_count_bucket: getPanelCountBucket(
             nextRoofData.panelCount
@@ -576,6 +577,22 @@ export function SolarAnalysis({
     selectedPanel,
     selectedPanelCount,
   ]);
+
+  useEffect(() => {
+    if (stage !== "done" && stage !== "invalid" && stage !== "error") {
+      return;
+    }
+
+    const nativeBridge = (
+      window as Window & {
+        ReactNativeWebView?: { postMessage: (message: string) => void };
+      }
+    ).ReactNativeWebView;
+
+    nativeBridge?.postMessage(
+      JSON.stringify({ type: "analysis-status", status: stage })
+    );
+  }, [stage]);
 
   const stageStep =
     stage === "resolving"
@@ -749,7 +766,7 @@ export function SolarAnalysis({
                   value={`$${metrics.selectedAnnualSavingsUSD.toLocaleString()}`}
                 />
                 <CompactMapStat
-                  label="Payback"
+                  label="Modeled payback"
                   source="Modeled"
                   value={`${metrics.roiYears.toFixed(1)} yrs`}
                 />
@@ -1062,6 +1079,16 @@ function ViewportCanvas({
   const cameraFitKeyRef = useRef<string | null>(null);
   const [mapReady, setMapReady] = useState(false);
   const mapsApiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
+  const panelDimensions = useMemo(
+    () =>
+      selectedPanel
+        ? getPanelDimensionsMeters(selectedPanel)
+        : {
+            heightMeters: roofData.panelHeightMeters,
+            widthMeters: roofData.panelWidthMeters,
+          },
+    [roofData.panelHeightMeters, roofData.panelWidthMeters, selectedPanel]
+  );
   const cameraTarget = useMemo(
     () => buildRoofMapFitTarget({ property, roofData }),
     [property, roofData]
@@ -1276,6 +1303,8 @@ function ViewportCanvas({
           ...createSolarPanelOverlays({
             googleApi,
             map: mapRef.current,
+            panelHeightMeters: panelDimensions.heightMeters,
+            panelWidthMeters: panelDimensions.widthMeters,
             roofData,
             selectedPanelCount,
           })
@@ -1328,6 +1357,8 @@ function ViewportCanvas({
     layerVisibility,
     mapReady,
     mapsApiKey,
+    panelDimensions.heightMeters,
+    panelDimensions.widthMeters,
     roofData,
     selectedPanelCount,
     solarMaskUrl,
@@ -1368,6 +1399,8 @@ function ViewportCanvas({
             rgbUrl={solarRgbUrl}
             fluxUrl={annualFluxUrl}
             maskUrl={solarMaskUrl}
+            panelHeightMeters={panelDimensions.heightMeters}
+            panelWidthMeters={panelDimensions.widthMeters}
             roofData={roofData}
             selectedPanelCount={layerVisibility.panels ? selectedPanelCount : 0}
             showSunlight={layerVisibility.sunlight}
@@ -1749,7 +1782,7 @@ function MapEvidenceOverlay({
           {layerVisibility.roofPlanes ? (
             <>
               <LegendItem swatch="border border-cyan-500 bg-cyan-300/30" label="Roof plane - usable solar area" />
-              <LegendItem swatch="border border-amber-500/70 bg-amber-300/15" label="Setback - required edge buffer" />
+              <LegendItem swatch="border border-amber-500/70 bg-amber-300/15" label="Planning reserve - installer verifies" />
               <LegendItem swatch="bg-slate-700/70" label="Unavailable - shaded or obstructed" />
             </>
           ) : null}
@@ -2293,9 +2326,13 @@ function getRenderablePanelCount(roofData: RoofAnalysis, selectedPanelCount: num
 }
 
 function buildSelectedPanelPlacements({
+  panelHeightMeters,
+  panelWidthMeters,
   roofData,
   selectedPanelCount,
 }: {
+  panelHeightMeters: number;
+  panelWidthMeters: number;
   roofData: RoofAnalysis;
   selectedPanelCount: number;
 }): PanelLayoutPlacement[] {
@@ -2303,8 +2340,8 @@ function buildSelectedPanelPlacements({
   const selectedPanels = selectCohesiveSolarPanels({
     panels: roofData.solarPanels,
     targetCount,
-    panelWidthMeters: roofData.panelWidthMeters,
-    panelHeightMeters: roofData.panelHeightMeters,
+    panelWidthMeters,
+    panelHeightMeters,
   });
 
   return selectedPanels.flatMap((panel) => {
@@ -2318,8 +2355,8 @@ function buildSelectedPanelPlacements({
           fallbackAzimuthDeg: getPanelFallbackAzimuthDeg(roofData, panel),
           insetMeters: SOLAR_PANEL_SEAM_INSET_METERS,
           panel,
-          panelHeightMeters: roofData.panelHeightMeters,
-          panelWidthMeters: roofData.panelWidthMeters,
+          panelHeightMeters,
+          panelWidthMeters,
           panels: roofData.solarPanels,
         }),
         panel,
@@ -2338,15 +2375,21 @@ function buildSelectedPanelPlacements({
 function createSolarPanelOverlays({
   googleApi,
   map,
+  panelHeightMeters,
+  panelWidthMeters,
   roofData,
   selectedPanelCount,
 }: {
   googleApi: GoogleMapsApi;
   map: GoogleMapInstance;
+  panelHeightMeters: number;
+  panelWidthMeters: number;
   roofData: RoofAnalysis;
   selectedPanelCount: number;
 }): GoogleMapOverlayInstance[] {
   const placements = buildSelectedPanelPlacements({
+    panelHeightMeters,
+    panelWidthMeters,
     roofData,
     selectedPanelCount,
   });
@@ -2935,17 +2978,12 @@ function getSelectedHomeMarkerPoint({
   property: ResolvedProperty | null;
   roofData: RoofAnalysis;
 }) {
-  if (roofData.roofBounds) {
-    const center = getRoofBoundsCenter(roofData.roofBounds);
+  const panelCenter = getLatLngCentroid(
+    roofData.solarPanels.map((panel) => panel.center).filter(isValidLatLngPoint)
+  );
 
-    if (center) {
-      return offsetLatLngMeters({
-        lat: roofData.roofBounds.northeast.lat,
-        lng: center.lng,
-        eastMeters: 0,
-        northMeters: 6,
-      });
-    }
+  if (panelCenter) {
+    return panelCenter;
   }
 
   const roofCenter = getLatLngCentroid(
@@ -3554,7 +3592,7 @@ function PanelSelectionSlider({
 
   return (
     <div className="rounded-[1.45rem] border border-white/10 bg-white/[0.03] p-4 shadow-[0_10px_28px_rgba(2,8,20,0.18)]">
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <p className="text-[0.56rem] font-semibold uppercase tracking-[0.32em] text-cyan-300">
             Panels: {Math.min(value, safeMax)} of {safeMax}
@@ -3566,7 +3604,7 @@ function PanelSelectionSlider({
             verification.
           </p>
         </div>
-        <div className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs font-semibold text-white">
+        <div className="shrink-0 self-start whitespace-nowrap rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs font-semibold text-white">
           {Math.min(value, safeMax)} / {safeMax}
         </div>
       </div>

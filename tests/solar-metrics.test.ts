@@ -23,7 +23,7 @@ test("buildSolarMetrics caps savings at the homeowner annual bill", () => {
   assert.equal(metrics.annualSavings, 1200);
   assert.equal(metrics.monthlySavings, 100);
   assert.equal(metrics.coveragePct, 100);
-  assert.equal(metrics.paybackYears, 9.2);
+  assert.equal(metrics.paybackYears, 7.7);
 });
 
 test("recommended panel count targets usage within the preliminary ceiling", () => {
@@ -70,6 +70,26 @@ test("recommended panel count targets usage within the preliminary ceiling", () 
   const metrics = buildSolarMetrics(analysis, { monthlyBill: null });
   assert.equal(metrics.panelCount, 20);
   assert.equal(metrics.maxPanelCount, 94);
+});
+
+test("drawable Solar API positions override stale inflated accepted counts", () => {
+  const analysis = buildMetricFixture({
+    acceptedPanelCount: 50,
+    panelCount: 50,
+    solarPanels: Array.from({ length: 2 }, (_, index) => ({
+      azimuthDeg: 180,
+      center: { lat: 33.415 + index * 0.000001, lng: -111.831 },
+      columnIndex: index,
+      orientation: "PORTRAIT" as const,
+      pitchDeg: 18,
+      rowIndex: 0,
+      segmentIndex: 0,
+      yearlyEnergyDcKwh: 800,
+    })),
+  });
+
+  assert.equal(getProviderPanelCandidateCount(analysis), 2);
+  assert.ok(getMaxPanelCount(analysis) <= 2);
 });
 
 test("preliminary ceiling includes garage planes without perfect roof packing", () => {
@@ -237,8 +257,9 @@ test("panel fit uses the shared preliminary ceiling when placements exist", () =
     selectedPanelCount: 10,
   });
 
-  // Packing is already included in the shared ceiling, so it is not applied twice.
-  assert.equal(fit.maxPanelsFit, 10);
+  // Packing is already included in the shared ceiling; the one-panel reduction
+  // comes only from the selected module being larger than the provider module.
+  assert.equal(fit.maxPanelsFit, 9);
 });
 
 test("solar metrics and panel fit do not round fractional panel requests upward", () => {

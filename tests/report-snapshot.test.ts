@@ -67,3 +67,14 @@ test("accepted analysis uses the matching config energy and per-segment counts",
   assert.equal(accepted.roofSegments[2].panelsFit, 2);
   assert.equal(accepted.roofSegments[0].panelsFit, 0);
 });
+
+test("accepted report analysis preserves the selected module footprint", () => {
+  const analysis = buildAnalysisFixture();
+  const accepted = buildAcceptedPanelAnalysisForReport(analysis, {
+    heightMeters: 1.73,
+    widthMeters: 1.118,
+  });
+
+  assert.equal(accepted.panelHeightMeters, 1.73);
+  assert.equal(accepted.panelWidthMeters, 1.118);
+});

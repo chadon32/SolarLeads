@@ -56,6 +56,7 @@ import { BATTERY_OPTIONS } from "@/lib/batteries";
 import {
   INVERTER_OPTIONS,
   SOLAR_PANELS,
+  getPanelDimensionsMeters,
   getPanelById,
 } from "@/lib/solarPanels";
 import { z } from "zod";
@@ -293,7 +294,7 @@ export async function POST(request: Request) {
     const selectedInverter = resolveTrustedInverter(body.selectedInverterType);
     const selectedBattery = resolveTrustedBattery(body);
     const installedCostPerWatt =
-      selectedPanel.pricePerWatt + selectedInverter.costAdderPerWatt;
+      selectedPanel.installedCostPerWatt + selectedInverter.costAdderPerWatt;
     const candidateReportSnapshot = normalizeSolarReportSnapshot(body.reportSnapshot);
     const proof = verifyRoofAnalysisProof({
       address,
@@ -326,7 +327,8 @@ export async function POST(request: Request) {
       {
         ...candidateReportSnapshot,
         roofAnalysis: buildAcceptedPanelAnalysisForReport(
-          body.signedRoofAnalysis
+          body.signedRoofAnalysis,
+          getPanelDimensionsMeters(selectedPanel)
         ),
       },
       {

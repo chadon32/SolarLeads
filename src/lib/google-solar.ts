@@ -357,12 +357,18 @@ export function buildSolarRoofAnalysis(params: {
 
   // Keep API order: solarPanels[].segmentIndex indexes into this array.
   const roofSegments = [...(solarPotential.roofSegmentStats ?? [])];
-  const allSolarPanels = (solarPotential.solarPanels ?? [])
-    .map((panel) => normalizeSolarPanel(panel, roofSegments))
-    // Modules over the roof edge or raised equipment (AC units, vents).
-    .filter(
-      (_, index) => !params.excludedPanelIndices?.has(index)
-    );
+  const allSolarPanels = (solarPotential.solarPanels ?? []).flatMap(
+    (panel, index) => {
+      // Preserve Google's original array index when applying terrain-based
+      // exclusions, then discard candidates without a drawable coordinate.
+      if (params.excludedPanelIndices?.has(index)) {
+        return [];
+      }
+
+      const normalizedPanel = normalizeSolarPanel(panel, roofSegments);
+      return normalizedPanel ? [normalizedPanel] : [];
+    }
+  );
 
   // For attached or closely-spaced homes the Solar API can span the
   // neighbor's roof. Keep only the building at the queried address.
@@ -447,10 +453,7 @@ export function buildSolarRoofAnalysis(params: {
     0,
     Math.min((solarPotential.maxArrayAreaMeters2 ?? 0) * keptAreaRatio, roofAreaM2)
   );
-  const maxArrayPanelsCount =
-    droppedNeighborSegments > 0
-      ? solarPanels.length
-      : Math.max(Math.round(solarPotential.maxArrayPanelsCount ?? 0), 0);
+  const maxArrayPanelsCount = solarPanels.length;
   const panelCapacityWatts = clamp(
     Number(solarPotential.panelCapacityWatts ?? 400),
     100,
@@ -466,11 +469,10 @@ export function buildSolarRoofAnalysis(params: {
   );
   const rawSolarPanelConfigs = [...(solarPotential.solarPanelConfigs ?? [])]
     .sort((left, right) => (left.panelsCount ?? 0) - (right.panelsCount ?? 0))
-    // Neighbor-inclusive configs would overstate this home's capacity.
+    // A configuration is only supportable when every panel has a valid,
+    // property-filtered coordinate that the 2D and 3D views can render.
     .filter(
-      (config) =>
-        droppedNeighborSegments === 0 ||
-        Math.round(config.panelsCount ?? 0) <= solarPanels.length
+      (config) => Math.round(config.panelsCount ?? 0) <= solarPanels.length
     );
   const solarPanelConfigs = normalizeSolarPanelConfigs(
     rawSolarPanelConfigs
@@ -490,12 +492,7 @@ export function buildSolarRoofAnalysis(params: {
       : params.insights.boundingBox;
   // Physical max capacity (slider upper bound). Default homeowner size is
   // chosen later as a bill-offset / typical-usage recommendation.
-  const maxPanelCapacity = Math.max(
-    0,
-    maxArrayPanelsCount,
-    solarPanels.length,
-    Math.round(maxConfig?.panelsCount ?? 0)
-  );
+  const maxPanelCapacity = solarPanels.length;
 
   if (!roofBox?.sw || !roofBox?.ne) {
     return buildInvalidRoofAnalysis({
@@ -713,11 +710,25 @@ export function buildSolarRoofAnalysis(params: {
 function normalizeSolarPanel(
   panel: SolarPanel,
   roofSegments: RoofSegmentStats[]
-): SolarPanelPlacement {
+): SolarPanelPlacement | null {
   // Google SolarPanel has no azimuth/pitch — only segmentIndex. Orientation,
   // facing direction, and pitch all come from roofSegmentStats[segmentIndex].
   // Bake them onto the panel so drawing stays correct even when the display
   // list only keeps the largest few segments.
+  const latitude = Number(panel.center?.latitude);
+  const longitude = Number(panel.center?.longitude);
+  if (
+    !Number.isFinite(latitude) ||
+    !Number.isFinite(longitude) ||
+    latitude < -90 ||
+    latitude > 90 ||
+    longitude < -180 ||
+    longitude > 180 ||
+    (latitude === 0 && longitude === 0)
+  ) {
+    return null;
+  }
+
   const segmentIndex = Math.max(0, Math.round(Number(panel.segmentIndex ?? 0)));
   const segment = roofSegments[segmentIndex];
   const segmentAzimuth = segment?.azimuthDegrees;
@@ -734,8 +745,8 @@ function normalizeSolarPanel(
 
   return {
     center: {
-      lat: Number(panel.center?.latitude ?? 0),
-      lng: Number(panel.center?.longitude ?? 0),
+      lat: latitude,
+      lng: longitude,
     },
     orientation: panel.orientation === "LANDSCAPE" ? "LANDSCAPE" : "PORTRAIT",
     azimuthDeg: clamp(Math.round(azimuthSource), 0, 359),

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import * as THREE from "three";
 import { Canvas, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
@@ -25,6 +25,8 @@ type RoofScene3DProps = {
   rgbUrl: string | null;
   fluxUrl: string | null;
   maskUrl: string | null;
+  panelHeightMeters: number;
+  panelWidthMeters: number;
   roofData: RoofAnalysis;
   selectedPanelCount: number;
   showSunlight: boolean;
@@ -71,6 +73,13 @@ const DEFAULT_FACE_HEIGHT_METERS = 3.2;
 /** Neutral roof tone for the default (non-sunlight) material. */
 const ROOF_COLOR = "#e8e4dc";
 const WALL_COLOR = "#f3f2ef";
+/**
+ * Cell matrix of a standard residential module (60-cell: 6 across the short
+ * edge, 10 along the long edge). Drawn into the glass texture so modules read
+ * as photovoltaic rather than as plain dark rectangles.
+ */
+const PV_CELLS_SHORT_EDGE = 6;
+const PV_CELLS_LONG_EDGE = 10;
 
 // rgbUrl stays in the props contract but the CAD view no longer needs the
 // aerial photo — only the DSM (plane fits) and flux (heatmap).
@@ -78,6 +87,8 @@ export default function RoofScene3D({
   dsmUrl,
   fluxUrl,
   maskUrl,
+  panelHeightMeters,
+  panelWidthMeters,
   roofData,
   selectedPanelCount,
   showSunlight,
@@ -207,6 +218,106 @@ export default function RoofScene3D({
     return () => window.clearTimeout(handle);
   }, [state.status]);
 
+  // One frame + two glass materials shared by every module. Declaring these
+  // inline per panel allocated a material (and its shader binding) per module
+  // — hundreds of identical copies on a fully packed roof.
+  const panelSkin = useMemo(() => {
+    const portraitTexture = makePvCellTexture(
+      PV_CELLS_SHORT_EDGE,
+      PV_CELLS_LONG_EDGE
+    );
+    const landscapeTexture = makePvCellTexture(
+      PV_CELLS_LONG_EDGE,
+      PV_CELLS_SHORT_EDGE
+    );
+
+    return {
+      // Anodized graphite, not bright mill-finish aluminium. Each module shows
+      // only a couple of centimetres of frame, but across a whole array those
+      // borders merge into a grid — a light frame turns a dark PV field into a
+      // white mesh at any real zoom level.
+      frame: new THREE.MeshStandardMaterial({
+        color: "#4a5260",
+        roughness: 0.5,
+        metalness: 0.45,
+      }),
+      // Low metalness: without an environment map a metallic surface has
+      // nothing to reflect and renders near-black. Tight roughness instead
+      // gives the cover glass a crisp specular highlight.
+      glassPortrait: new THREE.MeshStandardMaterial({
+        map: portraitTexture,
+        color: portraitTexture ? "#ffffff" : "#10192b",
+        roughness: 0.22,
+        metalness: 0.08,
+      }),
+      glassLandscape: new THREE.MeshStandardMaterial({
+        map: landscapeTexture,
+        color: landscapeTexture ? "#ffffff" : "#10192b",
+        roughness: 0.22,
+        metalness: 0.08,
+      }),
+      textures: [portraitTexture, landscapeTexture],
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      panelSkin.frame.dispose();
+      panelSkin.glassPortrait.dispose();
+      panelSkin.glassLandscape.dispose();
+      for (const texture of panelSkin.textures) {
+        texture?.dispose();
+      }
+    };
+  }, [panelSkin]);
+
+  const readyData = state.status === "ready" ? state.data : null;
+
+  // Cohesive-subset selection walks and clusters every candidate module, so
+  // it must not rerun on unrelated rerenders (layer toggles, resizes).
+  const visiblePanels = useMemo(() => {
+    if (!readyData) {
+      return [];
+    }
+
+    const selectedPanels = new Set(
+      selectCohesiveSolarPanels({
+        panels: roofData.solarPanels,
+        targetCount: selectedPanelCount,
+        panelWidthMeters,
+        panelHeightMeters,
+      })
+    );
+    const selectedPanelIndices = new Set(
+      roofData.solarPanels.flatMap((panel, index) =>
+        selectedPanels.has(panel) ? [index] : []
+      )
+    );
+
+    return readyData.panels.flatMap((panel) => {
+      if (!selectedPanelIndices.has(panel.key)) {
+        return [];
+      }
+
+      const placement = roofData.solarPanels[panel.key];
+      const landscape = placement?.orientation === "LANDSCAPE";
+
+      return [
+        {
+          ...panel,
+          alongMeters: landscape ? panelWidthMeters : panelHeightMeters,
+          acrossMeters: landscape ? panelHeightMeters : panelWidthMeters,
+        },
+      ];
+    });
+  }, [
+    panelHeightMeters,
+    panelWidthMeters,
+    readyData,
+    roofData,
+    selectedPanelCount,
+  ]);
+
   if (state.status === "loading") {
     return (
       <SceneMessage>
@@ -231,29 +342,25 @@ export default function RoofScene3D({
   const cameraDistance = Math.max(24, data.extentMeters * 0.85);
   const gridSize = Math.ceil(data.extentMeters * 3);
   const showFlux = showSunlight && data.fluxTexture !== null;
-  const selectedPanels = new Set(
-    selectCohesiveSolarPanels({
-      panels: roofData.solarPanels,
-      targetCount: selectedPanelCount,
-      panelWidthMeters: roofData.panelWidthMeters,
-      panelHeightMeters: roofData.panelHeightMeters,
-    })
-  );
-  const selectedPanelIndices = new Set(
-    roofData.solarPanels.flatMap((panel, index) =>
-      selectedPanels.has(panel) ? [index] : []
-    )
-  );
-  const visiblePanels = data.panels.filter((panel) =>
-    selectedPanelIndices.has(panel.key)
-  );
+  // Shadow frustum has to enclose the whole model, or casters outside it
+  // silently stop shadowing.
+  const shadowExtent = Math.max(20, data.extentMeters * 0.75);
 
   return (
-    <div className="absolute inset-0" data-testid="roof-scene-3d">
+    <div
+      className="absolute inset-0"
+      data-panel-height-meters={panelHeightMeters}
+      data-panel-width-meters={panelWidthMeters}
+      data-rendered-panel-count={visiblePanels.length}
+      data-testid="roof-scene-3d"
+    >
       <Canvas
         dpr={[1, 2]}
         // Flat (no tone mapping) keeps the heatmap ramp's true colors.
         flat
+        // Soft shadows seat the modules onto their roof planes; without them
+        // a racked array reads as pasted-on rectangles floating over the face.
+        shadows={{ type: THREE.PCFShadowMap }}
         camera={{
           fov: 42,
           near: 0.5,
@@ -275,9 +382,32 @@ export default function RoofScene3D({
             "radial-gradient(120% 90% at 50% 0%, #131c2e 0%, #0b1322 55%, #060b16 100%)",
         }}
       >
-        <hemisphereLight args={["#ffffff", "#475569", 0.85]} />
-        <directionalLight position={[20, 46, 24]} intensity={0.7} />
-        <directionalLight position={[-26, 20, -22]} intensity={0.22} />
+        {/* Ambient fill is deliberately low. The renderer is `flat` (no tone
+            mapping), so a strong hemisphere term drives a near-white roof past
+            1.0 on every face at once — surfaces then clip to the same value
+            and the model flattens into featureless cardboard. Keeping fill
+            below the key light preserves the falloff that shows form. */}
+        <hemisphereLight args={["#ffffff", "#475569", 0.42]} />
+        <directionalLight
+          // Mid-afternoon elevation (~40°), not overhead. A high sun drops each
+          // module's shadow directly beneath itself where it cannot be seen —
+          // the oblique angle is what makes the array read as mounted hardware.
+          position={[28, 30, 20]}
+          intensity={0.78}
+          castShadow
+          shadow-mapSize={[2048, 2048]}
+          shadow-camera-near={1}
+          shadow-camera-far={160}
+          shadow-camera-left={-shadowExtent}
+          shadow-camera-right={shadowExtent}
+          shadow-camera-top={shadowExtent}
+          shadow-camera-bottom={-shadowExtent}
+          // Modules stand only ~14 cm off the face, so the depth bias has to
+          // stay small or their shadows detach from the racking.
+          shadow-bias={-0.0004}
+          shadow-normalBias={0.02}
+        />
+        <directionalLight position={[-26, 20, -22]} intensity={0.16} />
 
         {/* CAD workspace floor */}
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.02, 0]}>
@@ -292,7 +422,9 @@ export default function RoofScene3D({
         {/* Extruded house: flat roof faces + wall skirts */}
         {data.faces.map((face) => (
           <group key={face.key}>
-            <mesh geometry={face.roof}>
+            {/* Faces cast as well as receive: a stepped roof only reads as
+                solid form when its higher sections shadow the lower ones. */}
+            <mesh geometry={face.roof} castShadow receiveShadow>
               {/* Distinct keys force a fresh material on swap — mutating
                   `map` on a live material skips the shader recompile and
                   the texture silently never shows. */}
@@ -317,7 +449,7 @@ export default function RoofScene3D({
             <lineSegments geometry={face.roofEdges}>
               <lineBasicMaterial color="#64748b" transparent opacity={0.65} />
             </lineSegments>
-            <mesh geometry={face.wall}>
+            <mesh geometry={face.wall} castShadow receiveShadow>
               <meshStandardMaterial
                 color={WALL_COLOR}
                 roughness={0.95}
@@ -331,7 +463,7 @@ export default function RoofScene3D({
         {/* Detected shading obstruction markers */}
         {data.obstructions.map((obstruction) => (
           <group key={`obstruction-${obstruction.key}`}>
-            <mesh geometry={obstruction.top}>
+            <mesh geometry={obstruction.top} castShadow>
               <meshStandardMaterial
                 color="#64748b"
                 roughness={0.85}
@@ -366,8 +498,10 @@ export default function RoofScene3D({
             rotation-y={panel.rotation[1]}
           >
             <group rotation-x={panel.rotation[0]}>
-              {/* Aluminum frame */}
-              <mesh>
+              {/* Aluminum frame. The frame alone casts — the glass sits flush
+                  on top of it, so letting both cast would double the shadow
+                  pass over every module for an identical silhouette. */}
+              <mesh castShadow material={panelSkin.frame}>
                 <boxGeometry
                   args={[
                     panel.acrossMeters,
@@ -375,23 +509,21 @@ export default function RoofScene3D({
                     panel.alongMeters,
                   ]}
                 />
-                <meshStandardMaterial
-                  color="#c7ced6"
-                  roughness={0.4}
-                  metalness={0.6}
-                />
               </mesh>
               {/* Crystalline glass face */}
-              <mesh position={[0, PANEL_THICKNESS_METERS / 2 + 0.002, 0]}
+              <mesh
+                position={[0, PANEL_THICKNESS_METERS / 2 + 0.002, 0]}
                 rotation={[-Math.PI / 2, 0, 0]}
+                material={
+                  panel.acrossMeters >= panel.alongMeters
+                    ? panelSkin.glassLandscape
+                    : panelSkin.glassPortrait
+                }
               >
+                {/* ~1.2 cm of frame shows on each side, matching a real
+                    module edge; the previous inset left twice that. */}
                 <planeGeometry
-                  args={[panel.acrossMeters - 0.045, panel.alongMeters - 0.045]}
-                />
-                <meshStandardMaterial
-                  color="#10192b"
-                  roughness={0.35}
-                  metalness={0.3}
+                  args={[panel.acrossMeters - 0.024, panel.alongMeters - 0.024]}
                 />
               </mesh>
             </group>
@@ -406,7 +538,9 @@ export default function RoofScene3D({
           maxPolarAngle={Math.PI * 0.47}
           target={[0, Math.min(3, data.roofTopMeters * 0.5), 0]}
         />
-        <ForceRender trigger={`${showFlux}|${visiblePanels.length}`} />
+        <ForceRender
+          trigger={`${showFlux}|${visiblePanels.length}|${panelHeightMeters}|${panelWidthMeters}`}
+        />
       </Canvas>
       <div className="pointer-events-none absolute bottom-3 left-3 rounded-full border border-white/10 bg-slate-950/70 px-3 py-1 text-[0.6rem] uppercase tracking-[0.18em] text-slate-300 backdrop-blur">
         Drag to orbit · Scroll to zoom
@@ -835,5 +969,61 @@ function makeCanvasTexture(canvas: HTMLCanvasElement) {
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.anisotropy = 4;
+  return texture;
+}
+
+/**
+ * Face of a photovoltaic module: a matrix of monocrystalline cells separated
+ * by backsheet gaps, each crossed by busbars.
+ *
+ * `cols`/`rows` are given in the module's own UV frame, so a portrait module
+ * (6 across, 10 down) and a landscape one (10 across, 6 down) each get a grid
+ * whose cells stay square instead of stretching with the module.
+ */
+function makePvCellTexture(cols: number, rows: number) {
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  const cellPx = 44;
+  const gapPx = 3;
+  const canvas = document.createElement("canvas");
+  canvas.width = cols * cellPx;
+  canvas.height = rows * cellPx;
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    return null;
+  }
+
+  // Backsheet showing through the inter-cell gaps.
+  ctx.fillStyle = "#080d18";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const busbarPx = Math.max(1, Math.round(cellPx * 0.035));
+
+  for (let row = 0; row < rows; row += 1) {
+    for (let col = 0; col < cols; col += 1) {
+      const x = col * cellPx + gapPx / 2;
+      const y = row * cellPx + gapPx / 2;
+      const size = cellPx - gapPx;
+
+      // Silicon wafer: a cool blue-black with a soft diagonal sheen.
+      const wafer = ctx.createLinearGradient(x, y, x + size, y + size);
+      wafer.addColorStop(0, "#1d3055");
+      wafer.addColorStop(0.5, "#14243d");
+      wafer.addColorStop(1, "#0e1a2c");
+      ctx.fillStyle = wafer;
+      ctx.fillRect(x, y, size, size);
+
+      // Two busbars per cell, running the cell's long axis.
+      ctx.fillStyle = "rgba(196, 212, 232, 0.26)";
+      ctx.fillRect(x + size * 0.31, y, busbarPx, size);
+      ctx.fillRect(x + size * 0.65, y, busbarPx, size);
+    }
+  }
+
+  const texture = makeCanvasTexture(canvas);
+  texture.anisotropy = 8;
   return texture;
 }

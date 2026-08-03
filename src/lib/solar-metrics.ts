@@ -72,9 +72,12 @@ export type SharedSolarMetrics = {
 
 /** Raw module candidates returned by the roof model before planning reserves. */
 export function getProviderPanelCandidateCount(analysis: RoofAnalysis) {
+  if (analysis.solarPanels.length > 0) {
+    return analysis.solarPanels.length;
+  }
+
   return Math.max(
     0,
-    analysis.solarPanels.length,
     analysis.acceptedPanelCount ?? 0,
     analysis.panelCount
   );

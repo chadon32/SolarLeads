@@ -1,6 +1,9 @@
 import { calculateFederalResidentialSolarCredit } from "@/lib/financial-model";
 import { getUsableAreaM2, type RoofAnalysis } from "@/lib/roof-analysis";
-import { ARIZONA_AVG_RATE_PER_KWH } from "@/lib/solar-assumptions";
+import {
+  ARIZONA_AVG_RATE_PER_KWH,
+  INSTALLED_COST_PER_WATT,
+} from "@/lib/solar-assumptions";
 import { getMaxPanelCount } from "@/lib/solar-metrics";
 
 export type SolarPanelTier = "premium" | "mid" | "value";
@@ -11,7 +14,7 @@ export type SolarPanel = {
   model: string;
   watts: number;
   efficiency: number;
-  pricePerWatt: number;
+  installedCostPerWatt: number;
   warranty_years: number;
   warranty_power: string;
   type: string;
@@ -20,7 +23,7 @@ export type SolarPanel = {
   tempCoefficient: number;
   tier: SolarPanelTier;
   bestFor: string;
-  inStock: boolean;
+  specSourceUrl: string;
 };
 
 export type InverterType = "string" | "microinverters" | "optimizers";
@@ -52,87 +55,90 @@ export const SOLAR_PANELS: SolarPanel[] = [
   {
     id: "rec-alpha-pure-rx",
     brand: "REC",
-    model: "Alpha Pure RX",
+    model: "Alpha Pure-R",
     watts: 430,
     efficiency: 22.3,
-    pricePerWatt: 2.95,
-    warranty_years: 25,
+    installedCostPerWatt: INSTALLED_COST_PER_WATT,
+    warranty_years: 20,
     warranty_power: "92% at 25 years",
-    type: "Monocrystalline PERC",
-    dimensions: "1821 x 1016 mm",
+    type: "Heterojunction (HJT)",
+    dimensions: "1730 x 1118 mm",
     weight_kg: 21.5,
-    tempCoefficient: -0.26,
+    tempCoefficient: -0.24,
     tier: "premium",
     bestFor: "small roofs needing max output",
-    inStock: true,
+    specSourceUrl: "https://www.recgroup.com/en-us/rec-alpha-pure-r",
   },
   {
     id: "qcells-q-peak-duo",
     brand: "Hanwha Qcells",
     model: "Q.PEAK DUO BLK ML-G10+",
     watts: 400,
-    efficiency: 20.6,
-    pricePerWatt: 2.65,
+    efficiency: 20.4,
+    installedCostPerWatt: INSTALLED_COST_PER_WATT,
     warranty_years: 25,
     warranty_power: "86% at 25 years",
     type: "Monocrystalline PERC",
     dimensions: "1879 x 1045 mm",
-    weight_kg: 22.5,
-    tempCoefficient: -0.29,
+    weight_kg: 22,
+    tempCoefficient: -0.34,
     tier: "mid",
-    bestFor: "best value for money",
-    inStock: true,
+    bestFor: "balanced residential performance",
+    specSourceUrl: "https://us.qcells.com/q-peak-duo-blk-ml-g10/",
   },
   {
     id: "canadian-solar-hiku6",
     brand: "Canadian Solar",
-    model: "HiKu6 Mono PERC CS6R",
+    model: "HiKu6 CS6R-410MS",
     watts: 410,
-    efficiency: 21.2,
-    pricePerWatt: 2.55,
+    efficiency: 21,
+    installedCostPerWatt: INSTALLED_COST_PER_WATT,
     warranty_years: 25,
     warranty_power: "84.8% at 25 years",
     type: "Monocrystalline PERC",
-    dimensions: "1879 x 1045 mm",
-    weight_kg: 22.5,
+    dimensions: "1722 x 1134 mm",
+    weight_kg: 21.3,
     tempCoefficient: -0.34,
     tier: "mid",
-    bestFor: "large installs, best price per panel",
-    inStock: true,
+    bestFor: "compact residential roof layouts",
+    specSourceUrl:
+      "https://investors.canadiansolar.com/news-releases/news-release-details/canadian-solar-starts-mass-production-new-rooftop-module-power",
   },
   {
     id: "sunpower-maxeon-6",
-    brand: "SunPower",
-    model: "Maxeon 6 AC",
+    brand: "Maxeon",
+    model: "Maxeon 6 DC 420",
     watts: 420,
-    efficiency: 22.8,
-    pricePerWatt: 3.4,
-    warranty_years: 40,
-    warranty_power: "92% at 40 years",
+    efficiency: 21.7,
+    installedCostPerWatt: INSTALLED_COST_PER_WATT,
+    warranty_years: 25,
+    warranty_power: "Up to 40-year coverage through a Maxeon partner",
     type: "Maxeon back-contact",
-    dimensions: "1812 x 1046 mm",
-    weight_kg: 19,
-    tempCoefficient: -0.27,
+    dimensions: "1872 x 1032 mm",
+    weight_kg: 20.9,
+    tempCoefficient: -0.29,
     tier: "premium",
-    bestFor: "longest warranty, best heat tolerance",
-    inStock: true,
+    bestFor: "high efficiency and long warranty options",
+    specSourceUrl:
+      "https://maxeon.com/us/sites/default/files/2024-12/sp_max6_66c_res_420_410_dc_ds_en_ltr_552330.pdf",
   },
   {
     id: "jinko-tiger-neo",
     brand: "Jinko Solar",
-    model: "Tiger Neo N-type 54HL4R",
+    model: "Tiger Neo N-type 54HL4",
     watts: 415,
-    efficiency: 21.8,
-    pricePerWatt: 2.45,
-    warranty_years: 25,
-    warranty_power: "87.4% at 25 years",
+    efficiency: 21.25,
+    installedCostPerWatt: INSTALLED_COST_PER_WATT,
+    warranty_years: 12,
+    warranty_power: "87.4% at 30 years",
     type: "N-type TOPCon",
     dimensions: "1722 x 1134 mm",
-    weight_kg: 21.3,
+    weight_kg: 22,
     tempCoefficient: -0.3,
     tier: "value",
-    bestFor: "budget installs, strong performance",
-    inStock: true,
+    bestFor: "N-type TOPCon performance",
+    specSourceUrl:
+      "https://www.jinkosolar.com/uploads/61970f6e/JKM410-430N-54HL4-%28V%29-F1-EN.pdf",
   },
   {
     id: "panasonic-evervolt",
@@ -140,16 +146,16 @@ export const SOLAR_PANELS: SolarPanel[] = [
     model: "EverVolt HK Black Series",
     watts: 410,
     efficiency: 22.2,
-    pricePerWatt: 3.1,
+    installedCostPerWatt: INSTALLED_COST_PER_WATT,
     warranty_years: 25,
     warranty_power: "92% at 25 years",
     type: "HIT heterojunction",
-    dimensions: "1765 x 1048 mm",
-    weight_kg: 19.5,
+    dimensions: "1821 x 1016 mm",
+    weight_kg: 20.5,
     tempCoefficient: -0.26,
     tier: "premium",
-    bestFor: "Arizona heat - best temp coefficient",
-    inStock: true,
+    bestFor: "high output in hot climates",
+    specSourceUrl: "https://ftp.panasonic.com/solar/datasheet/400_410_hk_series.pdf",
   },
 ];
 
@@ -225,20 +231,31 @@ export function getInverterOption(inverterType?: InverterType | string | null) {
 }
 
 export function getPanelAreaM2(panel: SolarPanel) {
+  const { heightMeters, widthMeters } = getPanelDimensionsMeters(panel);
+
+  return heightMeters * widthMeters;
+}
+
+export function getPanelDimensionsMeters(
+  panel: Pick<SolarPanel, "dimensions">
+) {
   const dimensions = panel.dimensions.match(/(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)/i);
 
   if (!dimensions) {
-    return 1.9;
+    return { heightMeters: 1.9, widthMeters: 1 };
   }
 
   const firstMm = Number(dimensions[1]);
   const secondMm = Number(dimensions[2]);
 
   if (!Number.isFinite(firstMm) || !Number.isFinite(secondMm)) {
-    return 1.9;
+    return { heightMeters: 1.9, widthMeters: 1 };
   }
 
-  return (firstMm / 1000) * (secondMm / 1000);
+  return {
+    heightMeters: Math.max(firstMm, secondMm) / 1000,
+    widthMeters: Math.min(firstMm, secondMm) / 1000,
+  };
 }
 
 export function getPanelFit(
@@ -292,7 +309,8 @@ export function getPanelFit(
     input.roofData?.annualSunlightHours ??
     input.roofData?.annualKwh ??
     1800;
-  const systemKw = roundTo((selectedCount * panel.watts) / 1000, 1);
+  const exactSystemKw = (selectedCount * panel.watts) / 1000;
+  const systemKw = roundTo(exactSystemKw, 1);
   const providerAnnualKwh = getProviderAnnualKwh(
     input.roofData,
     selectedCount
@@ -304,7 +322,7 @@ export function getPanelFit(
   const annualKwh = Math.round(
     providerAnnualKwh > 0
       ? providerAnnualKwh * (panel.watts / providerPanelWatts)
-      : systemKw * Math.max(sunshineHours, 0) * 0.8
+      : exactSystemKw * Math.max(sunshineHours, 0) * 0.8
   );
   const annualBill =
     input.monthlyBill && input.monthlyBill > 0 ? input.monthlyBill * 12 : null;
@@ -313,8 +331,11 @@ export function getPanelFit(
       ? Math.min(annualKwh * ARIZONA_AVG_RATE_PER_KWH, annualBill)
       : annualKwh * ARIZONA_AVG_RATE_PER_KWH
   );
-  const pricePerWatt = panel.pricePerWatt + (input.inverterCostAdderPerWatt ?? 0);
-  const systemCost = Math.round(systemKw * 1000 * pricePerWatt);
+  const installedCostPerWatt =
+    panel.installedCostPerWatt + (input.inverterCostAdderPerWatt ?? 0);
+  const systemCost = Math.round(
+    selectedCount * panel.watts * installedCostPerWatt
+  );
   const taxCredit = calculateFederalResidentialSolarCredit(systemCost);
   const netCost = Math.max(systemCost - taxCredit, 0);
   const paybackYears = annualSavings > 0 ? roundTo(netCost / annualSavings, 1) : 0;

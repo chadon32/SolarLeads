@@ -262,7 +262,8 @@ export function rebuildTrustedSolarReportSnapshot(
 }
 
 export function buildAcceptedPanelAnalysisForReport(
-  analysis: RoofAnalysis
+  analysis: RoofAnalysis,
+  panelDimensions?: { heightMeters: number; widthMeters: number }
 ): RoofAnalysis {
   const originalPanelCandidateCount = Math.max(
     analysis.originalPanelCandidateCount ?? 0,
@@ -285,11 +286,15 @@ export function buildAcceptedPanelAnalysisForReport(
     1,
     analysis.solarPanels.length
   );
+  const panelHeightMeters =
+    positiveNumber(panelDimensions?.heightMeters) ?? analysis.panelHeightMeters;
+  const panelWidthMeters =
+    positiveNumber(panelDimensions?.widthMeters) ?? analysis.panelWidthMeters;
   const acceptedPanels = selectCohesiveSolarPanels({
     panels: analysis.solarPanels,
     targetCount: modeledAcceptedCount,
-    panelWidthMeters: analysis.panelWidthMeters,
-    panelHeightMeters: analysis.panelHeightMeters,
+    panelWidthMeters,
+    panelHeightMeters,
   });
   const acceptedPanelCount = acceptedPanels.length;
   const selectedConfig = findNearestPanelConfigForReport(
@@ -326,6 +331,8 @@ export function buildAcceptedPanelAnalysisForReport(
     annualSavingsUSD: Math.round(annualKwh * ARIZONA_AVG_RATE_PER_KWH),
     originalPanelCandidateCount,
     panelCount: acceptedPanelCount,
+    panelHeightMeters,
+    panelWidthMeters,
     rejectedPanelCandidateCount: Math.max(
       0,
       originalPanelCandidateCount - acceptedPanelCount

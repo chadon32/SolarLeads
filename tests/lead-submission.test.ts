@@ -46,13 +46,13 @@ test("lead submission numbers prefer canonical report snapshot metrics over brow
   assert.equal(numbers.annualSavings, 1248);
   assert.equal(numbers.monthlySavings, 104);
   assert.equal(numbers.energyOffsetPct, 42);
-  assert.equal(numbers.systemCostBeforeIncentives, 18_800);
+  assert.equal(numbers.systemCostBeforeIncentives, 17_360);
   assert.equal(numbers.federalTaxCredit, 0);
-  assert.equal(numbers.netSystemCost, 18_800);
+  assert.equal(numbers.netSystemCost, 17_360);
   // Net 20-year savings includes utility escalation and subtracts the modeled
   // net solar-system cost rather than presenting avoided utility spend as profit.
-  assert.equal(numbers.twentyYearSavings, 6160);
-  assert.equal(numbers.roiYears, 15.1);
+  assert.equal(numbers.twentyYearSavings, 7600);
+  assert.equal(numbers.roiYears, 13.9);
 });
 
 test("lead submission numbers ignore battery cost unless battery was selected", () => {
@@ -68,9 +68,9 @@ test("lead submission numbers ignore battery cost unless battery was selected", 
     null
   );
 
-  assert.equal(numbers.systemCostBeforeIncentives, 11_000);
+  assert.equal(numbers.systemCostBeforeIncentives, 9200);
   assert.equal(numbers.federalTaxCredit, 0);
-  assert.equal(numbers.netSystemCost, 11_000);
+  assert.equal(numbers.netSystemCost, 9200);
 });
 
 test("lead submission numbers floor fractional panel counts instead of rounding up", () => {
