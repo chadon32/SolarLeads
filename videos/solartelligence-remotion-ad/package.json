@@ -1,0 +1,22 @@
+{
+  "name": "solartelligence-remotion-ad",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "studio": "remotion studio src/index.ts",
+    "render": "remotion render src/index.ts SolartelligenceFacebookAd out/solartelligence-facebook-ad-current.mp4 --codec=h264 --crf=18 --image-format=jpeg --pixel-format=yuv420p",
+    "still": "remotion still src/index.ts SolartelligenceFacebookAd out/solartelligence-facebook-ad-diego-poster.png --frame=840"
+  },
+  "dependencies": {
+    "@remotion/cli": "latest",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "remotion": "latest"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "typescript": "^5.0.0"
+  }
+}

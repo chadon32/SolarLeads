@@ -102,7 +102,7 @@ type AnalyzeRoofPayload = {
   detail?: string;
 };
 
-type ViewMode = "overview" | "irradiance" | "model3d";
+type ViewMode = "irradiance" | "model3d";
 
 const RoofScene3D = dynamic(() => import("@/components/roof-scene-3d"), {
   ssr: false,
@@ -205,7 +205,6 @@ type GoogleOverlayViewInstance = GoogleMapOverlayInstance & {
 };
 
 const viewModes: Array<{ id: ViewMode; label: string }> = [
-  { id: "overview", label: "Overview" },
   { id: "irradiance", label: "Sunlight" },
   { id: "model3d", label: "3D Model" },
 ];
@@ -214,7 +213,7 @@ function getInitialRoofAnalysisLayers(): LayerVisibility {
   return {
     panels: true,
     roofPlanes: true,
-    sunlight: false,
+    sunlight: true,
   };
 }
 
@@ -256,7 +255,7 @@ export function SolarAnalysis({
   const monthlyBillRef = useRef(monthlyBill);
   const [notice, setNotice] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string>("");
-  const [viewMode, setViewMode] = useState<ViewMode>("overview");
+  const [viewMode, setViewMode] = useState<ViewMode>("model3d");
   const [layerVisibility, setLayerVisibility] = useState<LayerVisibility>(
     getInitialRoofAnalysisLayers
   );
@@ -284,10 +283,12 @@ export function SolarAnalysis({
   );
   const selectViewMode = useCallback((nextViewMode: ViewMode) => {
     setViewMode(nextViewMode);
-    setLayerVisibility((current) => ({
-      ...current,
-      sunlight: nextViewMode === "irradiance",
-    }));
+    if (nextViewMode === "irradiance") {
+      setLayerVisibility((current) => ({
+        ...current,
+        sunlight: true,
+      }));
+    }
   }, []);
   const updateLayerVisibility = useCallback((nextVisibility: LayerVisibility) => {
     setLayerVisibility(nextVisibility);
@@ -297,9 +298,7 @@ export function SolarAnalysis({
         ? current
         : nextVisibility.sunlight
           ? "irradiance"
-          : current === "irradiance"
-            ? "overview"
-            : current
+          : "model3d"
     );
   }, []);
 
@@ -319,7 +318,7 @@ export function SolarAnalysis({
         setResolvedProperty(null);
         setNotice(null);
         setErrorMessage("");
-        setViewMode("overview");
+        setViewMode("model3d");
         setLayerVisibility(getInitialRoofAnalysisLayers());
         onAnalysisChange?.(null);
         onAnalysisProofChange?.(null);
@@ -336,7 +335,7 @@ export function SolarAnalysis({
         return;
       }
 
-      setViewMode("overview");
+      setViewMode("model3d");
       setLayerVisibility(getInitialRoofAnalysisLayers());
     });
 
@@ -935,7 +934,7 @@ function ViewportHeader({
       <div
         role="tablist"
         aria-label="Rooftop analysis views"
-        className="grid grid-cols-3 gap-2 sm:flex sm:flex-wrap"
+        className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap"
       >
         {viewModes.map((mode) => (
             <button
@@ -945,13 +944,7 @@ function ViewportHeader({
               role="tab"
               aria-selected={viewMode === mode.id}
               aria-controls="roof-analysis-viewport-panel"
-            onClick={() =>
-              onSelectView(
-                viewMode === mode.id && mode.id !== "overview"
-                  ? "overview"
-                  : mode.id
-              )
-            }
+            onClick={() => onSelectView(mode.id)}
             className={`min-h-11 w-full rounded-full px-2 py-2 text-[0.65rem] font-semibold uppercase tracking-[0.12em] transition sm:w-auto sm:px-3.5 sm:text-xs sm:tracking-[0.24em] ${
               viewMode === mode.id
                 ? "bg-cyan-300 text-slate-950"
@@ -1298,18 +1291,8 @@ function ViewportCanvas({
         }
       }
 
-      if (layerVisibility.panels) {
-        nextOverlays.push(
-          ...createSolarPanelOverlays({
-            googleApi,
-            map: mapRef.current,
-            panelHeightMeters: panelDimensions.heightMeters,
-            panelWidthMeters: panelDimensions.widthMeters,
-            roofData,
-            selectedPanelCount,
-          })
-        );
-      }
+      // Keep the 2D satellite view focused on roof geometry and sunlight.
+      // Panel modules are intentionally rendered only in the 3D Model view.
       const selectedHomeOverlay = createSelectedHomeOverlay({
         googleApi,
         map: mapRef.current,
@@ -1357,10 +1340,7 @@ function ViewportCanvas({
     layerVisibility,
     mapReady,
     mapsApiKey,
-    panelDimensions.heightMeters,
-    panelDimensions.widthMeters,
     roofData,
-    selectedPanelCount,
     solarMaskUrl,
     property,
     cameraTarget,
@@ -1432,19 +1412,11 @@ function ViewportCanvas({
               layerVisibility={layerVisibility}
               onLayerVisibilityChange={onLayerVisibilityChange}
               canRenderPanels={canRenderPanels}
+              showPanels={is3dView}
               hideRoofPlanes={is3dView}
             />
             {!is3dView ? (
-              <MapEvidenceOverlay
-                layerVisibility={layerVisibility}
-                panelCapacity={panelCapacity}
-                renderedPanelCount={renderedPanelCount}
-                canRenderPanels={canRenderPanels}
-                systemKw={systemKw}
-                panelLabel={
-                  selectedPanel ? `Panel: ${getShortPanelName(selectedPanel)}` : null
-                }
-              />
+              <MapEvidenceOverlay layerVisibility={layerVisibility} />
             ) : (
               <div className="pointer-events-none absolute left-2 top-2 z-10 flex max-w-[calc(100%-11rem)] flex-wrap items-center gap-1.5 sm:left-3 sm:top-3">
                 <span className="rounded-full border border-white/10 bg-slate-950/58 px-2.5 py-1.5 text-[0.66rem] font-semibold uppercase tracking-[0.12em] text-cyan-100/95 backdrop-blur-[2px]">
@@ -1466,6 +1438,7 @@ function ViewportCanvas({
           renderedPanelCount={renderedPanelCount}
           canRenderPanels={canRenderPanels}
           systemKw={systemKw}
+          showPanels={is3dView}
           hideRoofPlanes={is3dView}
         />
       ) : null}
@@ -1520,11 +1493,13 @@ function LayerControl({
   layerVisibility,
   onLayerVisibilityChange,
   canRenderPanels,
+  showPanels = false,
   hideRoofPlanes = false,
 }: {
   layerVisibility: LayerVisibility;
   onLayerVisibilityChange: (next: LayerVisibility) => void;
   canRenderPanels: boolean;
+  showPanels?: boolean;
   hideRoofPlanes?: boolean;
 }) {
   const toggles: Array<{
@@ -1533,11 +1508,15 @@ function LayerControl({
     disabled?: boolean;
     helper?: string;
   }> = [
-    {
-      id: "panels",
-      label: "Panels",
-      helper: canRenderPanels ? undefined : "Estimated capacity view",
-    },
+    ...(showPanels
+      ? ([
+          {
+            id: "panels",
+            label: "Panels",
+            helper: canRenderPanels ? undefined : "Estimated capacity view",
+          },
+        ] as const)
+      : []),
     { id: "sunlight", label: "Sunlight quality" },
     // Roof-plane outlines are drawn on the 2D map only.
     ...(hideRoofPlanes
@@ -1592,6 +1571,7 @@ function MobileMapControls({
   renderedPanelCount,
   canRenderPanels,
   systemKw,
+  showPanels = false,
   hideRoofPlanes = false,
 }: {
   layerVisibility: LayerVisibility;
@@ -1600,15 +1580,18 @@ function MobileMapControls({
   renderedPanelCount: number;
   canRenderPanels: boolean;
   systemKw: number;
+  showPanels?: boolean;
   hideRoofPlanes?: boolean;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const panelSummary =
-    canRenderPanels && renderedPanelCount > 0
+    !showPanels
+      ? "Roof planes and sunlight quality"
+      : canRenderPanels && renderedPanelCount > 0
       ? `${renderedPanelCount} panel layout · ${systemKw.toFixed(1)} kW`
       : `Estimated capacity: up to ${panelCapacity} panels · ${systemKw.toFixed(1)} kW`;
   const toggles: Array<{ id: keyof LayerVisibility; label: string }> = [
-    { id: "panels", label: "Panels" },
+    ...(showPanels ? ([{ id: "panels", label: "Panels" }] as const) : []),
     ...(hideRoofPlanes
       ? []
       : ([{ id: "roofPlanes", label: "Roof planes" }] as const)),
@@ -1709,7 +1692,7 @@ function MobileMapControls({
                 />
               </>
             ) : null}
-            {layerVisibility.panels ? (
+            {showPanels && layerVisibility.panels ? (
               <MobileLegendItem
                 swatch="border border-white bg-blue-500/75"
                 label={canRenderPanels ? "Panels (Google Solar API)" : "Capacity only"}
@@ -1736,24 +1719,9 @@ function MobileLegendItem({ swatch, label }: { swatch: string; label: string }) 
 
 function MapEvidenceOverlay({
   layerVisibility,
-  panelCapacity,
-  panelLabel,
-  renderedPanelCount,
-  canRenderPanels,
-  systemKw,
 }: {
   layerVisibility: LayerVisibility;
-  panelCapacity: number;
-  panelLabel?: string | null;
-  renderedPanelCount: number;
-  canRenderPanels: boolean;
-  systemKw: number;
 }) {
-  const panelBadge =
-    canRenderPanels && renderedPanelCount > 0
-      ? `${renderedPanelCount} panel layout \u00b7 ${systemKw.toFixed(1)} kW`
-      : `Estimated capacity: up to ${panelCapacity} panels \u00b7 ${systemKw.toFixed(1)} kW`;
-
   return (
     <>
       <div className="pointer-events-none absolute left-2 top-2 z-10 flex max-w-[calc(100%-11rem)] flex-wrap items-center gap-1.5 sm:left-3 sm:top-3 sm:max-w-[calc(100%-1.5rem)]">
@@ -1761,13 +1729,8 @@ function MapEvidenceOverlay({
           Google Solar API roof model
         </span>
         <span className="rounded-full border border-white/10 bg-slate-950/62 px-2.5 py-1.5 text-[0.66rem] font-semibold uppercase tracking-[0.1em] text-white/95 shadow-none backdrop-blur-[2px]">
-          {panelBadge}
+          Roof analysis view
         </span>
-        {panelLabel ? (
-          <span className="hidden rounded-full border border-white/10 bg-slate-950/62 px-2.5 py-1.5 text-[0.66rem] font-semibold uppercase tracking-[0.08em] text-white/95 shadow-none backdrop-blur-[2px] sm:inline-flex">
-            {panelLabel}
-          </span>
-        ) : null}
       </div>
       <div className="pointer-events-none absolute left-2 top-20 z-10 max-w-[min(16rem,calc(100%-1rem))] rounded-[0.85rem] border border-white/30 bg-white/76 p-2.5 text-[0.72rem] font-medium text-slate-900 shadow-[0_8px_18px_rgba(15,23,42,0.16)] backdrop-blur-md sm:left-3">
         <div className="flex items-center justify-between gap-2 border-b border-slate-900/10 pb-1.5">
@@ -1793,19 +1756,9 @@ function MapEvidenceOverlay({
               <LegendItem swatch="bg-rose-400/80" label="Red - limited sunlight" />
             </>
           ) : null}
-          {layerVisibility.panels ? (
-            canRenderPanels ? (
-              <LegendItem
-                swatch="border border-slate-200/80 bg-[linear-gradient(145deg,#1a6f94_0%,#083049_48%,#030f18_100%)] shadow-[inset_0_1px_0_rgba(255,255,255,0.25)]"
-                label="Photovoltaic modules - aligned to rack grid (Solar API)"
-              />
-            ) : (
-              <LegendItem swatch="border border-slate-500 bg-slate-500/30" label="Estimated capacity - no placement data" />
-            )
-          ) : null}
         </div>
         <p className="mt-2 border-t border-slate-900/10 pt-2 text-[0.68rem] leading-4 text-slate-700">
-          Premium module render on Google Solar API positions. Installer verifies final layout.
+          Open 3D Model to review the preliminary panel layout. Installer verifies the final design.
         </p>
       </div>
     </>
@@ -2372,6 +2325,8 @@ function buildSelectedPanelPlacements({
  * aluminum frame, crystalline glass gradient, multi-cell busbars,
  * specular glare, and soft roof contact shadow — scaled by zoom.
  */
+// The 2D map intentionally does not render modules; panels live in 3D Model.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function createSolarPanelOverlays({
   googleApi,
   map,
