@@ -15,6 +15,13 @@
 
 html {
   scroll-behavior: smooth;
+  /* iOS inflates text in landscape unless this is pinned, which silently
+     breaks the tuned type scale inside the app's WebView. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  /* Suppress the grey flash iOS paints over every tapped element. Focus
+     remains visible via the :focus-visible outline below. */
+  -webkit-tap-highlight-color: transparent;
 }
 
 body {
@@ -58,6 +65,26 @@ body::before {
 
 * {
   box-sizing: border-box;
+}
+
+/*
+ * iOS safe areas (Capacitor WebView / installed PWA).
+ *
+ * The viewport is declared `viewport-fit=cover`, which lets the page paint
+ * edge to edge — under the Dynamic Island and under the home indicator. That
+ * is what we want for the fixed full-bleed backgrounds, but without padding
+ * the content layer back out, the top nav sits under the notch and the
+ * bottom-most controls sit under the home bar.
+ *
+ * Padding goes on the content wrapper rather than `body` so the `position:
+ * fixed` background layers keep filling the whole screen. Off iOS every
+ * inset resolves to 0, so this is inert everywhere else.
+ */
+#main-content {
+  padding-top: env(safe-area-inset-top);
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
 }
 
 :focus-visible {

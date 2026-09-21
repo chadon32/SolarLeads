@@ -2,7 +2,14 @@
 
 import Image from "next/image";
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
 import { ButtonLink } from "@/components/ui/button";
 import { formatDisplayAddress } from "@/lib/address-format";
 import {
@@ -125,6 +132,7 @@ type AnalysisMetrics = {
   selectedAnnualSavingsUSD: number;
   monthlySavings: number;
   roiYears: number;
+  twentyYearNetSavings: number;
   carbonOffsetLbs: number;
   carbonOffsetTons: number;
   treesEquivalent: number;
@@ -240,6 +248,7 @@ export function SolarAnalysis({
   const [stage, setStage] = useState<
     "idle" | "resolving" | "fetching" | "analyzing" | "done" | "invalid" | "error"
   >("idle");
+  const [retryCount, setRetryCount] = useState(0);
   const [satelliteImage, setSatelliteImage] = useState<string | null>(null);
   const [annualFluxUrl, setAnnualFluxUrl] = useState<string | null>(null);
   const [dsmUrl, setDsmUrl] = useState<string | null>(null);
@@ -516,6 +525,7 @@ export function SolarAnalysis({
     onAnalysisChange,
     onAnalysisProofChange,
     onSignedAnalysisChange,
+    retryCount,
     setSelectedPanelCount,
   ]);
 
@@ -561,6 +571,7 @@ export function SolarAnalysis({
       selectedAnnualSavingsUSD,
       monthlySavings: activeEstimate.monthlySavings,
       roiYears: activeEstimate.paybackYears,
+      twentyYearNetSavings: activeEstimate.twentyYearCashCosts.totalSavings,
       carbonOffsetLbs,
       carbonOffsetTons,
       treesEquivalent,
@@ -622,6 +633,13 @@ export function SolarAnalysis({
           {errorMessage ? (
             <p className="mt-3 text-xs text-rose-100/62">Detail: {errorMessage}</p>
           ) : null}
+          <button
+            type="button"
+            onClick={() => setRetryCount((count) => count + 1)}
+            className="mt-5 inline-flex min-h-11 items-center justify-center rounded-full border border-white/15 bg-white/[0.08] px-5 py-3 text-sm font-semibold text-white transition hover:bg-white/[0.14] focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200"
+          >
+            Retry analysis
+          </button>
         </div>
       </section>
     );
@@ -914,6 +932,17 @@ function ViewportHeader({
   onSelectView: (next: ViewMode) => void;
 }) {
   const displayAddress = formatDisplayAddress(address);
+  const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  const moveTab = (index: number) => {
+    const nextMode = viewModes[index];
+    if (!nextMode) {
+      return;
+    }
+
+    onSelectView(nextMode.id);
+    tabRefs.current[index]?.focus();
+  };
 
   return (
     <div className="flex w-full min-w-0 max-w-full flex-col gap-4 px-4 py-4 sm:px-5">
@@ -936,7 +965,7 @@ function ViewportHeader({
         aria-label="Rooftop analysis views"
         className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap"
       >
-        {viewModes.map((mode) => (
+        {viewModes.map((mode, index) => (
             <button
               key={mode.id}
               id={`roof-view-tab-${mode.id}`}
@@ -944,15 +973,39 @@ function ViewportHeader({
               role="tab"
               aria-selected={viewMode === mode.id}
               aria-controls="roof-analysis-viewport-panel"
-            onClick={() => onSelectView(mode.id)}
-            className={`min-h-11 w-full rounded-full px-2 py-2 text-[0.65rem] font-semibold uppercase tracking-[0.12em] transition sm:w-auto sm:px-3.5 sm:text-xs sm:tracking-[0.24em] ${
-              viewMode === mode.id
-                ? "bg-cyan-300 text-slate-950"
-                : "border border-white/10 bg-white/[0.04] text-slate-300 hover:bg-white/[0.08]"
-            }`}
-          >
-            {mode.label}
-          </button>
+              tabIndex={viewMode === mode.id ? 0 : -1}
+              ref={(element) => {
+                tabRefs.current[index] = element;
+              }}
+              onClick={() => onSelectView(mode.id)}
+              onKeyDown={(event: KeyboardEvent<HTMLButtonElement>) => {
+                let nextIndex: number | null = null;
+
+                if (event.key === "ArrowLeft") {
+                  nextIndex = (index - 1 + viewModes.length) % viewModes.length;
+                } else if (event.key === "ArrowRight") {
+                  nextIndex = (index + 1) % viewModes.length;
+                } else if (event.key === "Home") {
+                  nextIndex = 0;
+                } else if (event.key === "End") {
+                  nextIndex = viewModes.length - 1;
+                }
+
+                if (nextIndex === null) {
+                  return;
+                }
+
+                event.preventDefault();
+                moveTab(nextIndex);
+              }}
+              className={`min-h-11 w-full rounded-full px-2 py-2 text-[0.65rem] font-semibold uppercase tracking-[0.12em] transition sm:w-auto sm:px-3.5 sm:text-xs sm:tracking-[0.24em] ${
+                viewMode === mode.id
+                  ? "bg-cyan-300 text-slate-950"
+                  : "border border-white/10 bg-white/[0.04] text-slate-300 hover:bg-white/[0.08]"
+              }`}
+            >
+              {mode.label}
+            </button>
         ))}
       </div>
     </div>
@@ -974,11 +1027,7 @@ function ModuleDesignPanel({
 
   return (
     <div className="pointer-events-auto absolute bottom-3 right-3 z-20 hidden max-h-[calc(100%-1.5rem)] w-60 max-w-[calc(100%-1.5rem)] overflow-y-auto rounded-2xl border border-white/10 bg-slate-950/80 p-4 text-white shadow-[0_18px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl sm:block">
-      <p className="text-[0.6rem] font-semibold uppercase tracking-[0.22em] text-cyan-100/80">
-        Solar Panel
-      </p>
-
-      <label className="mt-3 block text-[0.6rem] font-medium uppercase tracking-[0.14em] text-white/55">
+      <label className="block text-[0.6rem] font-medium uppercase tracking-[0.14em] text-white/55">
         Module
         <select
           value={active.id}
@@ -993,7 +1042,9 @@ function ModuleDesignPanel({
         </select>
       </label>
 
-      <dl className="mt-3 space-y-1.5 text-xs">
+      <details className="mt-2 text-xs">
+      <summary className="min-h-11 cursor-pointer content-center rounded-lg text-cyan-100 focus-visible:outline-2 focus-visible:outline-cyan-200">Module specifications</summary>
+      <dl className="mt-2 space-y-1.5 text-xs">
         <div className="flex items-center justify-between gap-3">
           <dt className="text-white/55">Dimensions</dt>
           <dd className="text-right font-medium text-white/90">
@@ -1017,12 +1068,10 @@ function ModuleDesignPanel({
           </dd>
         </div>
       </dl>
+      </details>
 
-      <div className="mt-3 rounded-lg border border-cyan-200/15 bg-cyan-200/[0.06] px-3 py-2">
-        <p className="text-[0.55rem] font-semibold uppercase tracking-[0.18em] text-cyan-100/75">
-          System size
-        </p>
-        <p className="mt-0.5 text-base font-semibold text-white">
+      <div className="mt-1 border-t border-white/10 pt-2">
+        <p className="text-sm font-semibold text-white">
           {systemKw} kW
           <span className="ml-1.5 text-xs font-normal text-white/55">
             · {selectedPanelCount} modules
@@ -1096,7 +1145,7 @@ function ViewportCanvas({
     let cancelled = false;
 
     const setupMap = async () => {
-      if (!mapElementRef.current || !center || !mapsApiKey) {
+      if (viewMode === "model3d" || !mapElementRef.current || !center || !mapsApiKey) {
         return;
       }
 
@@ -1155,7 +1204,7 @@ function ViewportCanvas({
       }
       setMapReady(false);
     };
-  }, [cameraTarget, cameraTargetKey, center, mapsApiKey]);
+  }, [cameraTarget, cameraTargetKey, center, mapsApiKey, viewMode]);
 
   useEffect(() => {
     const mapElement = mapElementRef.current;
@@ -1177,7 +1226,7 @@ function ViewportCanvas({
     let cancelled = false;
 
     const drawOverlays = async () => {
-      if (!mapReady || !mapRef.current || !mapsApiKey) {
+      if (viewMode === "model3d" || !mapReady || !mapRef.current || !mapsApiKey) {
         return;
       }
 
@@ -1345,6 +1394,7 @@ function ViewportCanvas({
     property,
     cameraTarget,
     cameraTargetKey,
+    viewMode,
   ]);
 
   const showMapFallback = !mapsApiKey || !center;
@@ -1369,7 +1419,7 @@ function ViewportCanvas({
       <div className={`relative ${mapHeightClass}`}>
         <div
           ref={mapElementRef}
-          className="absolute inset-0"
+          className={`absolute inset-0 ${is3dView ? "invisible" : ""}`}
           role="img"
           aria-label={`Satellite roof map for ${address}`}
         />
@@ -3601,7 +3651,7 @@ function SunroofSummaryCard({
   confidence: number;
 }) {
   const usableAreaSqFt = metrics.usableArea * 10.7639;
-  const twentyYearSavings = metrics.selectedAnnualSavingsUSD * 20;
+  const twentyYearSavings = metrics.twentyYearNetSavings;
   const displayAddress = formatDisplayAddress(address);
 
   return (
@@ -3637,10 +3687,10 @@ function SunroofSummaryCard({
 
       <div className="border-t-4 border-sky-500 bg-slate-50 px-4 py-3">
         <p className="text-[2rem] font-light tracking-tight text-slate-900">
-          ${twentyYearSavings.toLocaleString()}
+          {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(twentyYearSavings)}
         </p>
         <p className="text-sm text-slate-600">
-          Modeled 20-year savings using the current panel selection
+          {twentyYearSavings < 0 ? "Modeled 20-year net loss" : "Modeled 20-year net savings"} after system cost using the current panel selection
         </p>
       </div>
     </div>
@@ -3965,7 +4015,12 @@ function IntelligenceCard({
 
 function AnalysisProgress({ step, pct }: { step: string; pct: number }) {
   return (
-    <div className="rounded-[1.55rem] border border-white/10 bg-white/[0.05] p-4 shadow-[0_10px_28px_rgba(2,8,20,0.2)] backdrop-blur-xl">
+    <div
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+      className="rounded-[1.55rem] border border-white/10 bg-white/[0.05] p-4 shadow-[0_10px_28px_rgba(2,8,20,0.2)] backdrop-blur-xl"
+    >
       <p className="text-sm text-slate-300 animate-pulse">{step}</p>
       <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/10">
         <div

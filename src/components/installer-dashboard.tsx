@@ -137,35 +137,13 @@ const dateFilters = [
 ] as const;
 
 function getReportViewerPath(leadId: string) {
-  const token =
-    typeof window === "undefined"
-      ? ""
-      : new URLSearchParams(window.location.search).get("token")?.trim() ?? "";
-  const params = new URLSearchParams();
-
-  if (token) {
-    params.set("token", token);
-  }
-
-  const query = params.toString();
-  return `/report/${encodeURIComponent(leadId)}${query ? `?${query}` : ""}`;
+  return `/report/${encodeURIComponent(leadId)}`;
 }
 
 function getDashboardAuthHeaders(
   headers: Record<string, string> = {}
 ): Record<string, string> {
-  if (typeof window === "undefined") {
-    return headers;
-  }
-
-  const token = new URLSearchParams(window.location.search).get("token")?.trim();
-
-  return token
-    ? {
-        ...headers,
-        Authorization: `Bearer ${token}`,
-      }
-    : headers;
+  return headers;
 }
 
 export function InstallerDashboard({
@@ -196,6 +174,7 @@ export function InstallerDashboard({
   const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
   const [followUpNoteDrafts, setFollowUpNoteDrafts] = useState<Record<string, string>>({});
   const [followUpDateDrafts, setFollowUpDateDrafts] = useState<Record<string, string>>({});
+  const [actionError, setActionError] = useState("");
   const deferredSearch = useDeferredValue(search);
 
   const cities = useMemo(
@@ -282,6 +261,7 @@ export function InstallerDashboard({
     status: InstallerLeadStatus
   ) => {
     const previous = lead.status;
+    setActionError("");
     setLeadItems((current) =>
       current.map((item) => (item.id === lead.id ? { ...item, status } : item))
     );
@@ -297,17 +277,21 @@ export function InstallerDashboard({
       if (!response.ok) {
         throw new Error("Status update failed");
       }
-    } catch {
+    } catch (error) {
       setLeadItems((current) =>
         current.map((item) =>
           item.id === lead.id ? { ...item, status: previous } : item
         )
+      );
+      setActionError(
+        error instanceof Error ? error.message : "Unable to update status."
       );
     }
   };
 
   const saveNotes = async (lead: InstallerLead) => {
     const notes = noteDrafts[lead.id] ?? lead.notes;
+    setActionError("");
 
     setSavingNotesIds((current) => new Set(current).add(lead.id));
 
@@ -326,6 +310,10 @@ export function InstallerDashboard({
       setLeadItems((current) =>
         current.map((item) => (item.id === lead.id ? { ...item, notes } : item))
       );
+    } catch (error) {
+      setActionError(
+        error instanceof Error ? error.message : "Unable to save notes."
+      );
     } finally {
       setSavingNotesIds((current) => {
         const next = new Set(current);
@@ -341,6 +329,7 @@ export function InstallerDashboard({
     options: { nextFollowUpAt?: string | null } = {}
   ) => {
     const previousLead = lead;
+    setActionError("");
     const followUpNotes = followUpNoteDrafts[lead.id] ?? lead.followUpNotes;
     let scheduledSteps: InstallerFollowUpStep[] | undefined;
 
@@ -416,9 +405,12 @@ export function InstallerDashboard({
             : item
         )
       );
-    } catch {
+    } catch (error) {
       setLeadItems((current) =>
         current.map((item) => (item.id === lead.id ? previousLead : item))
+      );
+      setActionError(
+        error instanceof Error ? error.message : "Unable to update follow-up."
       );
     } finally {
       setSavingFollowUpIds((current) => {
@@ -526,6 +518,16 @@ export function InstallerDashboard({
             </a>
           </div>
         </header>
+
+        {actionError ? (
+          <p
+            role="alert"
+            aria-live="polite"
+            className="rounded-[1rem] border border-rose-300/20 bg-rose-300/10 px-4 py-3 text-sm text-rose-100"
+          >
+            {actionError}
+          </p>
+        ) : null}
 
         <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
           <KpiCard label="Total leads" value={formatNumber(stats.totalLeads)} />

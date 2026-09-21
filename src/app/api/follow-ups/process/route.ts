@@ -71,15 +71,13 @@ async function processRequest(request: Request) {
     );
   }
 
-  const result = await processDueFollowUps();
-
-  return NextResponse.json({
-    processed: result.processed,
-    sent: result.sent,
-    skipped: result.skipped,
-    failed: result.failed,
-    details: result.details,
-  });
+  try {
+    const result = await processDueFollowUps();
+    return NextResponse.json(result);
+  } catch {
+    console.error("[follow-up-processing:error]", { operation: "process-due-follow-ups" });
+    return NextResponse.json({ message: "Follow-up processing could not complete. Review delivery status before retrying." }, { status: 503 });
+  }
 }
 
 export async function GET(request: Request) {

@@ -11,6 +11,7 @@ const CACHE_TABLE = "roof_analysis_cache";
 
 const ANALYSIS_VERSION = 28;
 const CACHE_TTL_MS = Number(process.env.ROOF_ANALYSIS_CACHE_TTL_DAYS ?? 30) * 24 * 60 * 60 * 1000;
+const CACHE_DATABASE_TIMEOUT_MS = 2_000;
 
 type CacheLookupParams = {
   address: string;
@@ -35,10 +36,13 @@ export async function getCachedRoofAnalysis(
   try {
     const client = getSupabaseAdminClient();
     const addressKey = buildRoofAnalysisCacheKey(params);
+    const signal = AbortSignal.timeout(CACHE_DATABASE_TIMEOUT_MS);
     const { data, error } = await client
       .from(CACHE_TABLE)
       .select("analysis, analysis_version, expires_at")
       .eq("address_key", addressKey)
+      .abortSignal(signal)
+      .retry(false)
       .maybeSingle();
 
     if (error || !data) {
@@ -70,12 +74,16 @@ export async function getCachedRoofAnalysisByAddress(
 
   try {
     const client = getSupabaseAdminClient();
+    // This deadline also covers the legacy-column fallback below.
+    const signal = AbortSignal.timeout(CACHE_DATABASE_TIMEOUT_MS);
     let result = await client
       .from(CACHE_TABLE)
       .select("address, lat, lng, analysis, analysis_version, expires_at")
       .eq("normalized_address", normalizedAddress)
       .order("updated_at", { ascending: false })
       .limit(1)
+      .abortSignal(signal)
+      .retry(false)
       .maybeSingle();
 
     if (result.error && isMissingColumnError(result.error.message)) {
@@ -85,6 +93,8 @@ export async function getCachedRoofAnalysisByAddress(
         .ilike("address", address.trim())
         .order("updated_at", { ascending: false })
         .limit(1)
+        .abortSignal(signal)
+        .retry(false)
         .maybeSingle();
     }
 
@@ -111,6 +121,8 @@ export async function saveCachedRoofAnalysis(params: {
   try {
     const client = getSupabaseAdminClient();
     const addressKey = buildRoofAnalysisCacheKey(params);
+    // This deadline also covers the legacy-column fallback below.
+    const signal = AbortSignal.timeout(CACHE_DATABASE_TIMEOUT_MS);
     const now = Date.now();
     const expiresAt = new Date(now + CACHE_TTL_MS).toISOString();
     const row = {
@@ -127,7 +139,7 @@ export async function saveCachedRoofAnalysis(params: {
 
     const result = await client.from(CACHE_TABLE).upsert(row, {
       onConflict: "address_key",
-    });
+    }).abortSignal(signal).retry(false);
 
     if (result.error && isMissingColumnError(result.error.message)) {
       const legacyRow = {
@@ -145,7 +157,7 @@ export async function saveCachedRoofAnalysis(params: {
         {
           onConflict: "address_key",
         }
-      );
+      ).abortSignal(signal).retry(false);
     }
   } catch {
     // Cache writes are best-effort. Analysis should still succeed without persistence.

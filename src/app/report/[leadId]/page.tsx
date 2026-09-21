@@ -6,7 +6,6 @@ import { APP_NAME } from "@/lib/brand";
 import {
   DASHBOARD_SESSION_COOKIE,
   verifyDashboardSessionCookie,
-  verifyDashboardToken,
 } from "@/lib/dashboard-auth";
 import {
   buildRawReportPdfPath,
@@ -82,10 +81,10 @@ export default async function ReportViewerPage({
   const lead = await getLead(leadId);
   const publicExpiry = toFiniteOptionalNumber(query?.exp);
   const rawPdfPath = access.dashboardAccess
-    ? buildDashboardPdfPath(leadId, access.dashboardToken)
+    ? buildDashboardPdfPath(leadId)
     : buildRawReportPdfPath(leadId, { expiresAt: publicExpiry ?? undefined });
   const downloadPdfPath = access.dashboardAccess
-    ? buildDashboardPdfPath(leadId, access.dashboardToken, true)
+    ? buildDashboardPdfPath(leadId, true)
     : buildRawReportPdfPath(leadId, {
         download: true,
         expiresAt: publicExpiry ?? undefined,
@@ -215,7 +214,7 @@ export default async function ReportViewerPage({
             <Metric label="System size" value={`${formatDecimal(systemSizeKw)} kW`} source="Modeled" />
             <Metric label="Panel count" value={`${Math.round(panelCount || 0)}`} source="Solar API" />
             <Metric label="Estimated Payback" value={`${formatDecimal(roiYears)} yrs`} source="Modeled" />
-            <Metric label="Energy offset" value={`${Math.round(energyOffset || 0)}%`} source="Modeled" />
+            <Metric label="Estimated annual bill covered" value={`${Math.round(energyOffset || 0)}%`} source="Modeled" />
             <Metric
               label="Solar Readiness Score"
               value={
@@ -267,15 +266,8 @@ function verifyReportPageAccess(
   },
   dashboardSessionCookie?: string
 ):
-  | { ok: true; dashboardAccess?: boolean; dashboardToken?: string }
+  | { ok: true; dashboardAccess?: boolean }
   | { ok: false; title: string; body: string } {
-  const dashboardToken = query?.token?.trim() ?? "";
-  const dashboardAuth = verifyDashboardToken(dashboardToken);
-
-  if (dashboardAuth.ok) {
-    return { ok: true, dashboardAccess: true, dashboardToken: dashboardAuth.token };
-  }
-
   const dashboardSessionAuth = verifyDashboardSessionCookie(dashboardSessionCookie);
 
   if (dashboardSessionAuth.ok) {
@@ -317,17 +309,12 @@ function verifyReportPageAccess(
 
 function buildDashboardPdfPath(
   leadId: string,
-  token?: string,
   download = false
 ) {
   const params = new URLSearchParams({
     leadId,
     raw: "1",
   });
-
-  if (token) {
-    params.set("token", token);
-  }
 
   if (download) {
     params.set("download", "1");
@@ -363,6 +350,10 @@ function ReportUnavailable({
 }
 
 async function getLead(leadId: string) {
+  if (!isUuid(leadId)) {
+    return null;
+  }
+
   const supabase = getSupabaseAdminClient();
   const selects = [
     "id, name, email, phone, address, monthly_bill, estimated_savings, created_at, panel_count, system_size_kw, annual_savings, annual_energy_kwh, roi_years, energy_offset_pct, solar_suitability_score, report_snapshot",
@@ -390,6 +381,12 @@ async function getLead(leadId: string) {
   }
 
   return null;
+}
+
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value
+  );
 }
 
 function shouldRetryLegacySelect(message: string) {

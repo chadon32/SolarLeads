@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentRef } from "react";
+import { Focus, Minus, Plus, RotateCcw, Square } from "lucide-react";
 import * as THREE from "three";
 import { Canvas, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import { readGeoTiffRaster, type GeoTiffRaster } from "@/lib/geotiff-utils";
 import type { RoofAnalysis, RoofGeoBounds } from "@/lib/roof-analysis";
 import { selectCohesiveSolarPanels } from "@/lib/panel-layout";
+import { buildPanelInstanceMatrices, getRoofCameraPose, type ModelBounds, type ViewerPanel } from "@/lib/roof-viewer";
 import {
   boundsCenter,
   buildObstructionMarkerGeometry,
@@ -16,6 +18,7 @@ import {
   expandBoundsMeters,
   fitSegmentPlanes,
   latLngToLocalMeters,
+  liftRoofSegmentPlanes,
   normalizedOutlineToLatLng,
   type LatLng,
 } from "@/lib/roof-scene-geometry";
@@ -58,6 +61,7 @@ type SceneData = {
   }>;
   extentMeters: number;
   roofTopMeters: number;
+  modelBounds: ModelBounds;
 };
 
 type LoadState =
@@ -67,7 +71,6 @@ type LoadState =
 
 /** Padding around the roof so the model floats in a roomy workspace. */
 const SCENE_PADDING_METERS = 14;
-const PANEL_THICKNESS_METERS = 0.05;
 /** Face/panel height when the elevation scan has no usable samples. */
 const DEFAULT_FACE_HEIGHT_METERS = 3.2;
 /** Neutral roof tone for the default (non-sunlight) material. */
@@ -94,6 +97,10 @@ export default function RoofScene3D({
   showSunlight,
 }: RoofScene3DProps) {
   const [state, setState] = useState<LoadState>({ status: "loading" });
+  const instructionsId = useId();
+  const [cameraCommand, setCameraCommand] = useState({ action: "fit", sequence: 0 });
+  const [modelKey, setModelKey] = useState(0);
+  const sendCameraCommand = (action: string) => setCameraCommand((previous) => ({ action, sequence: previous.sequence + 1 }));
 
   // Reset to the loading state when the data-layer inputs change
   // (React's "adjust state during render" pattern).
@@ -180,7 +187,7 @@ export default function RoofScene3D({
     return () => {
       cancelled = true;
     };
-  }, [dsmUrl, fluxUrl, maskUrl, roofData]);
+  }, [dsmUrl, fluxUrl, maskUrl, roofData, modelKey]);
 
   useEffect(() => {
     if (state.status !== "ready") {
@@ -334,6 +341,7 @@ export default function RoofScene3D({
           3D view unavailable
         </p>
         <p className="max-w-xs text-xs text-slate-300">{state.message}</p>
+        <button type="button" onClick={() => { setState({ status: "loading" }); setModelKey((value) => value + 1); }} className="min-h-11 rounded-full border border-cyan-200/30 px-5 text-sm text-cyan-100 focus-visible:outline-2 focus-visible:outline-cyan-200">Retry 3D model</button>
       </SceneMessage>
     );
   }
@@ -348,14 +356,25 @@ export default function RoofScene3D({
 
   return (
     <div
-      className="absolute inset-0"
+      className="absolute inset-0 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-cyan-200"
       data-panel-height-meters={panelHeightMeters}
       data-panel-width-meters={panelWidthMeters}
       data-rendered-panel-count={visiblePanels.length}
       data-testid="roof-scene-3d"
+      role="region"
+      aria-label="Interactive preliminary 3D roof model"
+      aria-describedby={instructionsId}
+      tabIndex={0}
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return;
+        const actions: Record<string, string> = { ArrowLeft: "left", ArrowRight: "right", ArrowUp: "up", ArrowDown: "down", "+": "zoom-in", "=": "zoom-in", "-": "zoom-out", Home: "fit" };
+        if (actions[event.key]) { event.preventDefault(); sendCameraCommand(actions[event.key]); }
+      }}
     >
+      <p id={instructionsId} className="sr-only">Arrow keys rotate; plus and minus zoom; Home resets. Elevation-based roof model. Mounting hardware is illustrative, not an installation design.</p>
       <Canvas
         dpr={[1, 2]}
+        frameloop="demand"
         // Flat (no tone mapping) keeps the heatmap ramp's true colors.
         flat
         // Soft shadows seat the modules onto their roof planes; without them
@@ -371,7 +390,7 @@ export default function RoofScene3D({
             cameraDistance * 0.55,
           ],
         }}
-        gl={{ antialias: true, alpha: true, preserveDrawingBuffer: true }}
+        gl={{ antialias: true, alpha: true }}
         onCreated={(created) => {
           // Paint the first frame immediately so the model shows even before
           // the animation loop's first tick (e.g. throttled background tabs).
@@ -410,12 +429,12 @@ export default function RoofScene3D({
         <directionalLight position={[-26, 20, -22]} intensity={0.16} />
 
         {/* CAD workspace floor */}
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.02, 0]}>
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.02, 0]} receiveShadow>
           <planeGeometry args={[gridSize * 2, gridSize * 2]} />
           <meshStandardMaterial color="#0c1424" roughness={1} metalness={0} />
         </mesh>
         <gridHelper
-          args={[gridSize, Math.max(8, Math.round(gridSize / 2)), "#31445f", "#1d2a40"]}
+          args={[gridSize, Math.max(8, Math.round(gridSize / 2)), "#25364e", "#152137"]}
           position={[0, 0, 0]}
         />
 
@@ -486,64 +505,28 @@ export default function RoofScene3D({
           </group>
         ))}
 
-        {visiblePanels.map((panel) => (
-          // Heading and tilt MUST compose as heading-then-tilt (tilt about
-          // the module's own across-axis). A single Euler with the default
-          // XYZ order tilts about the WORLD x-axis instead, which rolls
-          // east/west-facing modules onto their sides — nested groups make
-          // the composition explicit and order-proof.
-          <group
-            key={panel.key}
-            position={panel.position}
-            rotation-y={panel.rotation[1]}
-          >
-            <group rotation-x={panel.rotation[0]}>
-              {/* Aluminum frame. The frame alone casts — the glass sits flush
-                  on top of it, so letting both cast would double the shadow
-                  pass over every module for an identical silhouette. */}
-              <mesh castShadow material={panelSkin.frame}>
-                <boxGeometry
-                  args={[
-                    panel.acrossMeters,
-                    PANEL_THICKNESS_METERS,
-                    panel.alongMeters,
-                  ]}
-                />
-              </mesh>
-              {/* Crystalline glass face */}
-              <mesh
-                position={[0, PANEL_THICKNESS_METERS / 2 + 0.002, 0]}
-                rotation={[-Math.PI / 2, 0, 0]}
-                material={
-                  panel.acrossMeters >= panel.alongMeters
-                    ? panelSkin.glassLandscape
-                    : panelSkin.glassPortrait
-                }
-              >
-                {/* ~1.2 cm of frame shows on each side, matching a real
-                    module edge; the previous inset left twice that. */}
-                <planeGeometry
-                  args={[panel.acrossMeters - 0.024, panel.alongMeters - 0.024]}
-                />
-              </mesh>
-            </group>
-          </group>
-        ))}
-
-        <OrbitControls
-          enableDamping
-          dampingFactor={0.08}
-          minDistance={10}
-          maxDistance={Math.max(80, data.extentMeters * 2)}
-          maxPolarAngle={Math.PI * 0.47}
-          target={[0, Math.min(3, data.roofTopMeters * 0.5), 0]}
-        />
+        <PanelInstances panels={visiblePanels} skin={panelSkin} capacity={roofData.solarPanels.length} />
+        <CameraControls bounds={data.modelBounds} command={cameraCommand} />
         <ForceRender
           trigger={`${showFlux}|${visiblePanels.length}|${panelHeightMeters}|${panelWidthMeters}`}
         />
       </Canvas>
-      <div className="pointer-events-none absolute bottom-3 left-3 rounded-full border border-white/10 bg-slate-950/70 px-3 py-1 text-[0.6rem] uppercase tracking-[0.18em] text-slate-300 backdrop-blur">
-        Drag to orbit · Scroll to zoom
+      <div className="absolute bottom-3 left-3 z-20 max-w-[calc(100%-1.5rem)] rounded-2xl border border-white/15 bg-slate-950/90 p-1.5 text-slate-100 shadow-lg backdrop-blur">
+        <div role="toolbar" aria-label="3D camera controls" className="flex gap-1">
+          {[
+            { action: "fit", label: "Reset 3D view", caption: "Reset", Icon: RotateCcw },
+            { action: "top", label: "View roof from above", caption: "Top", Icon: Square },
+            { action: "perspective", label: "View roof in perspective", caption: "3D", Icon: Focus },
+            { action: "zoom-out", label: "Zoom out of roof", caption: "", Icon: Minus },
+            { action: "zoom-in", label: "Zoom into roof", caption: "", Icon: Plus },
+          ].map(({ action, label, caption, Icon }) => (
+            <button key={action} type="button" aria-label={label} title={label} onClick={() => sendCameraCommand(action)} className="flex h-11 w-11 flex-col items-center justify-center gap-0.5 rounded-xl hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-cyan-200">
+              <Icon className="h-4 w-4" aria-hidden="true" />
+              {caption ? <span aria-hidden="true" className="text-[9px] font-medium">{caption}</span> : null}
+            </button>
+          ))}
+        </div>
+        <p className="px-1.5 pb-0.5 pt-1 text-[10px] text-slate-300">Drag to orbit. Pinch or use + / - to zoom.</p>
       </div>
       {data.obstructions.length > 0 ? (
         <div className="pointer-events-none absolute left-3 top-3 flex items-center gap-2 rounded-full border border-white/10 bg-slate-950/70 px-3 py-1 text-[0.6rem] font-medium tracking-[0.06em] text-slate-300 backdrop-blur">
@@ -555,17 +538,88 @@ export default function RoofScene3D({
   );
 }
 
-/**
- * Paint a frame whenever `trigger` changes. The animation loop normally
- * handles this, but throttled tabs suspend requestAnimationFrame — this
- * keeps toggles (sunlight, panel count) visible there too.
- */
+function PanelInstances({ panels, skin, capacity }: {
+  panels: ViewerPanel[];
+  skin: { frame: THREE.Material; glassPortrait: THREE.Material; glassLandscape: THREE.Material };
+  capacity: number;
+}) {
+  const frames = useRef<THREE.InstancedMesh>(null);
+  const portrait = useRef<THREE.InstancedMesh>(null);
+  const landscape = useRef<THREE.InstancedMesh>(null);
+  const rails = useRef<THREE.InstancedMesh>(null);
+  const invalidate = useThree((store) => store.invalidate);
+  useLayoutEffect(() => {
+    if (!frames.current || !portrait.current || !landscape.current || !rails.current) return;
+    let portraits = 0, landscapes = 0;
+    panels.forEach((panel, index) => {
+      const matrices = buildPanelInstanceMatrices(panel);
+      frames.current!.setMatrixAt(index, matrices.frame);
+      if (panel.acrossMeters >= panel.alongMeters) landscape.current!.setMatrixAt(landscapes++, matrices.glass);
+      else portrait.current!.setMatrixAt(portraits++, matrices.glass);
+      matrices.rails.forEach((matrix, rail) => rails.current!.setMatrixAt(index * 2 + rail, matrix));
+    });
+    for (const [mesh, count] of [[frames.current, panels.length], [portrait.current, portraits], [landscape.current, landscapes], [rails.current, panels.length * 2]] as const) {
+      mesh.count = count;
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.computeBoundingSphere();
+      mesh.computeBoundingBox();
+    }
+    invalidate();
+  }, [panels, invalidate]);
+  const count = Math.max(1, capacity);
+  return <group>
+    <instancedMesh ref={frames} args={[undefined, undefined, count]} material={skin.frame} castShadow><boxGeometry args={[1, 1, 1]} /></instancedMesh>
+    <instancedMesh ref={portrait} args={[undefined, undefined, count]} material={skin.glassPortrait}><planeGeometry args={[1, 1]} /></instancedMesh>
+    <instancedMesh ref={landscape} args={[undefined, undefined, count]} material={skin.glassLandscape}><planeGeometry args={[1, 1]} /></instancedMesh>
+    {/* Racking is illustrative; surveyed mounting hardware is not available. */}
+    <instancedMesh ref={rails} args={[undefined, undefined, count * 2]} material={skin.frame} castShadow><boxGeometry args={[1, 1, 1]} /></instancedMesh>
+  </group>;
+}
+
+function CameraControls({ bounds, command }: { bounds: ModelBounds; command: { action: string; sequence: number } }) {
+  const controls = useRef<ComponentRef<typeof OrbitControls>>(null);
+  const { camera, size, invalidate } = useThree();
+  const lastSequence = useRef(-1);
+  useLayoutEffect(() => {
+    if (!controls.current || !(camera instanceof THREE.PerspectiveCamera)) return;
+    const orbit = controls.current;
+    const action = lastSequence.current === command.sequence ? "fit" : command.action;
+    lastSequence.current = command.sequence;
+    const pose = getRoofCameraPose(bounds, size.width / Math.max(1, size.height), action === "top");
+    orbit.minDistance = Math.max(3, pose.distance * 0.12);
+    orbit.maxDistance = Math.max(120, pose.distance * 3);
+    if (["fit", "top", "perspective"].includes(action)) {
+      // Flush damping momentum before fitting or switching camera presets.
+      orbit.enableDamping = false;
+      orbit.update();
+      camera.position.copy(pose.position);
+      orbit.target.copy(pose.target);
+      camera.lookAt(pose.target);
+      camera.updateProjectionMatrix();
+      orbit.update();
+      orbit.enableDamping = true;
+    } else if (action === "zoom-in" || action === "zoom-out") {
+      const offset = camera.position.clone().sub(orbit.target);
+      const nextDistance = THREE.MathUtils.clamp(offset.length() * (action === "zoom-in" ? 0.8 : 1.25), orbit.minDistance, orbit.maxDistance);
+      camera.position.copy(orbit.target).add(offset.setLength(nextDistance));
+      orbit.update();
+    } else if (action === "left" || action === "right") {
+      orbit.setAzimuthalAngle(orbit.getAzimuthalAngle() + (action === "left" ? -0.15 : 0.15));
+    } else if (action === "up" || action === "down") {
+      orbit.setPolarAngle(THREE.MathUtils.clamp(orbit.getPolarAngle() + (action === "up" ? -0.1 : 0.1), 0.001, Math.PI * 0.47));
+    }
+    invalidate();
+  }, [camera, bounds, size.width, size.height, command, invalidate]);
+  return <OrbitControls ref={controls} makeDefault enableDamping dampingFactor={0.08} maxPolarAngle={Math.PI * 0.47} />;
+}
+
+/** Request frames for changed content; the idle scene needs no animation loop. */
 function ForceRender({ trigger }: { trigger: string }) {
-  const { gl, scene, camera } = useThree();
+  const invalidate = useThree((store) => store.invalidate);
 
   useEffect(() => {
-    gl.render(scene, camera);
-  }, [gl, scene, camera, trigger]);
+    invalidate();
+  }, [invalidate, trigger]);
 
   return null;
 }
@@ -581,9 +635,9 @@ function SceneMessage({ children }: { children: React.ReactNode }) {
 function isWebGlAvailable() {
   try {
     const canvas = document.createElement("canvas");
-    return Boolean(
-      canvas.getContext("webgl2") ?? canvas.getContext("webgl")
-    );
+    const context = canvas.getContext("webgl2");
+    context?.getExtension("WEBGL_lose_context")?.loseContext();
+    return Boolean(context);
   } catch {
     return false;
   }
@@ -603,7 +657,7 @@ function buildSceneData({
   const focusBounds = resolveFocusBounds(roofData, dsm.bounds);
   const cropBounds = expandBoundsMeters(focusBounds, SCENE_PADDING_METERS);
   const origin = boundsCenter(cropBounds);
-  const groundElevationMeters = estimateGroundElevationMeters(dsm.raster);
+  const sampledGroundElevationMeters = estimateGroundElevationMeters(dsm.raster);
 
   const fluxCanvas = flux ? buildFluxCanvas(flux, mask) : null;
   const fluxTexture = fluxCanvas ? makeCanvasTexture(fluxCanvas) : null;
@@ -611,16 +665,30 @@ function buildSceneData({
   // One fitted plane per segment (from panel-center DSM samples) — the
   // shared surface for BOTH the roof faces and the panel arrays, so
   // modules always sit flush on their face.
-  const segmentPlanes = fitSegmentPlanes({
+  const fittedPlanes = fitSegmentPlanes({
     panels: roofData.solarPanels,
     raster: dsm.raster,
     width: dsm.width,
     height: dsm.height,
     bounds: dsm.bounds,
     origin,
-    groundElevationMeters,
+    groundElevationMeters: sampledGroundElevationMeters,
     fallbackElevationMeters: DEFAULT_FACE_HEIGHT_METERS,
   });
+  // A cropped scan may contain roof pixels but no actual ground. Clamping
+  // individual corners then changes the roof pitch and buries the panels.
+  // Shift the shared display datum instead, preserving every relative plane.
+  const { planes: segmentPlanes, liftMeters } = liftRoofSegmentPlanes({
+    planes: fittedPlanes,
+    origin,
+    outlines: roofData.roofSegments.map((segment) => ({
+      segmentIndex: segment.segmentIndex ?? -1,
+      points: roofData.roofBounds
+        ? normalizedOutlineToLatLng(segment.outline, roofData.roofBounds)
+        : [],
+    })),
+  });
+  const groundElevationMeters = sampledGroundElevationMeters - liftMeters;
 
   // Extruded roof faces: one crisp plane per segment outline.
   const faces: FaceMesh[] = [];
@@ -733,6 +801,7 @@ function buildSceneData({
   // One fitted plane per roof segment: modules mount coplanar like a real
   // racked array instead of following per-sample DSM noise.
   const transforms = buildSegmentPlaneTransforms({
+    planes: segmentPlanes,
     panels: roofData.solarPanels,
     raster: dsm.raster,
     width: dsm.width,
@@ -778,6 +847,16 @@ function buildSceneData({
     Math.abs(northeastLocal.z - southwestLocal.z)
   );
 
+  const box = new THREE.Box3();
+  for (const face of faces) {
+    face.roof.computeBoundingBox();
+    if (face.roof.boundingBox) box.union(face.roof.boundingBox);
+  }
+  for (const panel of panels) box.expandByPoint(new THREE.Vector3(...panel.position));
+  if (box.isEmpty()) box.setFromCenterAndSize(new THREE.Vector3(), new THREE.Vector3(10, 6, 10));
+  box.min.y = Math.min(0, box.min.y);
+  box.expandByScalar(0.6);
+
   return {
     faces,
     obstructions,
@@ -785,6 +864,7 @@ function buildSceneData({
     panels,
     extentMeters,
     roofTopMeters: roofTopMeters || DEFAULT_FACE_HEIGHT_METERS,
+    modelBounds: { min: box.min.toArray(), max: box.max.toArray() },
   };
 }
 

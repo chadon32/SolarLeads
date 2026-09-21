@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 
 const isDevelopment = process.env.NODE_ENV === "development";
+const isVercelProduction = process.env.VERCEL_ENV === "production";
 const scriptSources = [
   "'self'",
   "'unsafe-inline'",
@@ -23,8 +24,10 @@ const contentSecurityPolicy = [
   "base-uri 'self'",
   "form-action 'self'",
   "frame-ancestors 'none'",
-  ...(isDevelopment ? [] : ["upgrade-insecure-requests"]),
+  ...(isVercelProduction ? ["upgrade-insecure-requests"] : []),
 ].join("; ");
+const heroAssetCacheControl =
+  "public, max-age=604800, stale-while-revalidate=2592000";
 
 const nextConfig: NextConfig = {
   compress: true,
@@ -44,6 +47,14 @@ const nextConfig: NextConfig = {
   },
   async headers() {
     return [
+      {
+        source: "/hero-poster.jpg",
+        headers: [{ key: "Cache-Control", value: heroAssetCacheControl }],
+      },
+      {
+        source: "/Drone_shot_over_solar_neighborhood_202605281518.mp4",
+        headers: [{ key: "Cache-Control", value: heroAssetCacheControl }],
+      },
       {
         source: "/(.*)",
         headers: [

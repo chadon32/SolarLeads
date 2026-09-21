@@ -35,6 +35,8 @@ export function HomeScreen({ lastAddress, onAnalyze }: HomeScreenProps) {
   const [selecting, setSelecting] = useState(false);
   const [error, setError] = useState("");
   const requestNumber = useRef(0);
+  const selectionController = useRef<AbortController | null>(null);
+  useEffect(() => () => selectionController.current?.abort(), []);
 
   useEffect(() => {
     const trimmed = query.trim();
@@ -46,6 +48,7 @@ export function HomeScreen({ lastAddress, onAnalyze }: HomeScreenProps) {
     }
 
     const timer = setTimeout(() => {
+      if (controller.signal.aborted || currentRequest !== requestNumber.current) return;
       setSearching(true);
       setError("");
 
@@ -80,27 +83,44 @@ export function HomeScreen({ lastAddress, onAnalyze }: HomeScreenProps) {
   }, [query, selectedAddress]);
 
   async function selectPrediction(prediction: PlacePrediction) {
+    if (selectionController.current) return null;
+    const controller = new AbortController();
+    selectionController.current = controller;
+    requestNumber.current += 1;
     setSelecting(true);
+    setSearching(false);
+    setPredictions([]);
     setError("");
     Keyboard.dismiss();
 
     try {
-      const property = await fetchPlaceAddress(prediction.place_id);
+      const property = await fetchPlaceAddress(prediction.place_id, controller.signal);
+      if (controller.signal.aborted) return null;
       setQuery(property.address);
       setSelectedAddress(property.address);
       setPredictions([]);
+      return property.address;
     } catch (lookupError) {
+      if (controller.signal.aborted) return null;
       setError(
         lookupError instanceof PlaceLookupError
           ? lookupError.message
           : "That property could not be verified."
       );
+      return null;
     } finally {
-      setSelecting(false);
+      if (selectionController.current === controller) {
+        selectionController.current = null;
+        setSelecting(false);
+      }
     }
   }
 
   function updateQuery(value: string) {
+    selectionController.current?.abort();
+    selectionController.current = null;
+    setSelecting(false);
+    requestNumber.current += 1;
     setQuery(value);
     setSelectedAddress("");
     setPredictions([]);
@@ -108,15 +128,26 @@ export function HomeScreen({ lastAddress, onAnalyze }: HomeScreenProps) {
     setError("");
   }
 
-  function submitSearch() {
+  async function submitSearch() {
+    if (selectionController.current) return;
     if (selectedAddress) {
       onAnalyze(selectedAddress);
       return;
     }
 
     if (predictions[0]) {
-      void selectPrediction(predictions[0]);
+      const verifiedAddress = await selectPrediction(predictions[0]);
+      if (verifiedAddress) onAnalyze(verifiedAddress);
+      return;
     }
+
+    setError(
+      query.trim().length < 3
+        ? "Enter at least three characters of an Arizona home address."
+        : searching
+          ? "Address suggestions are still loading. Try again in a moment."
+          : "Choose a verified Arizona home from the address suggestions."
+    );
   }
 
   return (
@@ -161,11 +192,12 @@ export function HomeScreen({ lastAddress, onAnalyze }: HomeScreenProps) {
               </View>
               <TextInput
                 accessibilityLabel="Arizona property address"
+                accessibilityHint="Start typing, then choose a verified Arizona home address."
                 autoCapitalize="words"
                 autoComplete="street-address"
                 autoCorrect={false}
                 onChangeText={updateQuery}
-                onSubmitEditing={submitSearch}
+                onSubmitEditing={() => void submitSearch()}
                 placeholder="Enter an Arizona home address"
                 placeholderTextColor="#667588"
                 returnKeyType="search"
@@ -174,7 +206,12 @@ export function HomeScreen({ lastAddress, onAnalyze }: HomeScreenProps) {
                 value={query}
               />
               {searching || selecting ? (
-                <ActivityIndicator color={colors.cyan} size="small" />
+                <ActivityIndicator
+                  accessibilityLabel={selecting ? "Verifying property" : "Searching addresses"}
+                  accessibilityLiveRegion="polite"
+                  color={colors.cyan}
+                  size="small"
+                />
               ) : null}
             </View>
 
@@ -182,6 +219,7 @@ export function HomeScreen({ lastAddress, onAnalyze }: HomeScreenProps) {
               <View style={styles.suggestionList}>
                 {predictions.map((prediction, index) => (
                   <Pressable
+                    accessibilityLabel={`Use ${prediction.description}`}
                     accessibilityRole="button"
                     key={prediction.place_id}
                     onPress={() => void selectPrediction(prediction)}
@@ -208,17 +246,28 @@ export function HomeScreen({ lastAddress, onAnalyze }: HomeScreenProps) {
               </View>
             ) : null}
 
-            {error ? <Text style={styles.error}>{error}</Text> : null}
+            {error ? (
+              <Text accessibilityLiveRegion="polite" style={styles.error}>
+                {error}
+              </Text>
+            ) : null}
 
             {selectedAddress ? (
-              <View style={styles.selectedCard}>
+              <View
+                accessible
+                accessibilityLabel={`Verified property: ${selectedAddress}`}
+                style={styles.selectedCard}
+              >
                 <Text style={styles.selectedLabel}>VERIFIED PROPERTY</Text>
                 <Text style={styles.selectedAddress}>{selectedAddress}</Text>
               </View>
             ) : null}
 
             <Pressable
+              accessibilityHint="Opens the satellite roof analysis for the verified property."
+              accessibilityLabel="Analyze this roof"
               accessibilityRole="button"
+              accessibilityState={{ disabled: !selectedAddress || selecting }}
               disabled={!selectedAddress || selecting}
               onPress={() => onAnalyze(selectedAddress)}
               style={({ pressed }) => [
@@ -237,6 +286,8 @@ export function HomeScreen({ lastAddress, onAnalyze }: HomeScreenProps) {
 
           {lastAddress && lastAddress !== selectedAddress ? (
             <Pressable
+              accessibilityHint="Reopens the most recently viewed property analysis."
+              accessibilityLabel={`Continue last analysis for ${lastAddress}`}
               accessibilityRole="button"
               onPress={() => onAnalyze(lastAddress)}
               style={({ pressed }) => [
@@ -264,12 +315,31 @@ export function HomeScreen({ lastAddress, onAnalyze }: HomeScreenProps) {
           </View>
 
           <View style={styles.legalRow}>
-            <Pressable onPress={() => void Linking.openURL(`${APP_URL}/privacy`)}>
+            <Pressable
+              accessibilityLabel="Open privacy notice"
+              accessibilityRole="link"
+              onPress={() => void Linking.openURL(`${APP_URL}/privacy`)}
+              style={styles.legalAction}
+            >
               <Text style={styles.legalLink}>Privacy</Text>
             </Pressable>
             <View style={styles.legalDot} />
-            <Pressable onPress={() => void Linking.openURL(`${APP_URL}/terms`)}>
+            <Pressable
+              accessibilityLabel="Open estimate terms"
+              accessibilityRole="link"
+              onPress={() => void Linking.openURL(`${APP_URL}/terms`)}
+              style={styles.legalAction}
+            >
               <Text style={styles.legalLink}>Estimate terms</Text>
+            </Pressable>
+            <View style={styles.legalDot} />
+            <Pressable
+              accessibilityLabel="Email Solartelligence support"
+              accessibilityRole="link"
+              onPress={() => void Linking.openURL("mailto:reports@solartelligence.com?subject=App%20support")}
+              style={styles.legalAction}
+            >
+              <Text style={styles.legalLink}>Support</Text>
             </Pressable>
           </View>
         </ScrollView>
@@ -324,7 +394,7 @@ const styles = StyleSheet.create({
   },
   brandCopy: { flex: 1 },
   brand: { color: colors.text, fontSize: 13, fontWeight: "800", letterSpacing: 2.3 },
-  brandTagline: { marginTop: 3, color: colors.muted, fontSize: 8, fontWeight: "700", letterSpacing: 1.35 },
+  brandTagline: { marginTop: 3, color: colors.muted, fontSize: 9, fontWeight: "700", letterSpacing: 1.25 },
   hero: { paddingTop: 42, paddingBottom: 27 },
   eyebrowPill: {
     alignSelf: "flex-start",
@@ -402,7 +472,7 @@ const styles = StyleSheet.create({
   suggestionMain: { color: colors.text, fontSize: 14, fontWeight: "700" },
   suggestionSecondary: { marginTop: 4, color: colors.muted, fontSize: 12 },
   chevron: { color: colors.cyan, fontSize: 20, fontWeight: "700" },
-  error: { marginTop: 10, color: "#fda4af", fontSize: 12, lineHeight: 18 },
+  error: { marginTop: 10, color: "#fda4af", fontSize: 13, lineHeight: 19 },
   selectedCard: { marginTop: 12, padding: 13, borderRadius: 16, borderWidth: 1, borderColor: colors.borderStrong, backgroundColor: "rgba(8, 51, 68, 0.42)" },
   selectedLabel: { color: colors.cyan, fontSize: 8, fontWeight: "800", letterSpacing: 1.6 },
   selectedAddress: { marginTop: 6, color: colors.text, fontSize: 14, fontWeight: "700", lineHeight: 20 },
@@ -411,7 +481,7 @@ const styles = StyleSheet.create({
   primaryButtonPressed: { opacity: 0.82, transform: [{ scale: 0.99 }] },
   primaryButtonText: { color: colors.black, fontSize: 15, fontWeight: "800" },
   primaryArrow: { color: colors.black, fontSize: 17, fontWeight: "800" },
-  helper: { marginTop: 11, paddingHorizontal: 8, color: colors.muted, fontSize: 11, lineHeight: 17, textAlign: "center" },
+  helper: { marginTop: 11, paddingHorizontal: 8, color: colors.muted, fontSize: 12, lineHeight: 18, textAlign: "center" },
   recentCard: { minHeight: 80, marginTop: 14, flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 15, paddingVertical: 13, borderRadius: radii.medium, borderWidth: 1, borderColor: colors.border, backgroundColor: "rgba(11, 21, 32, 0.88)" },
   recentIcon: { width: 34, height: 34, alignItems: "center", justifyContent: "center", borderRadius: 17, borderWidth: 1, borderColor: colors.borderStrong },
   recentIconHand: { width: 12, height: 12, borderRadius: 6, borderWidth: 2, borderColor: colors.cyan, borderTopColor: "transparent" },
@@ -422,9 +492,10 @@ const styles = StyleSheet.create({
   trustItem: { flexDirection: "row", alignItems: "center", gap: 9 },
   checkDot: { width: 20, height: 20, alignItems: "center", justifyContent: "center", borderRadius: 10, backgroundColor: "rgba(34, 211, 238, 0.12)" },
   check: { color: colors.cyan, fontSize: 11, fontWeight: "800" },
-  trustText: { color: colors.textSoft, fontSize: 12 },
-  legalRow: { marginTop: 25, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10 },
-  legalLink: { color: colors.muted, fontSize: 11, textDecorationLine: "underline" },
+  trustText: { color: colors.textSoft, fontSize: 13 },
+  legalRow: { marginTop: 21, flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "center", gap: 6 },
+  legalAction: { minHeight: 44, justifyContent: "center", paddingHorizontal: 6 },
+  legalLink: { color: colors.textSoft, fontSize: 12, textDecorationLine: "underline" },
   legalDot: { width: 3, height: 3, borderRadius: 2, backgroundColor: colors.muted },
   glowTop: { position: "absolute", top: -120, right: -90, width: 300, height: 300, borderRadius: 150, backgroundColor: "rgba(8, 145, 178, 0.08)" },
   glowBottom: { position: "absolute", bottom: -170, left: -130, width: 360, height: 360, borderRadius: 180, backgroundColor: "rgba(14, 116, 144, 0.05)" },

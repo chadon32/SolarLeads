@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { randomUUID } from "node:crypto";
 import { verifyDashboardRequest } from "@/lib/dashboard-auth";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
 
@@ -16,6 +17,7 @@ type UtilityBillLead = {
 };
 
 export async function GET(request: Request) {
+  const requestId = randomUUID();
   const url = new URL(request.url);
   const auth = verifyDashboardRequest(request);
 
@@ -46,14 +48,17 @@ export async function GET(request: Request) {
   };
 
   if (error) {
+    console.error("[utility-bill-download:error]", {
+      operation: "lead-lookup",
+      providerErrorType: getProviderErrorType(error),
+      requestId,
+    });
+
     if (shouldTreatAsUnavailable(error.message)) {
       return billNotFound();
     }
 
-    return NextResponse.json(
-      { message: error.message || "Unable to look up the utility bill." },
-      { status: 500 }
-    );
+    return providerErrorResponse(requestId);
   }
 
   if (!data?.utility_bill_uploaded || !data.utility_bill_file_path) {
@@ -67,6 +72,13 @@ export async function GET(request: Request) {
     });
 
   if (signedUrl.error || !signedUrl.data?.signedUrl) {
+    console.error("[utility-bill-download:error]", {
+      operation: "signed-url",
+      providerErrorType: signedUrl.error
+        ? getProviderErrorType(signedUrl.error)
+        : "missing_signed_url",
+      requestId,
+    });
     return billNotFound();
   }
 
@@ -89,6 +101,20 @@ export async function GET(request: Request) {
   return response;
 }
 
+function providerErrorResponse(requestId: string) {
+  return NextResponse.json(
+    {
+      code: "UTILITY_BILL_PROVIDER_UNAVAILABLE",
+      message: "Unable to access the utility bill right now.",
+      requestId,
+    },
+    {
+      headers: { "Cache-Control": "no-store" },
+      status: 503,
+    }
+  );
+}
+
 function billNotFound() {
   return NextResponse.json(
     { message: "Utility bill unavailable for this lead." },
@@ -105,6 +131,11 @@ function shouldTreatAsUnavailable(message?: string) {
     normalized.includes("could not find") ||
     normalized.includes("does not exist")
   );
+}
+
+function getProviderErrorType(error: unknown) {
+  const name = error instanceof Error ? error.name : "";
+  return /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(name) ? name : "provider_error";
 }
 
 function buildUtilityBillFilename(lead: UtilityBillLead) {

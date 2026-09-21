@@ -20,6 +20,8 @@ export {
   STANDARD_PANEL_WATTS,
 } from "@/lib/solar-assumptions";
 
+import { getSelectedPanelEnergy } from "@/lib/selected-panel-energy";
+
 const compassLabels = [
   "N",
   "NNE",
@@ -374,24 +376,7 @@ export function findNearestPanelConfig(
 }
 
 function getAnnualKwhForPanelCount(analysis: RoofAnalysis, panelCount: number) {
-  if (panelCount <= 0) {
-    return 0;
-  }
-
-  const selectedConfig = findNearestPanelConfig(analysis.solarPanelConfigs, panelCount);
-  const panelEnergyTotal = analysis.solarPanels
-    .slice(0, panelCount)
-    .reduce((sum, panel) => sum + Math.max(panel.yearlyEnergyDcKwh, 0), 0);
-  const perPanelKwh =
-    analysis.panelCount > 0 ? analysis.annualKwh / Math.max(analysis.panelCount, 1) : 0;
-
-  return Math.max(
-    0,
-    Math.round(
-      selectedConfig?.yearlyEnergyDcKwh ??
-        (panelEnergyTotal > 0 ? panelEnergyTotal : perPanelKwh * panelCount)
-    )
-  );
+  return Math.round(getSelectedPanelEnergy(analysis, panelCount));
 }
 
 function getAveragePitchDeg(analysis: RoofAnalysis) {

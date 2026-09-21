@@ -2,13 +2,14 @@ import "server-only";
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 const UPLOAD_CLAIM_TTL_SECONDS = 60 * 60;
+const MIN_PRODUCTION_SECRET_LENGTH = 32;
 
 type UtilityBillClaimResult =
   | { ok: true; path: string }
   | { ok: false; reason: "expired" | "invalid" | "missing" | "not_configured" };
 
 export function createUtilityBillUploadClaim(path: string) {
-  const secret = getUtilityBillClaimSecret();
+  const secret = getDedicatedUtilityBillClaimSecret();
 
   if (!secret) {
     return "";
@@ -24,10 +25,10 @@ export function createUtilityBillUploadClaim(path: string) {
 export function verifyUtilityBillUploadClaim(
   claim?: string | null
 ): UtilityBillClaimResult {
-  const secret = getUtilityBillClaimSecret();
+  const secrets = getUtilityBillClaimSecrets();
   const rawClaim = claim?.trim() ?? "";
 
-  if (!secret) {
+  if (!secrets.length) {
     return { ok: false, reason: "not_configured" };
   }
 
@@ -52,9 +53,11 @@ export function verifyUtilityBillUploadClaim(
     return { ok: false, reason: "expired" };
   }
 
-  const expected = signClaim(encodedPath, expiresAt, secret);
+  const valid = secrets.some((secret) =>
+    constantTimeEquals(signClaim(encodedPath, expiresAt, secret), signature)
+  );
 
-  if (!constantTimeEquals(expected, signature)) {
+  if (!valid) {
     return { ok: false, reason: "invalid" };
   }
 
@@ -67,14 +70,38 @@ export function verifyUtilityBillUploadClaim(
   return { ok: true, path };
 }
 
-function getUtilityBillClaimSecret() {
-  return (
-    process.env.UTILITY_BILL_UPLOAD_SECRET?.trim() ||
-    process.env.REPORT_SIGNING_SECRET?.trim() ||
-    process.env.DASHBOARD_ACCESS_TOKEN?.trim() ||
-    process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() ||
-    ""
-  );
+export function isUtilityBillUploadSecretConfigured() {
+  return Boolean(getDedicatedUtilityBillClaimSecret());
+}
+
+function getDedicatedUtilityBillClaimSecret() {
+  const secret = process.env.UTILITY_BILL_UPLOAD_SECRET?.trim() ?? "";
+
+  if (
+    process.env.NODE_ENV === "production" &&
+    secret.length < MIN_PRODUCTION_SECRET_LENGTH
+  ) {
+    return "";
+  }
+
+  return secret;
+}
+
+function getUtilityBillClaimSecrets() {
+  const dedicated = getDedicatedUtilityBillClaimSecret();
+
+  if (dedicated) {
+    return [dedicated, getLegacyUtilityBillClaimSecret()].filter(Boolean);
+  }
+
+  // This explicit migration value is verification-only. It allows claims
+  // issued before the dedicated secret was introduced to expire naturally;
+  // new claims remain disabled until the dedicated secret is configured.
+  return [getLegacyUtilityBillClaimSecret()].filter(Boolean);
+}
+
+function getLegacyUtilityBillClaimSecret() {
+  return process.env.UTILITY_BILL_UPLOAD_LEGACY_SECRET?.trim() ?? "";
 }
 
 function signClaim(encodedPath: string, expiresAt: string, secret: string) {

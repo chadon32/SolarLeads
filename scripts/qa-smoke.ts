@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { chromium } from "playwright";
 
-const baseUrl = (process.env.BASE_URL ?? "http://localhost:3002").replace(/\/$/, "");
+const baseUrl = (process.env.BASE_URL ?? "http://localhost:3000").replace(/\/$/, "");
 const leadId = "00000000-0000-0000-0000-000000000000";
 
 async function main() {

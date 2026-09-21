@@ -39,6 +39,17 @@ dev-start.log
 /Drone_shot_over_solar_neighborhood_202605281518.mp4
 /tmp/
 
+# local QA and generated media (never part of the web or mobile release)
+/.codex-screenshots/
+/playwright-report/
+/qa-evidence/
+/test-results/
+/videos/**/node_modules/
+/videos/**/out/
+/marketing-ad/**/renders/
+/marketing-ad/**/exports/
+/marketing-ad/**/snapshots/
+
 # env files (can opt-in for committing if needed)
 .env*
 !.env.example

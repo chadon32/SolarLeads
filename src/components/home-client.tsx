@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
 
 import {
   ArrowRight,
@@ -11,9 +12,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AddressSearch } from "@/components/address-search";
 import { AnalysisSequence } from "@/components/analysis-sequence";
-import { LeadCaptureForm } from "@/components/lead-capture-form";
-import { SolarAnalysis } from "@/components/solar-analysis";
-import { SolarReportDashboard, type DetailTab } from "@/components/solar-report-dashboard";
+import type { DetailTab } from "@/components/solar-report-dashboard";
 import { formatDisplayAddress } from "@/lib/address-format";
 import { trackEvent } from "@/lib/analytics";
 import { faqItems } from "@/lib/faq";
@@ -39,13 +38,58 @@ import {
 
 const VIDEO_SRC =
   "/Drone_shot_over_solar_neighborhood_202605281518.mp4";
+const VIDEO_LOAD_DELAY_MS = 1_000;
 /**
- * First frame of the hero clip (~62 KB). The video is `preload="metadata"`, so
- * without a poster the hero is an empty black rectangle until enough of the
- * clip has buffered to paint — and it stays black permanently for anyone with
- * reduced-motion enabled, where playback never starts.
+ * First frame of the hero clip (~62 KB). It paints immediately while the full
+ * video is deferred, and remains the background for reduced-motion/data-saver
+ * visitors who should not download the clip at all.
  */
 const VIDEO_POSTER_SRC = "/hero-poster.jpg";
+
+const SolarAnalysis = dynamic(
+  () =>
+    import("@/components/solar-analysis").then(
+      (module) => module.SolarAnalysis
+    ),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex min-h-[24rem] items-center justify-center bg-slate-950 px-6 text-center">
+        <p className="text-sm text-slate-300">Preparing rooftop analysis...</p>
+      </div>
+    ),
+  }
+);
+
+const SolarReportDashboard = dynamic(
+  () =>
+    import("@/components/solar-report-dashboard").then(
+      (module) => module.SolarReportDashboard
+    ),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="rounded-[1.5rem] border border-cyan-200/14 bg-slate-950/78 p-6 text-sm text-slate-300 shadow-[0_22px_75px_rgba(0,0,0,0.38)]">
+        Preparing your report workspace...
+      </div>
+    ),
+  }
+);
+
+const LeadCaptureForm = dynamic(
+  () =>
+    import("@/components/lead-capture-form").then(
+      (module) => module.LeadCaptureForm
+    ),
+  {
+    ssr: false,
+    loading: () => (
+      <div role="status" className="flex min-h-48 items-center justify-center rounded-3xl border border-white/10 bg-slate-950/80 p-6 text-center text-sm text-slate-300">
+        Preparing your report form...
+      </div>
+    ),
+  }
+);
 
 const featureCards = [
   {
@@ -472,6 +516,8 @@ export function HomeClient({
       // for every bill, panel, or equipment adjustment.
       window.history.replaceState(window.history.state, "", estimateHref);
     }
+    const bridge = (window as Window & { ReactNativeWebView?: { postMessage: (message: string) => void } }).ReactNativeWebView;
+    bridge?.postMessage(JSON.stringify({ type: "estimate-share", url: estimateHref }));
   }, [
     activePanelCount,
     addBattery,
@@ -656,7 +702,10 @@ export function HomeClient({
 
           <div className="flex shrink-0 items-center gap-2">
             <details className="relative lg:hidden">
-              <summary className="grid h-11 w-11 cursor-pointer list-none place-items-center rounded-full border border-white/10 bg-white/[0.06] text-sm font-semibold text-white">
+              <summary
+                aria-label="Open site navigation"
+                className="grid h-11 w-11 cursor-pointer list-none place-items-center rounded-full border border-white/10 bg-white/[0.06] text-sm font-semibold text-white"
+              >
                 Menu
               </summary>
               <div className="absolute right-0 top-14 z-30 grid min-w-48 gap-1 rounded-[1rem] border border-white/10 bg-slate-950/92 p-2 text-left text-sm text-white shadow-[0_18px_55px_rgba(0,0,0,0.4)] backdrop-blur-xl">
@@ -700,7 +749,7 @@ export function HomeClient({
                   <p className="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-100/82">
                     {hasValidAnalysis ? "Report model ready" : "Generating roof model"}
                   </p>
-                  <h1 className="mt-2 truncate text-xl font-semibold text-white md:text-2xl">
+                  <h1 className="mt-2 line-clamp-2 break-words text-xl font-semibold text-white md:text-2xl">
                     {formatDisplayAddress(selectedAddress)}
                   </h1>
                   <p className="mt-1 text-sm leading-6 text-white/64">
@@ -709,11 +758,14 @@ export function HomeClient({
                       : "Satellite imagery and Solar API roof data are loading."}
                   </p>
                   {reportMetrics ? (
-                    <div className="mt-3 grid gap-2 text-xs sm:grid-cols-4">
-                      <ReportMiniMetric label="Score" value={`${reportMetrics.score}/100`} />
+                    <div
+                      data-testid="report-kpi-grid"
+                      className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4"
+                    >
+                      <ReportMiniMetric label="Solar readiness" value={`${reportMetrics.score}/100`} />
                       <ReportMiniMetric label="Panels" value={`${reportMetrics.panelCount}`} />
-                      <ReportMiniMetric label="Savings" value={formatMoney(reportMetrics.annualSavings)} />
-                      <ReportMiniMetric label="System" value={`${reportMetrics.systemKw.toFixed(1)} kW`} />
+                      <ReportMiniMetric label="Annual savings" value={formatMoney(reportMetrics.annualSavings)} />
+                      <ReportMiniMetric label="System size" value={`${reportMetrics.systemKw.toFixed(1)} kW`} />
                     </div>
                   ) : null}
                 </div>
@@ -721,7 +773,7 @@ export function HomeClient({
                   <button
                     type="button"
                     onClick={openSendReportTab}
-                    className="inline-flex min-h-11 items-center justify-center rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 shadow-[0_16px_45px_rgba(255,255,255,0.14)] transition hover:-translate-y-0.5 hover:bg-cyan-100"
+                    className="inline-flex min-h-11 w-full items-center justify-center rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 shadow-[0_16px_45px_rgba(255,255,255,0.14)] transition hover:-translate-y-0.5 hover:bg-cyan-100 md:w-auto"
                   >
                     Send My Full Report
                   </button>
@@ -789,14 +841,14 @@ export function HomeClient({
                   }
                 }}
               />
-              {totalEstimateCount ? (
+              {totalEstimateCount && totalEstimateCount >= 10 ? (
                 <div className="mt-3 hidden rounded-[1.15rem] border border-emerald-300/12 bg-emerald-300/[0.055] px-4 py-3 text-sm text-emerald-50 sm:block">
                   Join{" "}
                   <span className="font-semibold">
-                    {formatNumber(totalEstimateCount)}
+                    {formatNumber(Math.floor(totalEstimateCount / 10) * 10)}+
                   </span>{" "}
-                  {totalEstimateCount === 1 ? "solar report" : "solar reports"} requested
-                  through Solartelligence.
+                  Arizona homeowners who have requested a solar report through
+                  Solartelligence.
                 </div>
               ) : null}
               <label className="mt-4 block rounded-[1.35rem] border border-white/10 bg-black/18 px-4 py-3 text-left">
@@ -1047,6 +1099,10 @@ function CinematicVideoBackground() {
   const animationFrameRef = useRef<number | null>(null);
   const restartTimeoutRef = useRef<number | null>(null);
   const fadingOutRef = useRef(false);
+  const userPausedRef = useRef(false);
+  const [userPaused, setUserPaused] = useState(false);
+  const [videoFailed, setVideoFailed] = useState(false);
+  const [videoSourceReady, setVideoSourceReady] = useState(false);
 
   const cancelFade = () => {
     if (animationFrameRef.current !== null) {
@@ -1092,8 +1148,50 @@ function CinematicVideoBackground() {
     };
   }, []);
 
+  useEffect(() => {
+    const reducedMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)"
+    ).matches;
+    const connection = (
+      window.navigator as Navigator & {
+        connection?: { saveData?: boolean };
+      }
+    ).connection;
+
+    if (reducedMotion || connection?.saveData) {
+      return;
+    }
+
+    const idleWindow = window as Window & {
+      cancelIdleCallback?: (handle: number) => void;
+      requestIdleCallback?: (
+        callback: () => void,
+        options?: { timeout: number }
+      ) => number;
+    };
+    let idleHandle: number | null = null;
+    const delayHandle = window.setTimeout(() => {
+      if (idleWindow.requestIdleCallback) {
+        idleHandle = idleWindow.requestIdleCallback(
+          () => setVideoSourceReady(true),
+          { timeout: 1_500 }
+        );
+        return;
+      }
+
+      setVideoSourceReady(true);
+    }, VIDEO_LOAD_DELAY_MS);
+
+    return () => {
+      window.clearTimeout(delayHandle);
+      if (idleHandle !== null) {
+        idleWindow.cancelIdleCallback?.(idleHandle);
+      }
+    };
+  }, []);
+
   const handleLoadedData = () => {
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    if (userPausedRef.current || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
       // Playback stays off, but the element must still be revealed: opacity
       // only ever rises in `handlePlaying`, so leaving it at 0 here would give
       // reduced-motion visitors a permanently black hero. Showing the poster
@@ -1102,10 +1200,20 @@ function CinematicVideoBackground() {
       return;
     }
 
-    void videoRef.current?.play().catch(() => undefined);
+    void videoRef.current?.play().catch(() => fadeTo(1));
+  };
+
+  const handleVideoError = () => {
+    // Keep the poster visible if the deferred media request cannot be decoded.
+    setVideoFailed(true);
+    fadeTo(1);
   };
 
   const handlePlaying = () => {
+    if (userPausedRef.current) {
+      videoRef.current?.pause();
+      return;
+    }
     fadingOutRef.current = false;
     fadeTo(1);
   };
@@ -1115,6 +1223,7 @@ function CinematicVideoBackground() {
 
     if (
       !video ||
+      userPausedRef.current ||
       !Number.isFinite(video.duration) ||
       video.duration <= 0 ||
       fadingOutRef.current
@@ -1135,7 +1244,7 @@ function CinematicVideoBackground() {
       return;
     }
 
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    if (userPausedRef.current || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
       video.pause();
       return;
     }
@@ -1148,29 +1257,67 @@ function CinematicVideoBackground() {
     }
 
     restartTimeoutRef.current = window.setTimeout(() => {
+      if (userPausedRef.current) return;
       video.currentTime = 0;
       fadingOutRef.current = false;
       void video.play().then(() => fadeTo(1)).catch(() => undefined);
     }, 100);
   };
 
+  const togglePlayback = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    const paused = !userPausedRef.current;
+    userPausedRef.current = paused;
+    setUserPaused(paused);
+    cancelFade();
+    if (restartTimeoutRef.current !== null) {
+      window.clearTimeout(restartTimeoutRef.current);
+      restartTimeoutRef.current = null;
+    }
+    video.style.opacity = "1";
+    if (paused) {
+      video.pause();
+    } else {
+      fadingOutRef.current = false;
+      void video.play().catch(() => {
+        userPausedRef.current = true;
+        setUserPaused(true);
+      });
+    }
+  };
+
   return (
+    <>
     <div className="fixed inset-0 z-0 overflow-hidden bg-black">
       <video
         ref={videoRef}
-        src={VIDEO_SRC}
+        src={videoSourceReady ? VIDEO_SRC : undefined}
         poster={VIDEO_POSTER_SRC}
         muted
+        aria-hidden="true"
         playsInline
-        preload="metadata"
+        preload={videoSourceReady ? "metadata" : "none"}
         onLoadedData={handleLoadedData}
+        onError={handleVideoError}
         onPlaying={handlePlaying}
         onTimeUpdate={handleTimeUpdate}
         onEnded={handleEnded}
-        className="h-full w-full translate-y-[17%] object-cover"
-        style={{ opacity: 0 }}
+        className={`h-full w-full translate-y-[17%] object-cover ${
+          videoSourceReady ? "opacity-0" : "opacity-100"
+        }`}
       />
     </div>
+    {videoSourceReady && !videoFailed ? (
+      <button
+        type="button"
+        onClick={togglePlayback}
+        className="print-static-ui fixed bottom-[max(0.75rem,env(safe-area-inset-bottom))] right-3 z-40 min-h-11 rounded-full border border-white/20 bg-slate-950/95 px-4 py-2 text-xs font-semibold text-white shadow-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-200"
+      >
+        {userPaused ? "Resume background" : "Pause background"}
+      </button>
+    ) : null}
+    </>
   );
 }
 
@@ -1195,6 +1342,8 @@ function ProgressNav({
       // Safe-area padding keeps this bar clear of the Dynamic Island in the iOS
       // app: it is `fixed`, so the safe-area padding on #main-content does not
       // reach it.
+      inert={!show}
+      aria-hidden={!show}
       className={`print-static-ui fixed inset-x-0 top-0 z-50 hidden border-b border-white/10 bg-slate-950/88 px-5 py-2 pt-[max(0.5rem,env(safe-area-inset-top))] shadow-[0_14px_42px_rgba(0,0,0,0.26)] backdrop-blur-xl transition-opacity duration-300 md:block ${
         show ? "opacity-100" : "pointer-events-none opacity-0"
       }`}
@@ -1207,7 +1356,7 @@ function ProgressNav({
             onClick={() => onNavigate(item.id)}
             className={`rounded-full px-4 py-2 text-[0.68rem] font-semibold uppercase tracking-[0.18em] transition ${
               activeSection === item.id
-                ? "bg-cyan-200 text-slate-950"
+                ? "bg-[#a5f3fc] text-[#07111d]"
                 : "bg-white/[0.055] text-white/62 hover:bg-white/[0.1] hover:text-white"
             }`}
           >
@@ -1303,9 +1452,9 @@ function OptionalTrustSections() {
             <span className="block text-xs font-semibold uppercase tracking-[0.28em] text-cyan-100/82">
               Why it works
             </span>
-            <span className="mt-2 block text-xl font-semibold text-white">
+            <h2 className="mt-2 block text-xl font-semibold text-white">
               Roof, layout, and estimate without the pressure
-            </span>
+            </h2>
           </div>
           <div className="grid gap-3 px-2 pt-2 sm:px-3 lg:grid-cols-3">
             {featureCards.map((card) => (
@@ -1346,9 +1495,9 @@ function FaqSection() {
       className="mx-2 mt-5 scroll-mt-24 rounded-[1.15rem] border border-white/8 bg-slate-950/40 p-3 sm:mx-3"
     >
       <div className="px-2 py-2">
-        <p className="text-xs font-semibold uppercase tracking-[0.28em] text-cyan-100/82">
+        <h2 className="text-xs font-semibold uppercase tracking-[0.28em] text-cyan-100/82">
           Common questions
-        </p>
+        </h2>
       </div>
       <div className="grid gap-2">
         {faqItems.map((item) => (

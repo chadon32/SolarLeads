@@ -508,12 +508,12 @@ export function LeadCaptureForm({
 
     if (fingerprint === lastSubmittedFingerprint.current) {
       setStatus("error");
-      setMessage("That lead was already submitted.");
+      setMessage("This report request was already submitted.");
       return;
     }
 
     setStatus("submitting");
-    setMessage("Saving your lead...");
+    setMessage("Saving your report request...");
 
     try {
       const response = await fetch("/api/leads", {
@@ -582,7 +582,7 @@ export function LeadCaptureForm({
 
       if (!response.ok || !payload.lead) {
         setStatus("error");
-        setMessage(payload.message || "Could not save the lead.");
+        setMessage(payload.message || "Could not save your report request.");
         return;
       }
 
@@ -870,10 +870,15 @@ export function LeadCaptureForm({
             </div>
           ) : null}
 
-          <p className="mt-6 text-center text-sm leading-6 text-slate-400">
+          <p className="mt-6 text-center text-sm leading-6 text-slate-300">
+            Your roof settings stay on this device for up to 48 hours. Submitting
+            emails a secure report link; installer contact stays off unless you
+            select the option above.
+          </p>
+          <p className="mt-3 text-center text-sm leading-6 text-slate-400">
             {APP_PRIVACY_COPY}
           </p>
-          <p className="mt-2 text-center text-[0.8rem] leading-6 text-slate-500">
+          <p className="mt-2 text-center text-[0.8rem] leading-6 text-slate-400">
             {REPORT_DELIVERY_DISCLOSURE}
           </p>
           <p className="mt-2 text-center text-xs leading-5 text-slate-400">

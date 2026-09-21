@@ -42,6 +42,7 @@ function hashRateLimitKey(route: string, identifier: string) {
 }
 
 const DEV_RATE_LIMIT_MULTIPLIER = 20;
+const DATABASE_CHECK_TIMEOUT_MS = 2_000;
 
 export async function enforceRateLimit({
   key,
@@ -61,12 +62,17 @@ export async function enforceRateLimit({
     const identifier = key?.trim() || `ip:${ip}`;
     const keyHash = hashRateLimitKey(route, identifier);
     const windowSeconds = Math.max(1, Math.ceil(windowMs / 1000));
-    const atomicResult = await supabase.rpc("enforce_request_rate_limit", {
-      p_key_hash: keyHash,
-      p_limit: limit,
-      p_route: route,
-      p_window_seconds: windowSeconds,
-    });
+    // Bound the entire database check, including the legacy-schema fallback.
+    const signal = AbortSignal.timeout(DATABASE_CHECK_TIMEOUT_MS);
+    const atomicResult = await supabase
+      .rpc("enforce_request_rate_limit", {
+        p_key_hash: keyHash,
+        p_limit: limit,
+        p_route: route,
+        p_window_seconds: windowSeconds,
+      })
+      .abortSignal(signal)
+      .retry(false);
 
     if (!atomicResult.error) {
       const row = Array.isArray(atomicResult.data)
@@ -88,6 +94,12 @@ export async function enforceRateLimit({
           };
     }
 
+    // Transport failures affect the legacy table too. Use the existing local
+    // limiter immediately instead of waiting through the SDK's 1s/2s/4s retries.
+    if (atomicResult.status === 0 || signal.aborted) {
+      return enforceMemoryRateLimit(keyHash, limit, windowMs);
+    }
+
     const cutoff = new Date(Date.now() - windowMs).toISOString();
 
     const { count, error } = await supabase
@@ -95,7 +107,9 @@ export async function enforceRateLimit({
       .select("id", { count: "exact", head: true })
       .eq("route", route)
       .eq("key_hash", keyHash)
-      .gte("created_at", cutoff);
+      .gte("created_at", cutoff)
+      .abortSignal(signal)
+      .retry(false);
 
     if (error) {
       return enforceMemoryRateLimit(keyHash, limit, windowMs);
@@ -111,10 +125,11 @@ export async function enforceRateLimit({
       };
     }
 
-    const insertResult = await supabase.from("request_events").insert({
-      route,
-      key_hash: keyHash,
-    });
+    const insertResult = await supabase
+      .from("request_events")
+      .insert({ route, key_hash: keyHash })
+      .abortSignal(signal)
+      .retry(false);
 
     if (insertResult.error) {
       return enforceMemoryRateLimit(keyHash, limit, windowMs);

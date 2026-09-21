@@ -68,6 +68,14 @@
           transform: scale(0.94);
         }
       }
+
+      /* This is the first thing shown on every cold launch, so it must honour
+         the system motion setting rather than pulsing regardless. */
+      @media (prefers-reduced-motion: reduce) {
+        .mark {
+          animation: none;
+        }
+      }
     </style>
   </head>
   <body>

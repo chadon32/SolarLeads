@@ -25,6 +25,7 @@ type SolarReportValues = {
   annualSavings: number;
   panelCount: number;
   annualKwh?: number | null;
+  carbonOffsetFactorKgPerMwh?: number | null;
   systemKw?: number | null;
   monthlyBill?: number | null;
 };
@@ -58,7 +59,13 @@ export function buildSolarReportFromSolarValues(values: SolarReportValues): Sola
     annualSavings > 0
       ? Number((netEstimatedSystemCost / annualSavings).toFixed(1))
       : 0;
-  const annualImpactLbs = Math.round(annualKwh * 0.39 * 2.205);
+  const carbonOffsetFactorKgPerMwh =
+    toFiniteNumber(values.carbonOffsetFactorKgPerMwh) > 0
+      ? Number(values.carbonOffsetFactorKgPerMwh)
+      : 390;
+  const annualImpactLbs = Math.round(
+    (annualKwh / 1000) * carbonOffsetFactorKgPerMwh * 2.205
+  );
   const annualHouseholdKwh =
     toFiniteNumber(values.monthlyBill) > 0
       ? (Number(values.monthlyBill) * 12) / ARIZONA_AVG_RATE_PER_KWH
@@ -99,6 +106,7 @@ export function buildSolarReportFromAnalysis(
   return buildSolarReportFromSolarValues({
     annualSavings: metrics.annualSavings,
     annualKwh: metrics.annualKwh,
+    carbonOffsetFactorKgPerMwh: analysis.carbonOffsetFactorKgPerMwh,
     panelCount: metrics.panelCount,
     systemKw: metrics.systemKw,
     monthlyBill,

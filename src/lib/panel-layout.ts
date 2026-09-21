@@ -144,6 +144,21 @@ type PanelGroup = {
   averageEnergyKwh: number;
 };
 
+const COHESIVE_SELECTION_CACHE_LIMIT = 32;
+
+type CohesiveSelectionCacheEntry = {
+  panelReferences: SolarPanelPlacement[];
+  panelSignature: string;
+  selection: SolarPanelPlacement[];
+};
+
+// The array identity scopes cached selections to one roof response. The inner
+// key includes every selection parameter that can alter compactness geometry.
+const cohesiveSelectionCache = new WeakMap<
+  SolarPanelPlacement[],
+  Map<string, CohesiveSelectionCacheEntry>
+>();
+
 /**
  * Choose a compact installer-style sample array without inventing panel
  * coordinates. Google ranks candidates by production, so taking the first N
@@ -169,6 +184,65 @@ export function selectCohesiveSolarPanels({
   if (safeTarget >= panels.length) {
     return [...panels];
   }
+
+  const cacheKey = getCohesiveSelectionCacheKey({
+    targetCount: safeTarget,
+    panelWidthMeters,
+    panelHeightMeters,
+  });
+  const panelSignature = cacheKey ? getPanelSelectionSignature(panels) : null;
+  const cache = cacheKey
+    ? cohesiveSelectionCache.get(panels)
+    : undefined;
+  const cached = cacheKey !== null ? cache?.get(cacheKey) : undefined;
+
+  if (
+    cacheKey !== null &&
+    cache &&
+    cached &&
+    panelSignature === cached.panelSignature &&
+    cached.panelReferences.length === panels.length &&
+    cached.panelReferences.every((panel, index) => panel === panels[index])
+  ) {
+    // Callers may sort or splice their result; never expose the cached array.
+    cache.delete(cacheKey);
+    cache.set(cacheKey, cached);
+    return [...cached.selection];
+  }
+
+  const selection = selectCohesiveSolarPanelsUncached({
+    panels,
+    targetCount: safeTarget,
+    panelWidthMeters,
+    panelHeightMeters,
+  });
+
+  if (cacheKey !== null && panelSignature !== null) {
+    const entries = cache ?? new Map<string, CohesiveSelectionCacheEntry>();
+    entries.set(cacheKey, {
+      panelReferences: [...panels],
+      panelSignature,
+      selection: [...selection],
+    });
+    while (entries.size > COHESIVE_SELECTION_CACHE_LIMIT) {
+      const oldestKey = entries.keys().next().value;
+      if (oldestKey === undefined) {
+        break;
+      }
+      entries.delete(oldestKey);
+    }
+    cohesiveSelectionCache.set(panels, entries);
+  }
+
+  return selection;
+}
+
+function selectCohesiveSolarPanelsUncached({
+  panels,
+  targetCount: safeTarget,
+  panelWidthMeters,
+  panelHeightMeters,
+}: CohesivePanelSelectionParams): SolarPanelPlacement[] {
 
   const groupedPanels = new Map<string, SolarPanelPlacement[]>();
   panels.forEach((panel) => {
@@ -272,6 +346,66 @@ export function selectCohesiveSolarPanels({
   }
 
   return selected.slice(0, safeTarget);
+}
+
+function getCohesiveSelectionCacheKey({
+  targetCount,
+  panelWidthMeters,
+  panelHeightMeters,
+}: {
+  targetCount: number;
+  panelWidthMeters: number;
+  panelHeightMeters: number;
+}) {
+  if (
+    !Number.isFinite(targetCount) ||
+    !Number.isFinite(panelWidthMeters) ||
+    !Number.isFinite(panelHeightMeters)
+  ) {
+    return null;
+  }
+
+  return `${numberSignature(targetCount)}|${numberSignature(panelWidthMeters)}|${numberSignature(panelHeightMeters)}`;
+}
+
+function getPanelSelectionSignature(panels: SolarPanelPlacement[]) {
+  return panels
+    .map((panel) =>
+      [
+        numberSignature(panel.center.lat),
+        numberSignature(panel.center.lng),
+        valueSignature(panel.orientation),
+        valueSignature(panel.segmentIndex),
+        numberSignature(panel.yearlyEnergyDcKwh),
+        valueSignature(panel.pitchDeg),
+        numberSignature(panel.azimuthDeg),
+        // Row and column are not currently read by selection, but including
+        // them keeps this guard correct if compactness starts honoring them.
+        valueSignature(panel.rowIndex),
+        valueSignature(panel.columnIndex),
+      ].join(",")
+    )
+    .join(";");
+}
+
+function numberSignature(value: number) {
+  if (Number.isNaN(value)) {
+    return "NaN";
+  }
+  if (value === Number.POSITIVE_INFINITY) {
+    return "+Infinity";
+  }
+  if (value === Number.NEGATIVE_INFINITY) {
+    return "-Infinity";
+  }
+  if (Object.is(value, -0)) {
+    return "-0";
+  }
+  return String(value);
+}
+
+function valueSignature(value: unknown) {
+  return `${typeof value}:${String(value)}`;
 }
 
 function selectCompactPanelBlock({

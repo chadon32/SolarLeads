@@ -35,6 +35,7 @@ REPORT_SIGNING_SECRET=your_report_link_signing_secret_here
 UTILITY_BILL_UPLOAD_SECRET=your_utility_bill_claim_secret_here
 RATE_LIMIT_SECRET=your_rate_limit_secret_here
 FOLLOW_UP_PROCESS_SECRET=your_follow_up_process_secret_here
+CRON_SECRET=your_vercel_cron_secret_here
 TURNSTILE_SECRET_KEY=your_cloudflare_turnstile_secret_key_here
 SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key_here
@@ -56,10 +57,11 @@ For Vercel, add the same values in the project environment settings. Keep `GOOGL
 
 Lead notifications are sent server-side after Supabase confirms a new lead. Resend sends the homeowner report email and the optional admin lead email. If `RESEND_API_KEY` is missing in development, the app logs the email payload and still lets the homeowner reach the success screen. `FROM_EMAIL` and `ADMIN_EMAIL` are preferred; `RESEND_FROM_EMAIL` and `OWNER_EMAIL` remain supported for existing deployments. `FROM_EMAIL` should point to a verified Resend sender such as `reports@solartelligence.com`.
 
-To verify production notifications without creating a lead, call the protected test endpoint with your dashboard token:
+To verify production notifications without creating a lead, mint a dashboard session with the token in a POST body, then call the protected test endpoint with the HttpOnly session cookie. For a non-browser check, send the token in an `Authorization` header:
 
 ```bash
-curl -X POST "https://your-domain.com/api/notifications/test?token=$DASHBOARD_ACCESS_TOKEN" \
+curl -X POST "https://your-domain.com/api/notifications/test" \
+  -H "Authorization: Bearer $DASHBOARD_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"channel":"email","testEmail":"you@example.com"}'
 ```
@@ -70,9 +72,9 @@ For per-lead notification diagnostics, run the latest `supabase/leads.sql` migra
 
 Production report links fail closed unless `REPORT_SIGNING_SECRET` is configured. The dashboard also fails closed in production unless `DASHBOARD_ACCESS_TOKEN` is configured, because it can expose homeowner lead data.
 
-Report PDF URLs are signed with `exp` and `token` query parameters when `REPORT_SIGNING_SECRET` is present. In production, `/api/report/pdf` and `/report/[leadId]` reject unsigned, expired, invalid, or misconfigured public report links. Dashboard admins can still view/download reports by using the protected dashboard URL with `DASHBOARD_ACCESS_TOKEN`.
+Report PDF URLs are signed with `exp` and `token` query parameters when `REPORT_SIGNING_SECRET` is present. In production, `/api/report/pdf` and `/report/[leadId]` reject unsigned, expired, invalid, or misconfigured public report links. Dashboard admins can still view/download reports after unlocking the protected dashboard with `DASHBOARD_ACCESS_TOKEN`.
 
-Dashboard unlock forms create a signed HttpOnly `azsa_dashboard_session` cookie so day-to-day admin access does not keep the token in the URL. Dashboard APIs also accept the token via `Authorization: Bearer <DASHBOARD_ACCESS_TOKEN>`, `x-dashboard-token`, or a `token` query parameter for automation/backward compatibility. This protects lead status changes, manual follow-up sends, utility bill viewing, and dashboard PDF downloads.
+Dashboard unlock forms submit the token by POST and create a signed, short-lived HttpOnly `azsa_dashboard_session` cookie. Day-to-day admin access uses that cookie; dashboard APIs also accept `Authorization: Bearer <DASHBOARD_ACCESS_TOKEN>` or `x-dashboard-token` for automation. Dashboard state-changing requests require a same-origin `Origin` or `Referer` when a browser session cookie is used. Dashboard tokens are never accepted in URL query parameters.
 
 The rooftop analysis pipeline now uses Google Geocoding plus the Google Maps Platform Solar API by default. The analysis is live per address, so every selected rooftop pulls real Solar API values for panel count, roof area, pitch, and energy estimates.
 
@@ -81,8 +83,8 @@ The rooftop analysis pipeline now uses Google Geocoding plus the Google Maps Pla
 Paid services are protected behind server routes and route-specific limits. Current defaults:
 
 - `POST /api/leads`: 100 submissions per unique IP per hour, plus 5 per normalized email per day, 5 per normalized phone per day, and 8 per normalized address per day. Different IPs do not share the 100-request bucket.
-- `POST /api/analyze-roof`: 5 requests per IP per 10 minutes, 20 per IP per day, and 8 per normalized address per day.
-- `GET /api/report/pdf?raw=1`: 3 PDF generations per lead per day after report auth/signature passes.
+- `POST /api/analyze-roof`: 8 requests per IP per 10 minutes, 30 per IP per day, and 12 per normalized address per day. Cache hits are served before the paid-path limits.
+- `GET /api/report/pdf?raw=1`: 20 requests per IP per minute plus 3 PDF generations per lead per day after report auth/signature passes.
 - `POST /api/utility-bills`: 6 upload attempts per IP per hour, plus 2 uploads per normalized email, phone, or address per day when the form provides that context.
 - `POST /api/notifications/test`: dashboard auth required, then 5 test sends per hour.
 
@@ -103,9 +105,21 @@ For Google Cloud, restrict server keys to the needed APIs and deployment egress 
 
 Run the SQL files in `supabase/` to create the `leads`, `lead_followups`, `request_events`, and `roof_analysis_cache` tables before testing the dashboard, rooftop analysis cache, or follow-up flow.
 
-Utility bill uploads are stored in the private `utility-bills` bucket. The browser receives only a short-lived signed upload claim, never the raw Supabase object path. New uploads land under `pending/YYYY-MM-DD/` and are moved to `leads/{leadId}/utility-bill.ext` after a lead is saved. Keep the bucket private. Do not create public storage policies or expose storage object paths in emails, CSVs, dashboard markup, or homeowner pages. A dashboard-protected cleanup route is available at `POST /api/utility-bills/cleanup` to remove pending uploads older than 24 hours; schedule it daily with the dashboard token.
+Utility bill uploads are stored in the private `utility-bills` bucket. The browser receives only a short-lived signed upload claim, never the raw Supabase object path. New uploads land under `pending/YYYY-MM-DD/` and are moved to `leads/{leadId}/utility-bill.ext` after a lead is saved. Keep the bucket private. Do not create public storage policies or expose storage object paths in emails, CSVs, dashboard markup, or homeowner pages. Set a dedicated high-entropy `UTILITY_BILL_UPLOAD_SECRET` (at least 32 characters in production); if it is missing or weak, only the utility-bill upload feature is disabled with a clear configuration response. A cleanup route is available at `POST /api/utility-bills/cleanup` to remove pending uploads older than 24 hours. Configure `CRON_SECRET` in Vercel Production and the route accepts Vercel Cron's `Authorization: Bearer <CRON_SECRET>` header; local development can use the dashboard token as a fallback.
+
+During the upload-secret migration, existing claims signed with the previous configured fallback can be verified for their remaining one-hour lifetime by setting `UTILITY_BILL_UPLOAD_LEGACY_SECRET` to that previous secret in the deployment secret manager. The legacy value is verification-only and does not enable uploads by itself; set the dedicated secret before enabling uploads, keep both values only through the claim TTL, then remove the legacy value. New claims are never signed with the legacy value.
 
 The follow-up processor route is ready for a scheduler call. If you use Vercel Cron or another job runner, send `FOLLOW_UP_PROCESS_SECRET` as a bearer token or `x-process-secret` header when calling `POST /api/follow-ups/process`.
+
+### Lead and delivery safety
+
+Public report submissions create new records; an email, phone number, property address, or roof-analysis proof is not permission to update an existing homeowner. A duplicate database constraint returns a recoverable 409 without exposing the existing report link or touching its utility bill. Existing report changes require verified support/admin handling; anonymous resubmission is not an edit mechanism.
+
+Only `queued` and `scheduled` follow-ups can be sent. Both manual and scheduled delivery use the same atomic claim and sender. Interrupted processing, uncertain provider responses, and unconfirmed initial report delivery require review (`needs_review`), not an automatic resend. Legacy `failed` rows are also not retried blindly. Scheduling an existing sequence never resets its delivery states.
+
+For a delivery requiring review, check the provider record and the saved delivery reference before taking further action. Do not reset it to `queued` merely to clear the warning. Resend deduplication expires after 24 hours; it is not a permanent exactly-once guarantee. No automatic reconciliation or new scheduling service is configured by this change.
+
+The website, saved reports, PDF panel overlays, and 3D model now use the same cohesive panel cohort. Sparse provider configurations are interpolated only when per-panel energy is unavailable. Negative 20-year net benefits remain negative and are labeled as losses; catalog prices and tax assumptions are unchanged.
 
 For a local smoke check that does not create a lead or call paid services, run
 the dev server and then `npm run qa:browser`. Set `BASE_URL` to point the

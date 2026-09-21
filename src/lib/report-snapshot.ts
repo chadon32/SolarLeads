@@ -24,6 +24,9 @@ import {
   inferPanelRotationDeg,
 } from "@/lib/panel-geometry";
 import { selectCohesiveSolarPanels } from "@/lib/panel-layout";
+import { getSelectedPanelEnergy } from "@/lib/selected-panel-energy";
+import { buildActiveSolarEstimate } from "@/lib/active-solar-estimate";
+import { getPanelDimensionsMeters, type SolarPanel } from "@/lib/solarPanels";
 
 export type ReportSnapshotMetrics = Pick<
   SharedSolarMetrics,
@@ -204,6 +207,7 @@ export function normalizeSolarReportSnapshot(
 export function rebuildTrustedSolarReportSnapshot(
   snapshot: SolarReportSnapshot,
   options: {
+    selectedPanel?: SolarPanel;
     batteryCost?: number | null;
     installedCostPerWatt?: number | null;
     monthlyBill?: number | null;
@@ -213,6 +217,40 @@ export function rebuildTrustedSolarReportSnapshot(
   const monthlyBill = Number.isFinite(Number(options.monthlyBill))
     ? Number(options.monthlyBill)
     : snapshot.monthlyBill;
+  if (options.selectedPanel) {
+    const active = buildActiveSolarEstimate({
+      analysis: snapshot.roofAnalysis,
+      selectedPanel: options.selectedPanel,
+      selectedPanelCount: snapshot.panelCount,
+      monthlyBill,
+      batteryCost: options.batteryCost,
+      inverterCostAdderPerWatt:
+        (options.installedCostPerWatt ?? options.selectedPanel.installedCostPerWatt) -
+        options.selectedPanel.installedCostPerWatt,
+    });
+    const dimensions = getPanelDimensionsMeters(options.selectedPanel);
+    return buildSolarReportSnapshot({
+      address: snapshot.address,
+      analysis: {
+        ...snapshot.roofAnalysis,
+        panelWidthMeters: dimensions.widthMeters,
+        panelHeightMeters: dimensions.heightMeters,
+      },
+      lat: snapshot.home?.lat,
+      lng: snapshot.home?.lng,
+      monthlyBill,
+      metrics: {
+        ...active.baseMetrics,
+        panelCount: active.panelCount,
+        annualKwh: active.annualKwh,
+        annualSavings: active.annualSavings,
+        monthlySavings: active.monthlySavings,
+        systemKw: active.systemKw,
+        paybackYears: active.paybackYears,
+        coveragePct: active.energyOffsetPct,
+      },
+    });
+  }
   const baseMetrics = buildSolarMetrics(snapshot.roofAnalysis, {
     monthlyBill,
     selectedPanelCount: snapshot.panelCount,
@@ -297,25 +335,10 @@ export function buildAcceptedPanelAnalysisForReport(
     panelHeightMeters,
   });
   const acceptedPanelCount = acceptedPanels.length;
-  const selectedConfig = findNearestPanelConfigForReport(
-    analysis.solarPanelConfigs,
-    acceptedPanelCount
-  );
-  const panelEnergyTotal = acceptedPanels.reduce(
-    (sum, panel) => sum + Math.max(panel.yearlyEnergyDcKwh, 0),
-    0
-  );
-  const fallbackPerPanel =
-    analysis.panelCount > 0 ? analysis.annualKwh / analysis.panelCount : 0;
-  const annualKwh = Math.max(
-    0,
-    Math.round(
-      selectedConfig?.yearlyEnergyDcKwh ??
-        (panelEnergyTotal > 0
-          ? panelEnergyTotal
-          : fallbackPerPanel * acceptedPanelCount)
-    )
-  );
+  const annualKwh = Math.round(getSelectedPanelEnergy(
+    { ...analysis, solarPanels: acceptedPanels }, acceptedPanelCount,
+    { widthMeters: panelWidthMeters, heightMeters: panelHeightMeters }
+  ));
   const segmentPanelCounts = acceptedPanels.reduce<Map<number, number>>(
     (counts, panel) => {
       counts.set(panel.segmentIndex, (counts.get(panel.segmentIndex) ?? 0) + 1);
@@ -339,7 +362,7 @@ export function buildAcceptedPanelAnalysisForReport(
     ),
     roofSegments: analysis.roofSegments.map((segment, index) => ({
       ...segment,
-      panelsFit: segmentPanelCounts.get(index) ?? 0,
+      panelsFit: segmentPanelCounts.get(segment.segmentIndex ?? index) ?? 0,
     })),
     solarPanelConfigs: analysis.solarPanelConfigs.filter(
       (config) => config.panelsCount <= acceptedPanelCount
@@ -423,28 +446,6 @@ export function boundsToLatLngPoints(
 }
 
 export { buildPanelCornerLatLngPoints, inferPanelRotationDeg };
-
-function findNearestPanelConfigForReport(
-  configs: RoofAnalysis["solarPanelConfigs"],
-  panelCount: number
-) {
-  if (!configs.length || panelCount <= 0) {
-    return null;
-  }
-
-  return (
-    configs.find((config) => config.panelsCount === panelCount) ??
-    configs
-      .filter((config) => config.panelsCount <= panelCount)
-      .at(-1) ??
-    configs.reduce((closest, config) =>
-      Math.abs(config.panelsCount - panelCount) <
-      Math.abs(closest.panelsCount - panelCount)
-        ? config
-        : closest
-    )
-  );
-}
 
 function normalizeSnapshotViewport(
   viewport: SolarReportSnapshot["viewport"] | undefined

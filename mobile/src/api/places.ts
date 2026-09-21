@@ -52,11 +52,12 @@ export async function searchArizonaAddresses(
   return payload.predictions ?? [];
 }
 
-export async function fetchPlaceAddress(placeId: string) {
+export async function fetchPlaceAddress(placeId: string, signal?: AbortSignal) {
   const response = await fetch(
     `${APP_URL}/api/places/details?placeId=${encodeURIComponent(placeId)}`,
     {
       headers: { "X-App-Platform": "ios" },
+      signal,
     }
   );
   const payload = (await response.json().catch(() => ({}))) as PlaceDetailsResponse;

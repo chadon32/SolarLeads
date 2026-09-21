@@ -22,7 +22,6 @@ import {
   normalizeEmail,
   normalizePhone,
 } from "@/lib/lead-normalization";
-import { selectLeadForNormalizedProperty } from "@/lib/lead-deduplication";
 import { deriveLeadSubmissionNumbers } from "@/lib/lead-submission";
 import { formatName } from "@/lib/name-format";
 import {
@@ -32,7 +31,6 @@ import {
 } from "@/lib/notifications";
 import { isValidUsPhoneNumber } from "@/lib/phone";
 import {
-  buildAcceptedPanelAnalysisForReport,
   normalizeSolarReportSnapshot,
   rebuildTrustedSolarReportSnapshot,
   type SolarReportSnapshot,
@@ -56,7 +54,6 @@ import { BATTERY_OPTIONS } from "@/lib/batteries";
 import {
   INVERTER_OPTIONS,
   SOLAR_PANELS,
-  getPanelDimensionsMeters,
   getPanelById,
 } from "@/lib/solarPanels";
 import { z } from "zod";
@@ -169,17 +166,6 @@ const leadBodySchema = z.object({
   utilityBillUploaded: z.boolean().optional(),
   website: z.string().max(500).optional(),
 });
-
-type ExistingLeadMatch = {
-  address?: string | null;
-  email?: string | null;
-  id: string;
-  normalized_address?: string | null;
-  normalized_email?: string | null;
-  normalized_phone?: string | null;
-  phone?: string | null;
-  referral_code?: string | null;
-};
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -326,12 +312,10 @@ export async function POST(request: Request) {
     const reportSnapshot = rebuildTrustedSolarReportSnapshot(
       {
         ...candidateReportSnapshot,
-        roofAnalysis: buildAcceptedPanelAnalysisForReport(
-          body.signedRoofAnalysis,
-          getPanelDimensionsMeters(selectedPanel)
-        ),
+        roofAnalysis: body.signedRoofAnalysis,
       },
       {
+        selectedPanel,
         batteryCost: selectedBattery?.cost ?? 0,
         installedCostPerWatt,
         monthlyBill: body.monthlyBill,
@@ -482,13 +466,8 @@ export async function POST(request: Request) {
         autoRefreshToken: false,
       },
     });
-    const existingLead = await findExistingLeadMatch(supabase, {
-      address,
-      normalizedAddress,
-      normalizedEmail: email,
-      normalizedPhone: phone,
-    });
-    const referralCode = existingLead?.referral_code ?? createReferralCode();
+    // A roof proof and contact details do not establish ownership of an existing lead.
+    const referralCode = createReferralCode();
     const now = new Date().toISOString();
     const consent = buildConsentEvidence(
       request,
@@ -616,24 +595,21 @@ export async function POST(request: Request) {
           ].includes(key)
       )
     );
-    const saveResult = existingLead
-      ? await updateLeadRecord(
-          supabase,
-          existingLead.id,
-          scoredInsert,
-          scoredInsertWithoutNewOptionalFields,
-          extendedInsert,
-          baseInsert
-        )
-      : await insertLeadRecord(
-          supabase,
-          scoredInsert,
-          scoredInsertWithoutNewOptionalFields,
-          extendedInsert,
-          baseInsert
-        );
+    const saveResult = await insertLeadRecord(
+      supabase,
+      scoredInsert,
+      scoredInsertWithoutNewOptionalFields,
+      extendedInsert,
+      baseInsert
+    );
 
     const { data, error } = saveResult;
+    if (error?.code === "23505") {
+      return NextResponse.json(
+        { message: "This request could not be saved. If you previously requested a report, use its original link or contact support. Existing reports have not been changed." },
+        { status: 409 }
+      );
+    }
 
     if (error) {
       console.error("[lead-save:error]", {
@@ -736,7 +712,7 @@ export async function POST(request: Request) {
           systemSizeKw: leadNumbers.systemSizeKw,
         },
         reportUrl,
-        updatedExisting: Boolean(existingLead),
+        updatedExisting: false,
         utilityBillUploaded: utilityBillStored,
       },
     });
@@ -1046,180 +1022,6 @@ async function insertLeadRecord(
   }
 
   return result;
-}
-
-async function updateLeadRecord(
-  supabase: SupabaseClient,
-  leadId: string,
-  scoredInsert: Record<string, unknown>,
-  scoredInsertWithoutNewOptionalFields: Record<string, unknown>,
-  extendedInsert: Record<string, unknown>,
-  baseInsert: Record<string, unknown>
-) {
-  let result = await supabase
-    .from("leads")
-    .update(scoredInsert)
-    .eq("id", leadId)
-    .select("id, name, email, address, monthly_bill, estimated_savings")
-    .single();
-
-  if (result.error && shouldRetryLegacyInsert(result.error.message)) {
-    result = await supabase
-      .from("leads")
-      .update(scoredInsertWithoutNewOptionalFields)
-      .eq("id", leadId)
-      .select("id, name, email, address, monthly_bill, estimated_savings")
-      .single();
-  }
-
-  if (result.error && shouldRetryLegacyInsert(result.error.message)) {
-    result = await supabase
-      .from("leads")
-      .update(extendedInsert)
-      .eq("id", leadId)
-      .select("id, name, email, address, monthly_bill, estimated_savings")
-      .single();
-  }
-
-  if (result.error && shouldRetryLegacyInsert(result.error.message)) {
-    result = await supabase
-      .from("leads")
-      .update(baseInsert)
-      .eq("id", leadId)
-      .select("id, name, email, address, monthly_bill, estimated_savings")
-      .single();
-  }
-
-  return result;
-}
-
-async function findExistingLeadMatch(
-  supabase: SupabaseClient,
-  identifiers: {
-    address?: string | null;
-    normalizedAddress?: string | null;
-    normalizedEmail?: string | null;
-    normalizedPhone?: string | null;
-  }
-): Promise<ExistingLeadMatch | null> {
-  const byEmail = await findLeadByIdentifier(
-    supabase,
-    "normalized_email",
-    identifiers.normalizedEmail ?? null,
-    "email",
-    identifiers.normalizedEmail ?? null,
-    identifiers.normalizedAddress ?? null
-  );
-
-  if (byEmail) {
-    return byEmail;
-  }
-
-  const byPhone = await findLeadByIdentifier(
-    supabase,
-    "normalized_phone",
-    identifiers.normalizedPhone ?? null,
-    "phone",
-    identifiers.normalizedPhone ?? null,
-    identifiers.normalizedAddress ?? null
-  );
-
-  if (byPhone) {
-    return byPhone;
-  }
-
-  // Address-only updates could let someone overwrite another homeowner's lead.
-  // Roof-analysis caching already deduplicates paid API work by property.
-  return null;
-}
-
-async function findLeadByIdentifier(
-  supabase: SupabaseClient,
-  normalizedColumn: "normalized_email" | "normalized_phone",
-  normalizedValue: string | null,
-  legacyColumn: "email" | "phone",
-  legacyValue: string | null,
-  normalizedAddress: string | null
-): Promise<ExistingLeadMatch | null> {
-  if ((!normalizedValue && !legacyValue) || !normalizedAddress) {
-    return null;
-  }
-
-  const select =
-    "id, referral_code, created_at, email, phone, address, normalized_email, normalized_phone, normalized_address";
-
-  if (normalizedValue) {
-    const normalizedResult = await supabase
-      .from("leads")
-      .select(select)
-      .eq(normalizedColumn, normalizedValue)
-      .order("created_at", { ascending: false })
-      .limit(20);
-
-    if (!normalizedResult.error && normalizedResult.data?.length) {
-      const match = selectLeadForNormalizedProperty(
-        normalizedResult.data as ExistingLeadMatch[],
-        normalizedAddress
-      );
-
-      if (match) {
-        return match;
-      }
-    }
-
-    if (
-      normalizedResult.error &&
-      !shouldRetryLegacyInsert(normalizedResult.error.message)
-    ) {
-      console.warn("[lead-dedupe-normalized]", normalizedResult.error.message);
-    }
-  }
-
-  if (!legacyValue) {
-    return null;
-  }
-
-  const legacyResult = await supabase
-    .from("leads")
-    .select(select)
-    .eq(legacyColumn, legacyValue)
-    .order("created_at", { ascending: false })
-    .limit(20);
-
-  if (legacyResult.error && shouldRetryLegacyInsert(legacyResult.error.message)) {
-    const fallbackResult = await supabase
-      .from("leads")
-      .select("id, created_at, email, phone, address")
-      .eq(legacyColumn, legacyValue)
-      .order("created_at", { ascending: false })
-      .limit(20);
-
-    if (fallbackResult.error) {
-      console.warn("[lead-dedupe-legacy]", {
-        available: false,
-      });
-      return null;
-    }
-
-    return (
-      selectLeadForNormalizedProperty(
-        fallbackResult.data as ExistingLeadMatch[] | null,
-        normalizedAddress
-      )
-    );
-  }
-
-  if (legacyResult.error) {
-    console.warn("[lead-dedupe-legacy]", legacyResult.error.message);
-    return null;
-  }
-
-  return (
-    selectLeadForNormalizedProperty(
-      legacyResult.data as ExistingLeadMatch[] | null,
-      normalizedAddress
-    )
-  );
 }
 
 async function saveReportPdfUrl(

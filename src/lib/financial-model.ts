@@ -68,7 +68,7 @@ export function calculateTwentyYearSolarCosts({
   const totalCostWithSolar = Math.round(
     remainingUtilityCost + safeTotalSolarPayments
   );
-  const totalSavings = Math.max(totalCostWithoutSolar - totalCostWithSolar, 0);
+  const totalSavings = totalCostWithoutSolar - totalCostWithSolar;
 
   return {
     remainingUtilityCost,

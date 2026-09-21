@@ -14,7 +14,6 @@ export function getDashboardAccessToken() {
 }
 
 export function getDashboardTokenFromRequest(request: Request) {
-  const url = new URL(request.url);
   const authHeader = request.headers.get("authorization")?.trim();
   const dashboardHeader = request.headers.get("x-dashboard-token")?.trim();
 
@@ -26,7 +25,7 @@ export function getDashboardTokenFromRequest(request: Request) {
     return dashboardHeader;
   }
 
-  return url.searchParams.get("token")?.trim() ?? "";
+  return "";
 }
 
 export function getDashboardSessionCookieOptions() {
@@ -133,10 +132,56 @@ export function verifyDashboardRequest(request: Request) {
   );
 }
 
+export function isDashboardRequestOriginAllowed(request: Request) {
+  if (!["POST", "PUT", "PATCH", "DELETE"].includes(request.method.toUpperCase())) {
+    return true;
+  }
+
+  const requestOrigin = new URL(request.url).origin;
+  const origin = request.headers.get("origin")?.trim();
+
+  if (origin) {
+    return origin === requestOrigin;
+  }
+
+  const referer = request.headers.get("referer")?.trim();
+
+  if (!referer) {
+    // Non-browser callers such as scheduled jobs may omit both headers. The
+    // explicit Authorization header remains the credential for those callers.
+    return true;
+  }
+
+  try {
+    return new URL(referer).origin === requestOrigin;
+  } catch {
+    return false;
+  }
+}
+
+function usesDashboardSessionCookie(request: Request) {
+  const hasExplicitToken = Boolean(
+    request.headers.get("authorization")?.trim() ||
+      request.headers.get("x-dashboard-token")?.trim()
+  );
+
+  return !hasExplicitToken && Boolean(getDashboardSessionCookieFromRequest(request));
+}
+
 export function requireDashboardAuth(request: Request) {
   const auth = verifyDashboardRequest(request);
 
   if (auth.ok) {
+    if (
+      usesDashboardSessionCookie(request) &&
+      !isDashboardRequestOriginAllowed(request)
+    ) {
+      return NextResponse.json(
+        { message: "Dashboard request origin is not allowed." },
+        { status: 403 }
+      );
+    }
+
     return null;
   }
 
@@ -147,6 +192,34 @@ export function requireDashboardAuth(request: Request) {
           ? "Dashboard access is not configured."
           : "Dashboard access is required.",
     },
+    { status: 403 }
+  );
+}
+
+export function requireScheduledJobAuth(request: Request) {
+  const cronSecret = process.env.CRON_SECRET?.trim() ?? "";
+  const authorization = request.headers.get("authorization")?.trim() ?? "";
+  const providedSecret = authorization.toLowerCase().startsWith("bearer ")
+    ? authorization.slice(7).trim()
+    : "";
+
+  if (cronSecret) {
+    if (constantTimeEquals(cronSecret, providedSecret)) {
+      return null;
+    }
+
+    return NextResponse.json(
+      { message: "Scheduled job authorization is required." },
+      { status: 403 }
+    );
+  }
+
+  if (process.env.NODE_ENV !== "production") {
+    return requireDashboardAuth(request);
+  }
+
+  return NextResponse.json(
+    { message: "Scheduled job authorization is not configured." },
     { status: 403 }
   );
 }

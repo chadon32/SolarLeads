@@ -61,6 +61,7 @@ import {
   type SolarReportSnapshot,
 } from "@/lib/report-snapshot";
 import type { RoofAnalysis } from "@/lib/roof-analysis";
+import { selectCohesiveSolarPanels } from "@/lib/panel-layout";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
 import {
   calculateFederalResidentialSolarCredit,
@@ -239,17 +240,11 @@ export async function GET(request: Request) {
     }
 
     if (!raw) {
-      const viewerPath =
-        reportAccess.dashboardToken &&
-        reportAccess.dashboardToken !== "dashboard-session"
-          ? `/report/${encodeURIComponent(leadId)}?token=${encodeURIComponent(
-              reportAccess.dashboardToken
-            )}`
-          : reportAccess.dashboardToken === "dashboard-session"
-            ? `/report/${encodeURIComponent(leadId)}`
-            : buildReportViewerPath(leadId, {
-                expiresAt: Number(exp),
-              });
+      const viewerPath = reportAccess.dashboardAccess
+        ? `/report/${encodeURIComponent(leadId)}`
+        : buildReportViewerPath(leadId, {
+            expiresAt: Number(exp),
+          });
 
       return NextResponse.redirect(new URL(viewerPath, request.url));
     }
@@ -322,11 +317,14 @@ export async function GET(request: Request) {
       );
     }
 
+    const reportSnapshot = await loadBestReportSnapshotForPdf(lead);
     const report = buildSolarReportFromSolarValues({
       annualSavings: toFiniteNumber(
         lead.annual_savings ?? lead.estimated_savings
       ),
       annualKwh: toFiniteNumber(lead.annual_energy_kwh),
+      carbonOffsetFactorKgPerMwh:
+        reportSnapshot?.roofAnalysis.carbonOffsetFactorKgPerMwh,
       panelCount: toFiniteNumber(lead.panel_count),
       systemKw: toFiniteNumber(lead.system_size_kw),
       monthlyBill: toFiniteNumber(lead.monthly_bill),
@@ -338,7 +336,6 @@ export async function GET(request: Request) {
       regular: await pdf.embedFont(StandardFonts.Helvetica),
     };
     const colors = createColors();
-    const reportSnapshot = await loadBestReportSnapshotForPdf(lead);
     const proposal = buildProposalData(lead, report, reportSnapshot);
     await markPdfDownloaded(supabase, lead.id, proposal);
     const roofAsset = await loadRoofImage(pdf, proposal);
@@ -369,6 +366,7 @@ export async function GET(request: Request) {
         "Content-Type": "application/pdf",
         "Content-Disposition": `${disposition}; filename="${buildPdfFilename(proposal)}"`,
         "Cache-Control": "no-store",
+        "X-Robots-Tag": "noindex, nofollow, noarchive",
       },
     });
   } catch (error) {
@@ -388,12 +386,12 @@ function verifyReportAccess(
   exp: string | null,
   token: string | null
 ):
-  | { ok: true; dashboardToken?: string }
+  | { ok: true; dashboardAccess?: boolean }
   | { ok: false; response: NextResponse } {
   const dashboardAuth = verifyDashboardRequest(request);
 
   if (dashboardAuth.ok) {
-    return { ok: true, dashboardToken: dashboardAuth.token };
+    return { ok: true, dashboardAccess: true };
   }
 
   const signature = verifyReportSignature(leadId, exp, token);
@@ -414,7 +412,10 @@ function verifyReportAccess(
       { message },
       {
         status: signature.expired ? 410 : 403,
-        headers: { "Cache-Control": "no-store" },
+        headers: {
+          "Cache-Control": "no-store",
+          "X-Robots-Tag": "noindex, nofollow, noarchive",
+        },
       }
     ),
   };
@@ -516,7 +517,9 @@ function buildProposalData(
         })
       : null;
   const twentyYearSavings =
-    positiveNumber(lead.twenty_year_savings) ?? twentyYearCosts?.totalSavings;
+    typeof lead.twenty_year_savings === "number" && Number.isFinite(lead.twenty_year_savings)
+      ? lead.twenty_year_savings
+      : twentyYearCosts?.totalSavings;
   const costWithoutSolar20Yr = twentyYearCosts?.totalCostWithoutSolar;
   const costWithSolar20Yr = twentyYearCosts?.totalCostWithSolar;
   const annualImpactLbs = positiveNumber(report.annualImpactLbs);
@@ -1245,7 +1248,7 @@ function drawSavingsPage(
     570,
     132,
     82,
-    "20-year savings",
+    (proposal.twentyYearSavings ?? 0) < 0 ? "20-year net loss" : "20-year net savings",
     formatMoneyMaybe(proposal.twentyYearSavings),
     "Modeled",
     colors.orange,
@@ -1415,7 +1418,7 @@ function drawFinancingPage(
     },
     { label: "Total 20-year cost with solar", value: formatMoneyMaybe(proposal.costWithSolar20Yr) },
     { label: "Total 20-year cost without solar", value: formatMoneyMaybe(proposal.costWithoutSolar20Yr) },
-    { label: "Total 20-year savings", value: formatMoneyMaybe(proposal.twentyYearSavings) },
+    { label: (proposal.twentyYearSavings ?? 0) < 0 ? "Total 20-year net loss" : "Total 20-year net savings", value: formatMoneyMaybe(proposal.twentyYearSavings) },
   ];
 
   rows.forEach((row, index) => {
@@ -1485,6 +1488,18 @@ function drawFinancingPage(
       : "No federal residential clean-energy credit is modeled for new 2026 expenditures under current IRS guidance. Arizona credit eligibility is not deducted from payback and requires tax-professional confirmation.",
     60,
     142,
+    455,
+    fonts.regular,
+    7.4,
+    9.6,
+    colors.muted
+  );
+
+  drawTextBlock(
+    page,
+    "Production degradation, export compensation, dealer or origination fees, and maintenance or replacement reserves are not modeled. Verify utility tariffs, warranties, lender terms, and long-term service costs with the installer.",
+    60,
+    106,
     455,
     fonts.regular,
     7.4,
@@ -2209,10 +2224,12 @@ function drawSnapshotPanelLayoutOverlay(
   projector: (point: RoofViewportPoint) => { x: number; y: number },
   colors: PdfColors
 ) {
-  const panels = roofData.solarPanels.slice(
-    0,
-    clamp(Math.round(panelCount), 0, roofData.solarPanels.length)
-  );
+  const panels = selectCohesiveSolarPanels({
+    panels: roofData.solarPanels,
+    targetCount: panelCount,
+    panelWidthMeters: roofData.panelWidthMeters,
+    panelHeightMeters: roofData.panelHeightMeters,
+  });
 
   panels.forEach((panel) => {
     const corners = buildPanelCornerLatLngPoints({

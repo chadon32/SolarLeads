@@ -4,12 +4,12 @@
   "main": "index.ts",
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",
-    "expo": "~57.0.7",
-    "expo-constants": "~57.0.6",
-    "expo-splash-screen": "~57.0.4",
+    "expo": "~57.0.15",
+    "expo-constants": "~57.0.13",
+    "expo-splash-screen": "~57.0.7",
     "expo-status-bar": "~57.0.1",
     "react": "19.2.3",
-    "react-native": "0.86.0",
+    "react-native": "0.86.2",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-webview": "13.16.1"
   },
@@ -27,8 +27,16 @@
     "eas:login": "npx eas-cli@latest login",
     "eas:init": "npx eas-cli@latest init",
     "build:ios": "npx eas-cli@latest build --platform ios --profile production",
+    "build:android": "npx eas-cli@latest build --platform android --profile production",
     "submit:ios": "npx eas-cli@latest submit --platform ios --profile production",
-    "testflight": "npx eas-cli@latest build --platform ios --profile production --auto-submit"
+    "submit:android": "npx eas-cli@latest submit --platform android --profile production",
+    "testflight": "npx eas-cli@latest build --platform ios --profile production --auto-submit",
+    "play:internal": "npx eas-cli@latest build --platform android --profile production --auto-submit"
   },
-  "private": true
+  "private": true,
+  "overrides": {
+    "@xmldom/xmldom@^0.8.8": "0.8.15",
+    "@xmldom/xmldom@^0.9.10": "0.9.12",
+    "xcode": { "uuid": "11.1.1" }
+  }
 }

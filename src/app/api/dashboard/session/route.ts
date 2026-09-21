@@ -11,6 +11,8 @@ import {
   DASHBOARD_SESSION_COOKIE,
   createDashboardSessionCookieValue,
   getDashboardSessionCookieOptions,
+  getDashboardTokenFromRequest,
+  isDashboardRequestOriginAllowed,
   verifyDashboardToken,
 } from "@/lib/dashboard-auth";
 import { enforceRateLimit } from "@/lib/rate-limit";
@@ -26,6 +28,13 @@ const dashboardSessionSchema = z.object({
 export async function POST(request: Request) {
   if (isRequestTooLarge(request, 16 * 1024)) {
     return payloadTooLargeResponse("Dashboard session payload is too large.");
+  }
+
+  if (!isDashboardRequestOriginAllowed(request)) {
+    return NextResponse.json(
+      { message: "Dashboard request origin is not allowed." },
+      { status: 403 }
+    );
   }
 
   const limit = await enforceRateLimit({
@@ -47,8 +56,10 @@ export async function POST(request: Request) {
     .get("accept")
     ?.toLowerCase()
     .includes("application/json");
+  const headerToken = getDashboardTokenFromRequest(request);
+  const sessionRequest = await readSessionRequest(request, contentType);
   const parsed = dashboardSessionSchema.safeParse(
-    await readSessionRequest(request, contentType)
+    sessionRequest.token ? sessionRequest : { ...sessionRequest, token: headerToken }
   );
   const nextPath = parsed.success ? parsed.data.nextPath : "/dashboard";
   const auth = verifyDashboardToken(parsed.success ? parsed.data.token : "");
@@ -59,14 +70,14 @@ export async function POST(request: Request) {
         ? "Dashboard access is not configured."
         : "Invalid dashboard token.";
 
-    if (acceptsJson) {
-      return NextResponse.json({ message }, { status: 403 });
-    }
-
-    return NextResponse.redirect(
-      new URL(`${safeNextPath(nextPath)}?access=denied`, request.url),
-      303
-    );
+    const response = acceptsJson
+      ? NextResponse.json({ message }, { status: 403 })
+      : NextResponse.redirect(
+          new URL(`${safeNextPath(nextPath)}?access=denied`, request.url),
+          303
+        );
+    setNoStoreHeaders(response);
+    return response;
   }
 
   const response = acceptsJson
@@ -75,10 +86,12 @@ export async function POST(request: Request) {
   const sessionValue = createDashboardSessionCookieValue();
 
   if (!sessionValue) {
-    return NextResponse.json(
+    const response = NextResponse.json(
       { message: "Dashboard access is not configured." },
       { status: 500 }
     );
+    setNoStoreHeaders(response);
+    return response;
   }
 
   response.cookies.set(
@@ -86,19 +99,33 @@ export async function POST(request: Request) {
     sessionValue,
     getDashboardSessionCookieOptions()
   );
+  setNoStoreHeaders(response);
 
   return response;
 }
 
-export async function DELETE() {
+export async function DELETE(request: Request) {
+  if (!isDashboardRequestOriginAllowed(request)) {
+    return NextResponse.json(
+      { message: "Dashboard request origin is not allowed." },
+      { status: 403 }
+    );
+  }
+
   const response = NextResponse.json({ success: true });
 
   response.cookies.set(DASHBOARD_SESSION_COOKIE, "", {
     ...getDashboardSessionCookieOptions(),
     maxAge: 0,
   });
+  setNoStoreHeaders(response);
 
   return response;
+}
+
+function setNoStoreHeaders(response: Response) {
+  response.headers.set("Cache-Control", "no-store");
+  response.headers.set("Referrer-Policy", "no-referrer");
 }
 
 async function readSessionRequest(request: Request, contentType: string) {

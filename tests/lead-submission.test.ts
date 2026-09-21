@@ -120,3 +120,35 @@ test("lead submission numbers reject invalid or negative browser values", () => 
   assert.equal(numbers.systemSizeKw, null);
   assert.equal(numbers.roiYears, null);
 });
+
+test("lead submission pricing preserves exact module wattage when snapshot kW is rounded", () => {
+  const numbers = deriveLeadSubmissionNumbers(
+    {
+      annualSavings: 1200,
+      installedCostPerWatt: 2.31,
+      monthlyBill: 200,
+      panelCount: 7,
+      selectedPanelWatts: 415,
+    },
+    {
+      metrics: {
+        annualKwh: 9000,
+        annualSavings: 1200,
+        avgPitchDeg: 20,
+        coveragePct: 50,
+        grossRoofAreaM2: 100,
+        monthlySavings: 100,
+        panelCount: 7,
+        paybackYears: 5.6,
+        systemKw: 2.91,
+        usablePctRoof: 70,
+        usableRoofAreaM2: 70,
+      },
+      monthlyBill: 200,
+      panelCount: 7,
+    } as SolarReportSnapshot
+  );
+
+  assert.equal(numbers.systemSizeKw, 2.91);
+  assert.equal(numbers.systemCostBeforeIncentives, 6711);
+});

@@ -166,7 +166,7 @@ export function generateSuitabilityExplanation(
 
   if (input.rejectedCandidateCount && input.rejectedCandidateCount > 0) {
     limitingFactors.push(
-      `${input.rejectedCandidateCount} panel candidates were not used because of spacing, setbacks, or overlap prevention.`
+      `${input.rejectedCandidateCount} raw Solar API positions were excluded before the preliminary layout ceiling because of spacing, setbacks, or overlap prevention.`
     );
   }
 

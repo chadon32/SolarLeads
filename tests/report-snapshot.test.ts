@@ -58,12 +58,12 @@ test("accepted panels keep Google Solar API array order", () => {
   assert.deepEqual(accepted.solarPanels[1].center, { lat: 33.42, lng: -111.84 });
 });
 
-test("accepted analysis uses the matching config energy and per-segment counts", () => {
+test("accepted analysis uses actual selected-panel energy and per-segment counts", () => {
   const analysis = buildAnalysisFixture();
   const accepted = buildAcceptedPanelAnalysisForReport(analysis);
 
   assert.equal(accepted.panelCount, 2);
-  assert.equal(accepted.annualKwh, 1500);
+  assert.equal(accepted.annualKwh, 1700);
   assert.equal(accepted.roofSegments[2].panelsFit, 2);
   assert.equal(accepted.roofSegments[0].panelsFit, 0);
 });

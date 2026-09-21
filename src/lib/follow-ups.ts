@@ -1,5 +1,12 @@
 export type FollowUpChannel = "email" | "manual";
-export type FollowUpStatus = "queued" | "sent" | "scheduled" | "failed" | "skipped";
+export type FollowUpStatus =
+  | "queued"
+  | "scheduled"
+  | "processing"
+  | "sent"
+  | "failed"
+  | "needs_review"
+  | "skipped";
 
 export type FollowUpStep = {
   stepOrder: number;

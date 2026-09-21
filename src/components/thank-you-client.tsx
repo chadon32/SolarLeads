@@ -103,6 +103,11 @@ export function ThankYouClient() {
       utilityBillUploaded: Boolean(source.utilityBillUploaded),
     };
   }, [payload]);
+  const hasStoredPayload = Boolean(payload && Object.keys(payload).length > 0);
+  const nameSuffix =
+    hasStoredPayload && summary.firstName !== "there"
+      ? `, ${summary.firstName}`
+      : "";
   const referralUrl =
     summary.referralCode && typeof window !== "undefined"
       ? `${window.location.origin}?ref=${encodeURIComponent(summary.referralCode)}`
@@ -117,8 +122,6 @@ export function ThankYouClient() {
         `Check your home's solar potential with Solartelligence: ${referralUrl}`
       )}`
     : "";
-
-  const loaded = payload !== null;
 
   return (
     <main className="relative min-h-screen overflow-hidden bg-black text-white">
@@ -135,11 +138,13 @@ export function ThankYouClient() {
               </span>
               <h1 className="mt-5 text-4xl font-semibold tracking-tight text-white sm:text-5xl">
                 {summary.quoteRequested
-                  ? `Your quote request was received, ${loaded ? summary.firstName : "there"}.`
-                  : `Your solar report is ready, ${loaded ? summary.firstName : "there"}.`}
+                  ? `Your quote request was received${nameSuffix}.`
+                  : `Your solar report is ready${nameSuffix}.`}
               </h1>
               <p className="mt-4 max-w-2xl text-base leading-7 text-slate-300">
-                {summary.quoteRequested
+                {!hasStoredPayload
+                  ? "This page is normally opened after a report request. Return to your estimate to generate or request a report."
+                  : summary.quoteRequested
                   ? "Your report is available and your optional installer follow-up request was recorded."
                   : summary.emailDeliveryStatus === "sent"
                     ? `We emailed your personalized ${APP_NAME} report. No installer follow-up was requested.`
@@ -187,19 +192,19 @@ export function ThankYouClient() {
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
                 <SummaryMetric
                   label="System size"
-                  value={summary.systemKw > 0 ? `${summary.systemKw.toFixed(1)} kW` : "Pending"}
+                  value={hasStoredPayload && summary.systemKw > 0 ? `${summary.systemKw.toFixed(1)} kW` : "Not available"}
                 />
                 <SummaryMetric
                   label="Annual savings"
-                  value={summary.annualSavings > 0 ? formatMoney(summary.annualSavings) : "Pending"}
+                  value={hasStoredPayload && summary.annualSavings > 0 ? formatMoney(summary.annualSavings) : "Not available"}
                 />
                 <SummaryMetric
                   label="Panel count"
-                  value={summary.panelCount > 0 ? `${summary.panelCount}` : "Pending"}
+                  value={hasStoredPayload && summary.panelCount > 0 ? `${summary.panelCount}` : "Not available"}
                 />
                 <SummaryMetric
-                  label="Payback"
-                  value={summary.paybackYears > 0 ? `${summary.paybackYears.toFixed(1)} yrs` : "Pending"}
+                  label="Modeled payback"
+                  value={hasStoredPayload && summary.paybackYears > 0 ? `${summary.paybackYears.toFixed(1)} yrs` : "Not available"}
                 />
                 <SummaryMetric
                   label="Quote request"
@@ -273,14 +278,14 @@ export function ThankYouClient() {
 
           <section className="mt-5 rounded-[1.5rem] border border-amber-300/14 bg-amber-300/[0.055] p-5">
             <p className="text-xs font-semibold uppercase tracking-[0.3em] text-amber-100">
-              Share Solartelligence
+                Share Your Report
             </p>
             <h2 className="mt-3 text-2xl font-semibold text-white">
               Know someone curious about solar?
             </h2>
             <p className="mt-2 text-sm leading-6 text-slate-300">
-              Share the solar-readiness tool so friends, family, or neighbors can
-              check their own property.
+              Share your report link so friends, family, or neighbors can check
+              their own property.
             </p>
             {referralUrl ? (
               <>

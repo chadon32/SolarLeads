@@ -15,7 +15,10 @@ import {
   normalizePhone,
 } from "@/lib/lead-normalization";
 import { enforceRateLimit } from "@/lib/rate-limit";
-import { createUtilityBillUploadClaim } from "@/lib/utility-bill-claims";
+import {
+  createUtilityBillUploadClaim,
+  isUtilityBillUploadSecretConfigured,
+} from "@/lib/utility-bill-claims";
 
 export const runtime = "nodejs";
 
@@ -64,6 +67,18 @@ export async function POST(request: Request) {
         {
           message:
             "Utility bill storage is not connected yet. You can still submit the report without the upload.",
+          uploaded: false,
+        },
+        { status: 503 }
+      );
+    }
+
+    if (!isUtilityBillUploadSecretConfigured()) {
+      return NextResponse.json(
+        {
+          code: "UTILITY_BILL_UPLOAD_SECRET_REQUIRED",
+          message:
+            "Utility bill uploads are temporarily unavailable because upload security is not configured. You can still submit the report without the upload.",
           uploaded: false,
         },
         { status: 503 }

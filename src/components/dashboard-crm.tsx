@@ -64,7 +64,14 @@ export type DashboardCrmFollowUp = {
   title: string;
   message: string;
   scheduledFor: string;
-  status: "queued" | "scheduled" | "sent" | "failed" | "skipped";
+  status:
+    | "queued"
+    | "scheduled"
+    | "processing"
+    | "sent"
+    | "failed"
+    | "needs_review"
+    | "skipped";
   attempts: number;
   processedAt: string | null;
   deliveryMessage: string | null;
@@ -124,41 +131,16 @@ function getEstimateReportPath(address: string) {
   return `/estimate?address=${encodeURIComponent(address)}`;
 }
 
-function getDashboardTokenFromLocation() {
-  if (typeof window === "undefined") {
-    return "";
-  }
-
-  return new URLSearchParams(window.location.search).get("token")?.trim() ?? "";
-}
-
 function getDashboardAuthHeaders(
   headers: Record<string, string> = {}
 ): Record<string, string> {
-  const token = getDashboardTokenFromLocation();
-
-  if (!token) {
-    return headers;
-  }
-
-  return {
-    ...headers,
-    Authorization: `Bearer ${token}`,
-  };
+  return headers;
 }
 
-function getUtilityBillDownloadPath(
-  leadId: string,
-  dashboardToken: string,
-  format?: "json"
-) {
+function getUtilityBillDownloadPath(leadId: string, format?: "json") {
   const params = new URLSearchParams({
     leadId,
   });
-
-  if (dashboardToken) {
-    params.set("token", dashboardToken);
-  }
 
   if (format) {
     params.set("format", format);
@@ -174,13 +156,14 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<DashboardLeadStatus | "all">("all");
   const [sortBy, setSortBy] = useState<SortValue>("newest");
-  const [pdfUnavailableIds, setPdfUnavailableIds] = useState<Set<string>>(
+  const [pdfUnavailableIds] = useState<Set<string>>(
     () => new Set()
   );
-  const [utilityBillUnavailableIds, setUtilityBillUnavailableIds] = useState<
+  const [utilityBillUnavailableIds] = useState<
     Set<string>
   >(() => new Set());
   const [updatingIds, setUpdatingIds] = useState<Set<string>>(() => new Set());
+  const [actionError, setActionError] = useState("");
   const deferredSearch = useDeferredValue(search);
 
   useEffect(() => {
@@ -246,6 +229,8 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
       return;
     }
 
+    setActionError("");
+
     try {
       const downloadPath = getReportDownloadPath(lead);
 
@@ -276,8 +261,10 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
       trackEvent("pdf_downloaded", {
         lead_id: lead.id,
       });
-    } catch {
-      setPdfUnavailableIds((current) => new Set(current).add(lead.id));
+    } catch (error) {
+      setActionError(
+        error instanceof Error ? error.message : "The PDF could not be downloaded."
+      );
     }
   };
 
@@ -286,10 +273,11 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
       return;
     }
 
+    setActionError("");
+
     try {
-      const dashboardToken = getDashboardTokenFromLocation();
       const response = await fetch(
-        getUtilityBillDownloadPath(lead.id, dashboardToken, "json"),
+        getUtilityBillDownloadPath(lead.id, "json"),
         {
           cache: "no-store",
           credentials: "same-origin",
@@ -303,17 +291,22 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
       }
 
       window.open(
-        getUtilityBillDownloadPath(lead.id, dashboardToken),
+        getUtilityBillDownloadPath(lead.id),
         "_blank",
         "noopener,noreferrer"
       );
-    } catch {
-      setUtilityBillUnavailableIds((current) => new Set(current).add(lead.id));
+    } catch (error) {
+      setActionError(
+        error instanceof Error
+          ? error.message
+          : "The utility bill could not be opened."
+      );
     }
   };
 
   const handleSendFollowUpNow = async (followUp: DashboardCrmFollowUp) => {
     const previousFollowUp = followUp;
+    setActionError("");
 
     setFollowUpItems((current) =>
       current.map((item) =>
@@ -364,9 +357,12 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
             : item
         )
       );
-    } catch {
+    } catch (error) {
       setFollowUpItems((current) =>
         current.map((item) => (item.id === followUp.id ? previousFollowUp : item))
+      );
+      setActionError(
+        error instanceof Error ? error.message : "Unable to send follow-up."
       );
     }
   };
@@ -376,6 +372,7 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
     nextStatus: DashboardLeadStatus
   ) => {
     const previousStatus = lead.status;
+    setActionError("");
 
     setUpdatingIds((current) => new Set(current).add(lead.id));
     setLeadItems((current) =>
@@ -400,11 +397,14 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
       if (!response.ok) {
         throw new Error("Unable to update status");
       }
-    } catch {
+    } catch (error) {
       setLeadItems((current) =>
         current.map((item) =>
           item.id === lead.id ? { ...item, status: previousStatus } : item
         )
+      );
+      setActionError(
+        error instanceof Error ? error.message : "Unable to update status."
       );
     } finally {
       setUpdatingIds((current) => {
@@ -521,6 +521,16 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
             </Link>
           </div>
         </header>
+
+        {actionError ? (
+          <p
+            role="alert"
+            aria-live="polite"
+            className="rounded-[1rem] border border-rose-300/20 bg-rose-300/10 px-4 py-3 text-sm text-rose-100"
+          >
+            {actionError}
+          </p>
+        ) : null}
 
         <section className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-7">
           <KpiCard label="Total Leads" value={formatNumber(stats.totalLeads)} />

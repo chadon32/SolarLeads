@@ -6,6 +6,8 @@ import {
 } from "@/lib/solar-assumptions";
 import { getMaxPanelCount } from "@/lib/solar-metrics";
 
+import { getSelectedPanelEnergy } from "@/lib/selected-panel-energy";
+
 export type SolarPanelTier = "premium" | "mid" | "value";
 
 export type SolarPanel = {
@@ -311,16 +313,15 @@ export function getPanelFit(
     1800;
   const exactSystemKw = (selectedCount * panel.watts) / 1000;
   const systemKw = roundTo(exactSystemKw, 1);
-  const providerAnnualKwh = getProviderAnnualKwh(
-    input.roofData,
-    selectedCount
-  );
+  const providerAnnualKwh = input.roofData
+    ? getSelectedPanelEnergy(input.roofData, selectedCount, getPanelDimensionsMeters(panel))
+    : 0;
   const providerPanelWatts = Math.max(
     Number(input.roofData?.panelCapacityWatts ?? 400),
     1
   );
   const annualKwh = Math.round(
-    providerAnnualKwh > 0
+    input.roofData
       ? providerAnnualKwh * (panel.watts / providerPanelWatts)
       : exactSystemKw * Math.max(sunshineHours, 0) * 0.8
   );
@@ -355,43 +356,6 @@ export function getPanelFit(
     systemKw,
     taxCredit,
   };
-}
-
-function getProviderAnnualKwh(
-  roofData: RoofAnalysis | null | undefined,
-  panelCount: number
-) {
-  if (!roofData || panelCount <= 0) {
-    return 0;
-  }
-
-  const config =
-    roofData.solarPanelConfigs.find(
-      (candidate) => candidate.panelsCount === panelCount
-    ) ??
-    roofData.solarPanelConfigs
-      .filter((candidate) => candidate.panelsCount <= panelCount)
-      .at(-1);
-
-  if (config?.yearlyEnergyDcKwh && config.yearlyEnergyDcKwh > 0) {
-    return config.yearlyEnergyDcKwh;
-  }
-
-  const panelEnergy = roofData.solarPanels
-    .slice(0, panelCount)
-    .reduce(
-      (total, candidate) =>
-        total + Math.max(candidate.yearlyEnergyDcKwh, 0),
-      0
-    );
-
-  if (panelEnergy > 0) {
-    return panelEnergy;
-  }
-
-  return roofData.panelCount > 0
-    ? (roofData.annualKwh / roofData.panelCount) * panelCount
-    : 0;
 }
 
 export function getRoofShadeRiskLabel(annualSunlightHours?: number | null) {

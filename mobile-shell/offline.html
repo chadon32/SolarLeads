@@ -92,7 +92,17 @@
         Connect to the internet, then retry to load roof imagery, reports, and
         your saved solar analysis.
       </p>
-      <button type="button" onclick="window.location.reload()">Try again</button>
+      <button type="button" id="retry">Try again</button>
     </main>
+    <script>
+      // Capacitor serves this page locally when the remote app fails to load,
+      // so reload() would just re-render this same offline screen and strand
+      // the user. Navigate back to the app origin instead. Keep in sync with
+      // `server.url` in capacitor.config.ts.
+      var APP_URL = "https://solartelligence.com";
+      document.getElementById("retry").addEventListener("click", function () {
+        window.location.replace(APP_URL);
+      });
+    </script>
   </body>
 </html>

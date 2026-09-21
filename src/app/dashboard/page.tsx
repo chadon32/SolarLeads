@@ -16,7 +16,6 @@ import {
   DASHBOARD_SESSION_COOKIE,
   getDashboardAccessToken,
   verifyDashboardSessionCookie,
-  verifyDashboardToken,
 } from "@/lib/dashboard-auth";
 import { formatName } from "@/lib/name-format";
 import { buildSolarReportFromSolarValues } from "@/lib/solar-report";
@@ -90,24 +89,18 @@ type LeadsQueryResult = {
   error: { message: string } | null;
 };
 
-export default async function DashboardPage({
-  searchParams,
-}: {
-  searchParams?: Promise<{ token?: string }>;
-}) {
-  const token = (await searchParams)?.token?.trim();
+export default async function DashboardPage() {
   const cookieStore = await cookies();
   const sessionAuth = verifyDashboardSessionCookie(
     cookieStore.get(DASHBOARD_SESSION_COOKIE)?.value
   );
-  const tokenAuth = verifyDashboardToken(token);
   const accessToken = getDashboardAccessToken();
 
   if (process.env.NODE_ENV === "production" && !accessToken) {
     return <DashboardAccessGate configurationMissing />;
   }
 
-  if (accessToken && !tokenAuth.ok && !sessionAuth.ok) {
+  if (accessToken && !sessionAuth.ok) {
     return <DashboardAccessGate />;
   }
 
@@ -381,9 +374,15 @@ function DashboardAccessGate({
             className="mt-6 flex flex-col gap-3 sm:flex-row"
           >
             <input type="hidden" name="next" value="/dashboard" />
+            <label className="sr-only" htmlFor="dashboard-access-token">
+              Dashboard access token
+            </label>
             <input
+              id="dashboard-access-token"
               name="token"
               type="password"
+              required
+              autoComplete="current-password"
               placeholder="Dashboard token"
               className="flex-1 rounded-[1.1rem] border border-white/10 bg-slate-950/45 px-4 py-3 text-base text-white outline-none placeholder:text-slate-500 focus:border-cyan-300/35"
             />

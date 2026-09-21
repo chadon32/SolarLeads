@@ -449,6 +449,7 @@ export function buildSegmentPlaneTransforms({
   panelHeightMeters,
   fallbackElevationMeters,
   standoffMeters = 0.14,
+  planes: fittedPlanes,
 }: {
   panels: SolarPanelPlacement[];
   raster: RasterData;
@@ -461,8 +462,9 @@ export function buildSegmentPlaneTransforms({
   panelHeightMeters: number;
   fallbackElevationMeters: number;
   standoffMeters?: number;
+  planes?: Map<number, SegmentPlane>;
 }): Array<PanelTransform | null> {
-  const planes = fitSegmentPlanes({
+  const planes = fittedPlanes ?? fitSegmentPlanes({
     panels,
     raster,
     width,
@@ -521,6 +523,41 @@ export type SegmentPlane = {
   /** Constant C in: heightAboveGround + tan(pitch)·downslope = C. */
   planeOffsetMeters: number;
 };
+
+/** Move the display datum, never individual roof corners or panel heights. */
+export function liftRoofSegmentPlanes({
+  planes,
+  outlines,
+  origin,
+}: {
+  planes: Map<number, SegmentPlane>;
+  outlines: Array<{ segmentIndex: number; points: LatLng[] }>;
+  origin: LatLng;
+}) {
+  let lowestHeight = 0.05;
+  for (const { segmentIndex, points } of outlines) {
+    const plane = planes.get(segmentIndex);
+    if (!plane) continue;
+    const azimuth = plane.azimuthDeg * Math.PI / 180;
+    const slope = Math.tan(plane.pitchDeg * Math.PI / 180);
+    for (const point of points) {
+      if (!Number.isFinite(point.lat) || !Number.isFinite(point.lng)) continue;
+      const local = latLngToLocalMeters(point, origin);
+      const downslope = local.x * Math.sin(azimuth) - local.z * Math.cos(azimuth);
+      lowestHeight = Math.min(lowestHeight, plane.planeOffsetMeters - slope * downslope);
+    }
+  }
+  const liftMeters = 0.05 - lowestHeight;
+  return {
+    liftMeters,
+    planes: liftMeters === 0 ? planes : new Map(
+      [...planes].map(([key, plane]) => [key, {
+        ...plane,
+        planeOffsetMeters: plane.planeOffsetMeters + liftMeters,
+      }])
+    ),
+  };
+}
 
 function segmentPlaneKey(panel: SolarPanelPlacement) {
   return Number.isFinite(panel.segmentIndex) ? panel.segmentIndex : -1;

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -13,21 +13,29 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { WebView, type WebViewNavigation } from "react-native-webview";
 import type {
   WebViewErrorEvent,
+  WebViewMessageEvent,
   WebViewNavigationEvent,
 } from "react-native-webview/lib/WebViewTypes";
 import {
   ALLOWED_HOSTS,
+  APP_URL,
   buildEstimateUrl,
   buildShareUrl,
 } from "../config";
+import {
+  createNativeSectionNavigationScript,
+  initialNativeAnalysisState,
+  transitionNativeAnalysisState,
+  type AnalysisSection,
+  type NativeAnalysisEvent,
+} from "../analysis-bridge";
+import { isEstimateDocument, sanitizeEstimateShareUrl } from "../estimate-navigation";
 import { colors } from "../theme";
 
 type AnalysisScreenProps = {
   address: string;
   onHome: () => void;
 };
-
-type AnalysisSection = "roof" | "overview" | "report";
 
 const nativeBootstrapScript = `
   (function () {
@@ -112,6 +120,50 @@ const nativeBootstrapScript = `
       }
     }
 
+    function postSection(section) {
+      if (window.__solartelligenceNativeLastSection === section) return;
+      window.__solartelligenceNativeLastSection = section;
+      if (window.ReactNativeWebView) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'analysis-section',
+          section: section
+        }));
+      }
+    }
+
+    function observeSection() {
+      var rooftop = document.getElementById('rooftop-analysis');
+      var report = document.getElementById('report-dashboard');
+      var reportBox = report && report.getBoundingClientRect();
+      var reportTablist = report && report.querySelector('[role="tablist"]');
+      var reportTablistBox = reportTablist && reportTablist.getBoundingClientRect();
+      var reportIsVisible =
+        (reportTablistBox && reportTablistBox.top < window.innerHeight && reportTablistBox.bottom > 0) ||
+        (reportBox && reportBox.top <= window.innerHeight * 0.5 && reportBox.bottom > 0);
+
+      if (reportIsVisible) {
+        var tabs = Array.prototype.slice.call(report.querySelectorAll('[role="tab"]'));
+        var selectedTab = tabs.find(function (tab) { return tab.getAttribute('aria-selected') === 'true'; });
+        if (selectedTab && (selectedTab.textContent || '').trim() === 'Send Report') {
+          postSection('report');
+          return;
+        }
+        postSection('overview');
+        return;
+      }
+
+      if (rooftop) postSection('roof');
+    }
+
+    function scheduleSectionObservation() {
+      if (window.__solartelligenceNativeSectionUpdatePending) return;
+      window.__solartelligenceNativeSectionUpdatePending = true;
+      requestAnimationFrame(function () {
+        window.__solartelligenceNativeSectionUpdatePending = false;
+        observeSection();
+      });
+    }
+
     applyAppMode();
     if (!window.__solartelligenceNativeObserver) {
       var updatePending = false;
@@ -121,6 +173,7 @@ const nativeBootstrapScript = `
         requestAnimationFrame(function () {
           updatePending = false;
           applyAppMode();
+          scheduleSectionObservation();
         });
       };
       window.__solartelligenceNativeObserver = new MutationObserver(scheduleAppMode);
@@ -130,6 +183,13 @@ const nativeBootstrapScript = `
       });
       window.addEventListener('resize', scheduleAppMode);
     }
+    if (!window.__solartelligenceNativeSectionObserver) {
+      window.__solartelligenceNativeSectionObserver = true;
+      window.addEventListener('scroll', scheduleSectionObservation, { passive: true });
+      window.addEventListener('resize', scheduleSectionObservation);
+      document.addEventListener('click', scheduleSectionObservation, true);
+    }
+    scheduleSectionObservation();
     window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'ready' }));
   })();
   true;
@@ -156,12 +216,40 @@ function shouldOpenOutside(rawUrl: string) {
 }
 
 export function AnalysisScreen({ address, onHome }: AnalysisScreenProps) {
+  const shareUrlRef = useRef(buildShareUrl(address));
+  const loadCompletedRef = useRef(false);
+  const analysisStateRef = useRef(initialNativeAnalysisState);
+  const [estimateDocument, setEstimateDocument] = useState(true);
   const webViewRef = useRef<WebView>(null);
+  const loadFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [webViewKey, setWebViewKey] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [loadProgress, setLoadProgress] = useState(0);
   const [hasError, setHasError] = useState(false);
   const [activeSection, setActiveSection] = useState<AnalysisSection>("roof");
+  const [analysisReady, setAnalysisReady] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      if (loadFallbackRef.current) clearTimeout(loadFallbackRef.current);
+    };
+  }, []);
+
+  function finishLoading() {
+    if (loadFallbackRef.current) {
+      clearTimeout(loadFallbackRef.current);
+      loadFallbackRef.current = null;
+    }
+    setIsLoading(false);
+    setLoadProgress(1);
+  }
+
+  function updateAnalysisState(event: NativeAnalysisEvent) {
+    const nextState = transitionNativeAnalysisState(analysisStateRef.current, event);
+    analysisStateRef.current = nextState;
+    setAnalysisReady(nextState.analysisReady);
+    setActiveSection(nextState.activeSection);
+  }
 
   function openExternal(url: string) {
     void Linking.openURL(url).catch(() => {
@@ -190,13 +278,54 @@ export function AnalysisScreen({ address, onHome }: AnalysisScreenProps) {
   }
 
   function handleLoadEnd(event: WebViewNavigationEvent | WebViewErrorEvent) {
+    if (!isEstimateDocument(event.nativeEvent.url) || loadCompletedRef.current) {
+      finishLoading();
+      return;
+    }
     if (event.nativeEvent.url !== "about:blank") {
-      setIsLoading(false);
-      setLoadProgress(1);
+      setLoadProgress((current) => Math.max(current, 0.9));
+      if (loadFallbackRef.current) clearTimeout(loadFallbackRef.current);
+      loadFallbackRef.current = setTimeout(finishLoading, 30_000);
+    }
+  }
+
+  function handleMessage(event: WebViewMessageEvent) {
+    try {
+      const message = JSON.parse(event.nativeEvent.data) as {
+        section?: unknown;
+        status?: string;
+        type?: string;
+        url?: unknown;
+      };
+
+      if (!canStayInApp(event.nativeEvent.url)) return;
+      if (message.type === "estimate-share") {
+        const safeUrl = sanitizeEstimateShareUrl(message.url, APP_URL);
+        if (safeUrl) shareUrlRef.current = safeUrl;
+      }
+      if (
+        message.type === "analysis-status" &&
+        (message.status === "done" ||
+          message.status === "invalid" ||
+          message.status === "error")
+      ) {
+        loadCompletedRef.current = true;
+        updateAnalysisState({ type: "analysis-status", status: message.status });
+        finishLoading();
+      }
+      if (message.type === "analysis-section") {
+        updateAnalysisState({ type: "analysis-section", section: message.section });
+      }
+    } catch {
+      // Ignore unrelated WebView messages. Only trusted typed bridge events
+      // control native loading and section state.
     }
   }
 
   function retry() {
+    if (loadFallbackRef.current) clearTimeout(loadFallbackRef.current);
+    loadCompletedRef.current = false;
+    updateAnalysisState({ type: "reset" });
     setHasError(false);
     setIsLoading(true);
     setLoadProgress(0);
@@ -204,49 +333,20 @@ export function AnalysisScreen({ address, onHome }: AnalysisScreenProps) {
   }
 
   function scrollToSection(section: AnalysisSection) {
-    setActiveSection(section);
-
-    const script =
-      section === "report"
-        ? `
-          (function () {
-            var tabs = Array.prototype.slice.call(document.querySelectorAll('[role="tab"]'));
-            var reportTab = tabs.find(function (tab) { return (tab.textContent || '').trim() === 'Send Report'; });
-            if (reportTab) reportTab.click();
-            requestAnimationFrame(function () {
-              var target = document.getElementById('report-dashboard') || document.getElementById('generate-report');
-              if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            });
-          })(); true;
-        `
-        : section === "overview"
-          ? `
-            (function () {
-              var tabs = Array.prototype.slice.call(document.querySelectorAll('[role="tab"]'));
-              var overviewTab = tabs.find(function (tab) { return (tab.textContent || '').trim() === 'Overview'; });
-              if (overviewTab) overviewTab.click();
-              requestAnimationFrame(function () {
-                var target = document.getElementById('report-dashboard');
-                if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-              });
-            })(); true;
-          `
-          : `
-            (function () {
-              var target = document.getElementById('rooftop-analysis') || document.getElementById('solar-workspace');
-              if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            })(); true;
-          `;
-
-    webViewRef.current?.injectJavaScript(script);
+    if (!analysisStateRef.current.analysisReady) return;
+    webViewRef.current?.injectJavaScript(createNativeSectionNavigationScript(section));
   }
 
   async function shareEstimate() {
-    await Share.share({
-      title: "Solartelligence solar estimate",
-      message: `See the solar potential for ${address}: ${buildShareUrl(address)}`,
-      url: buildShareUrl(address),
-    });
+    try {
+      await Share.share({
+        title: "Solartelligence solar estimate",
+        message: `See this customized solar estimate: ${shareUrlRef.current}`,
+        url: shareUrlRef.current,
+      });
+    } catch {
+      Alert.alert("Unable to share", "Your estimate is still available. Please try again.");
+    }
   }
 
   return (
@@ -281,7 +381,7 @@ export function AnalysisScreen({ address, onHome }: AnalysisScreenProps) {
 
       <View style={styles.webContainer}>
         {hasError ? (
-          <View style={styles.errorState}>
+          <View accessibilityLiveRegion="assertive" style={styles.errorState}>
             <View style={styles.errorMark} />
             <Text style={styles.errorEyebrow}>CONNECTION INTERRUPTED</Text>
             <Text style={styles.errorTitle}>Your analysis could not load.</Text>
@@ -289,6 +389,8 @@ export function AnalysisScreen({ address, onHome }: AnalysisScreenProps) {
               Check your connection and retry. Your selected property is still saved.
             </Text>
             <Pressable
+              accessibilityHint="Reloads the analysis for this property."
+              accessibilityLabel="Try loading the analysis again"
               accessibilityRole="button"
               onPress={retry}
               style={({ pressed }) => [styles.retryButton, pressed && styles.pressed]}
@@ -329,31 +431,78 @@ export function AnalysisScreen({ address, onHome }: AnalysisScreenProps) {
               sharedCookiesEnabled
               startInLoadingState={false}
               thirdPartyCookiesEnabled
-              onContentProcessDidTerminate={() => webViewRef.current?.reload()}
-              onError={() => setHasError(true)}
+              onContentProcessDidTerminate={() => {
+                loadCompletedRef.current = false;
+                updateAnalysisState({ type: "reset" });
+                setHasError(false);
+                setIsLoading(true);
+                setLoadProgress(0.05);
+                webViewRef.current?.reload();
+              }}
+              onError={() => {
+                loadCompletedRef.current = false;
+                updateAnalysisState({ type: "reset" });
+                finishLoading();
+                setHasError(true);
+              }}
               onFileDownload={(event) => openExternal(event.nativeEvent.downloadUrl)}
               onHttpError={(event) => {
-                if (event.nativeEvent.statusCode >= 500) setHasError(true);
+                if (
+                  event.nativeEvent.statusCode >= 400 &&
+                  isEstimateDocument(event.nativeEvent.url)
+                ) {
+                  loadCompletedRef.current = false;
+                  updateAnalysisState({ type: "reset" });
+                  finishLoading();
+                  setHasError(true);
+                }
               }}
               onLoadEnd={handleLoadEnd}
               onLoadProgress={(event) => {
-                setLoadProgress(event.nativeEvent.progress);
-                if (event.nativeEvent.progress >= 0.85) setIsLoading(false);
+                setLoadProgress(Math.min(event.nativeEvent.progress * 0.9, 0.9));
               }}
-              onLoadStart={() => {
+              onNavigationStateChange={(navigation) => {
+                const estimate = isEstimateDocument(navigation.url);
+                setEstimateDocument(estimate);
+                if (!estimate) {
+                  loadCompletedRef.current = false;
+                  updateAnalysisState({ type: "reset" });
+                  if (!navigation.loading) finishLoading();
+                }
+                const safeUrl = sanitizeEstimateShareUrl(navigation.url, APP_URL);
+                if (safeUrl) shareUrlRef.current = safeUrl;
+              }}
+              onLoadStart={(event) => {
+                if (loadFallbackRef.current) clearTimeout(loadFallbackRef.current);
+                loadCompletedRef.current = false;
+                updateAnalysisState({ type: "reset" });
+                setEstimateDocument(isEstimateDocument(event.nativeEvent.url));
                 setIsLoading(true);
                 setLoadProgress(0.05);
               }}
               onOpenWindow={(event) => openExternal(event.nativeEvent.targetUrl)}
+              onMessage={handleMessage}
               onShouldStartLoadWithRequest={handleNavigation}
             />
             {isLoading ? (
-              <View pointerEvents="none" style={styles.loadingState}>
+              <View
+                accessible
+                accessibilityLabel={estimateDocument ? "Building your roof model" : "Loading page"}
+                accessibilityRole="progressbar"
+                accessibilityValue={{
+                  max: 100,
+                  min: 0,
+                  now: Math.round(loadProgress * 100),
+                  text: `${Math.round(loadProgress * 100)} percent loaded`,
+                }}
+                pointerEvents="none"
+                style={styles.loadingState}
+              >
                 <View style={styles.loadingCard}>
                   <ActivityIndicator color={colors.cyan} size="small" />
                   <View style={styles.loadingCopy}>
-                    <Text style={styles.loadingTitle}>Building your roof model</Text>
-                    <Text style={styles.loadingSubtitle}>Loading satellite and solar data...</Text>
+                    <Text style={styles.loadingTitle}>{estimateDocument ? "Building your roof model" : "Loading page"}</Text>
+                    <Text style={styles.loadingSubtitle}>{estimateDocument ? "Loading satellite and solar data..." : "Opening your page..."}</Text>
                   </View>
                 </View>
                 <View style={styles.progressTrack}>
@@ -365,45 +514,63 @@ export function AnalysisScreen({ address, onHome }: AnalysisScreenProps) {
         )}
       </View>
 
-      <View style={styles.tabBar}>
-        <NativeTab
-          active={activeSection === "roof"}
-          label="Roof"
-          onPress={() => scrollToSection("roof")}
-        />
-        <NativeTab
-          active={activeSection === "overview"}
-          label="Overview"
-          onPress={() => scrollToSection("overview")}
-        />
-        <NativeTab
-          active={activeSection === "report"}
-          label="Report"
-          onPress={() => scrollToSection("report")}
-        />
-      </View>
+      {estimateDocument ? (
+        <View style={styles.tabBar}>
+          <NativeTab
+            active={analysisReady && activeSection === "roof"}
+            enabled={analysisReady}
+            label="Roof"
+            onPress={() => scrollToSection("roof")}
+          />
+          <NativeTab
+            active={analysisReady && activeSection === "overview"}
+            enabled={analysisReady}
+            label="Overview"
+            onPress={() => scrollToSection("overview")}
+          />
+          <NativeTab
+            active={analysisReady && activeSection === "report"}
+            enabled={analysisReady}
+            label="Report"
+            onPress={() => scrollToSection("report")}
+          />
+        </View>
+      ) : null}
     </SafeAreaView>
   );
 }
 
 function NativeTab({
   active,
+  enabled,
   label,
   onPress,
 }: {
   active: boolean;
+  enabled: boolean;
   label: string;
   onPress: () => void;
 }) {
   return (
     <Pressable
+      accessibilityHint={
+        enabled
+          ? `Moves the analysis to the ${label.toLowerCase()} section.`
+          : "Available after the roof analysis finishes."
+      }
+      accessibilityLabel={`${label} section`}
       accessibilityRole="tab"
-      accessibilityState={{ selected: active }}
+      accessibilityState={{ disabled: !enabled, selected: active }}
+      disabled={!enabled}
       onPress={onPress}
-      style={({ pressed }) => [styles.tab, pressed && styles.pressed]}
+      style={({ pressed }) => [
+        styles.tab,
+        !enabled && styles.tabDisabled,
+        pressed && enabled && styles.pressed,
+      ]}
     >
       <View style={[styles.tabIndicator, active && styles.tabIndicatorActive]} />
-      <Text style={[styles.tabLabel, active && styles.tabLabelActive]}>{label}</Text>
+      <Text style={[styles.tabLabel, !enabled && styles.tabLabelDisabled, active && styles.tabLabelActive]}>{label}</Text>
     </Pressable>
   );
 }
@@ -425,23 +592,25 @@ const styles = StyleSheet.create({
   headerButtonText: { color: colors.textSoft, fontSize: 13, fontWeight: "700" },
   headerAddress: { flex: 1, alignItems: "center" },
   headerEyebrow: { color: colors.cyan, fontSize: 8, fontWeight: "800", letterSpacing: 1.5 },
-  headerTitle: { maxWidth: "100%", marginTop: 4, color: colors.text, fontSize: 12, fontWeight: "700" },
-  shareButton: { minWidth: 62, minHeight: 40, alignItems: "center", justifyContent: "center", borderRadius: 20, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.panel },
-  shareButtonText: { color: colors.text, fontSize: 12, fontWeight: "800" },
+  headerTitle: { maxWidth: "100%", marginTop: 4, color: colors.text, fontSize: 13, fontWeight: "700" },
+  shareButton: { minWidth: 66, minHeight: 44, alignItems: "center", justifyContent: "center", borderRadius: 22, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.panel },
+  shareButtonText: { color: colors.text, fontSize: 13, fontWeight: "800" },
   webContainer: { flex: 1, backgroundColor: colors.background },
   webView: { flex: 1, backgroundColor: colors.background },
   loadingState: { position: "absolute", top: 0, left: 0, right: 0, paddingHorizontal: 14, paddingTop: 12 },
   loadingCard: { minHeight: 58, flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 14, borderRadius: 16, borderWidth: 1, borderColor: colors.border, backgroundColor: "rgba(7, 16, 24, 0.96)" },
   loadingCopy: { flex: 1 },
   loadingTitle: { color: colors.text, fontSize: 13, fontWeight: "800" },
-  loadingSubtitle: { marginTop: 3, color: colors.muted, fontSize: 11 },
+  loadingSubtitle: { marginTop: 3, color: colors.textSoft, fontSize: 12 },
   progressTrack: { height: 2, marginHorizontal: 8, overflow: "hidden", borderRadius: 1, backgroundColor: "rgba(148, 163, 184, 0.15)" },
   progressFill: { height: 2, borderRadius: 1, backgroundColor: colors.cyanStrong },
   tabBar: { minHeight: 62, flexDirection: "row", alignItems: "stretch", borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border, backgroundColor: colors.backgroundRaised },
   tab: { flex: 1, alignItems: "center", justifyContent: "center", gap: 7 },
+  tabDisabled: { opacity: 0.5 },
   tabIndicator: { width: 22, height: 3, borderRadius: 2, backgroundColor: "rgba(148, 163, 184, 0.22)" },
   tabIndicatorActive: { width: 34, backgroundColor: colors.cyan },
-  tabLabel: { color: colors.muted, fontSize: 11, fontWeight: "700" },
+  tabLabel: { color: colors.muted, fontSize: 12, fontWeight: "700" },
+  tabLabelDisabled: { color: colors.muted },
   tabLabelActive: { color: colors.text },
   errorState: { flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 30 },
   errorMark: { width: 36, height: 36, marginBottom: 22, borderRadius: 18, borderWidth: 2, borderColor: colors.danger },

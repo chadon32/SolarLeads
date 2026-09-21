@@ -38,7 +38,12 @@ export function AnalysisSequence({ address }: AnalysisSequenceProps) {
   const complete = stepIndex >= steps.length;
 
   return (
-    <div className="relative mt-5 overflow-hidden rounded-[1.5rem] border border-cyan-300/14 bg-[linear-gradient(135deg,rgba(10,15,24,0.96),rgba(7,11,18,0.88))] p-5 shadow-[0_18px_60px_rgba(2,8,20,0.34)] backdrop-blur-xl">
+    <div
+      role="status"
+      aria-live="polite"
+      aria-atomic="false"
+      className="relative mt-5 overflow-hidden rounded-[1.5rem] border border-cyan-300/14 bg-[linear-gradient(135deg,rgba(10,15,24,0.96),rgba(7,11,18,0.88))] p-5 shadow-[0_18px_60px_rgba(2,8,20,0.34)] backdrop-blur-xl"
+    >
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(103,232,249,0.14),transparent_30%),radial-gradient(circle_at_bottom_left,rgba(59,130,246,0.08),transparent_32%)]" />
       <div className="relative flex items-center justify-between gap-4">
         <div>

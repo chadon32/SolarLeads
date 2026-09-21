@@ -11,7 +11,12 @@ import {
   Zap,
   type LucideIcon,
 } from "lucide-react";
-import { type ReactNode, useMemo, useState } from "react";
+import {
+  type KeyboardEvent,
+  type ReactNode,
+  useMemo,
+  useState,
+} from "react";
 import type { RoofAnalysis } from "@/lib/roof-analysis";
 import {
   buildSolarAdvisorInputFromAnalysis,
@@ -80,6 +85,12 @@ type MetricSource =
   | "estimated";
 
 const monthlyBillOptions = [100, 150, 200, 250, 300, 350, 400, 450, 500];
+
+function billOptionsIncluding(currentBill: number) {
+  return monthlyBillOptions.includes(currentBill)
+    ? monthlyBillOptions
+    : [...monthlyBillOptions, currentBill].sort((a, b) => a - b);
+}
 
 const detailTabs: Array<{ id: DetailTab; label: string }> = [
   { id: "overview", label: "Overview" },
@@ -154,6 +165,39 @@ export function SolarReportDashboard({
   const setActiveTab = (tab: DetailTab) => {
     setInternalActiveTab(tab);
     onTabChange?.(tab);
+  };
+  const handleDetailTabKeyDown = (
+    event: KeyboardEvent<HTMLButtonElement>,
+    currentTab: DetailTab
+  ) => {
+    const currentTabIndex = detailTabs.findIndex(({ id }) => id === currentTab);
+    if (currentTabIndex === -1) {
+      return;
+    }
+
+    let nextTabIndex: number;
+    switch (event.key) {
+      case "ArrowRight":
+        nextTabIndex = (currentTabIndex + 1) % detailTabs.length;
+        break;
+      case "ArrowLeft":
+        nextTabIndex =
+          (currentTabIndex - 1 + detailTabs.length) % detailTabs.length;
+        break;
+      case "Home":
+        nextTabIndex = 0;
+        break;
+      case "End":
+        nextTabIndex = detailTabs.length - 1;
+        break;
+      default:
+        return;
+    }
+
+    event.preventDefault();
+    const nextTab = detailTabs[nextTabIndex].id;
+    setActiveTab(nextTab);
+    document.getElementById(`report-tab-${nextTab}`)?.focus();
   };
   const openSendReport = () => {
     setActiveTab("send");
@@ -246,7 +290,7 @@ export function SolarReportDashboard({
             aria-label="Monthly electric bill"
             className="mt-4 w-full rounded-full border border-white/12 bg-black/35 px-4 py-3 text-base font-semibold text-white outline-none transition focus:border-cyan-200/50"
           >
-            {monthlyBillOptions.map((value) => (
+            {billOptionsIncluding(monthlyBill).map((value) => (
               <option key={value} value={value} className="bg-slate-950">
                 {formatMoney(value)}
               </option>
@@ -285,11 +329,13 @@ export function SolarReportDashboard({
               type="button"
               aria-selected={activeTab === tab.id}
               aria-controls="report-tabpanel"
+              tabIndex={activeTab === tab.id ? 0 : -1}
               onClick={() => setActiveTab(tab.id)}
+              onKeyDown={(event) => handleDetailTabKeyDown(event, tab.id)}
               className={`min-h-11 rounded-full px-2 py-2 text-[0.68rem] font-semibold uppercase leading-4 tracking-[0.05em] transition xl:px-4 xl:py-3 xl:text-xs xl:tracking-[0.14em] ${
                 activeTab === tab.id
                   ? "bg-white text-slate-950"
-                  : "text-white/58 hover:text-white"
+                  : "text-[#cbd5e1] hover:text-white"
               }`}
             >
               {tab.label}
@@ -820,7 +866,7 @@ function InverterSelector({
                 ? `+$${option.costAdderPerWatt.toFixed(2)}/W`
                 : "$0/W add-on"}
             </p>
-            <p className="mt-1 text-xs leading-5 text-white/45">{option.bestFor}</p>
+            <p className="mt-1 text-xs leading-5 text-white/60">{option.bestFor}</p>
           </button>
         ))}
       </div>
@@ -1272,7 +1318,9 @@ function OverviewTab({
         icon={DollarSign}
         source="modeled"
         title={formatMoney(values.twentyYearSavings)}
-        body="Estimated net savings over 20 years."
+        body={values.twentyYearSavings < 0
+          ? "Estimated net loss over 20 years: this system costs more than staying with utility power under these assumptions."
+          : "Estimated net savings over 20 years."}
         tone="gold"
       />
     </div>
@@ -1290,15 +1338,17 @@ function SavingsTab({
     <div className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
         <div className="rounded-[1rem] border border-white/10 bg-black/20 p-4">
-          <p className="text-[0.62rem] font-semibold uppercase tracking-[0.22em] text-cyan-100/80">
-            Monthly electric bill
-          </p>
+          <label htmlFor="savings-monthly-bill" className="block text-[0.62rem] font-semibold uppercase tracking-[0.22em] text-cyan-100/80">
+            Savings monthly bill
+          </label>
           <select
+            id="savings-monthly-bill"
+            aria-label="Savings monthly bill"
             value={values.monthlyBill}
             onChange={(event) => onMonthlyBillChange(Number(event.target.value))}
             className="mt-3 w-full rounded-full border border-white/12 bg-black/35 px-4 py-3 text-base font-semibold text-white outline-none transition focus:border-cyan-200/50"
           >
-            {monthlyBillOptions.map((value) => (
+            {billOptionsIncluding(values.monthlyBill).map((value) => (
               <option key={value} value={value} className="bg-slate-950">
                 {formatMoney(value)}
               </option>
@@ -1438,6 +1488,10 @@ function FinancingTab({
     totalSolarPayments:
       downPaymentAmount + monthlyLoanPayment * loanTermYears * 12,
   });
+  const selectedNetBenefit = financingMode === "lease"
+    ? null
+    : financingMode === "loan" ? loanCosts.totalSavings : values.twentyYearSavings;
+  const hasNetLoss = selectedNetBenefit !== null && selectedNetBenefit < 0;
 
   return (
     <div
@@ -1581,14 +1635,15 @@ function FinancingTab({
             }
           />
           <MiniReadout
-            label="20-year net savings"
+            label={hasNetLoss ? "20-year net loss" : "20-year net savings"}
+            note={hasNetLoss
+              ? "This option costs more than utility-only power under the current assumptions. Consider a smaller system or different financing."
+              : undefined}
             source="illustrative"
             value={
-              financingMode === "buy"
-                ? formatMoney(values.twentyYearSavings)
-                : financingMode === "loan"
-                  ? formatMoney(loanCosts.totalSavings)
-                  : "Not modeled without provider terms"
+              selectedNetBenefit === null
+                ? "Not modeled without provider terms"
+                : formatMoney(selectedNetBenefit)
             }
           />
         </div>
@@ -1983,7 +2038,7 @@ function MiniReadout({
         <SourceBadge source={source} />
       </div>
       <p className="mt-1 text-base font-semibold text-white">{value}</p>
-      {note ? <p className="mt-1 text-xs leading-5 text-white/44">{note}</p> : null}
+      {note ? <p className="mt-1 text-xs leading-5 text-white/60">{note}</p> : null}
     </div>
   );
 }

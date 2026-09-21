@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowRight, MapPin } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 
 type Prediction = {
   description: string;
@@ -156,8 +156,12 @@ export function AddressSearch({
   const [activeIndex, setActiveIndex] = useState(-1);
   const [searching, setSearching] = useState(false);
   const [addressError, setAddressError] = useState<string | null>(null);
+  const [isSelecting, setIsSelecting] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const activeIndexRef = useRef(-1);
+  const isSelectingRef = useRef(false);
+  const selectionController = useRef<AbortController | null>(null);
+  useEffect(() => () => selectionController.current?.abort(), []);
   const setActivePredictionIndex = useCallback((nextIndex: number) => {
     activeIndexRef.current = nextIndex;
     setActiveIndex(nextIndex);
@@ -165,38 +169,49 @@ export function AddressSearch({
 
   const selectPrediction = useCallback(
     async (prediction: Prediction) => {
-      const address = prediction.description;
-
-      setQuery(address);
-      setPredictions([]);
-      setActivePredictionIndex(-1);
-      setOpen(false);
-
-      if (prediction.place_id.startsWith("manual-")) {
-        if (!isArizonaAddress(address)) {
-          setAddressError(
-            "We currently only serve Arizona homes. Please enter an AZ address."
-          );
-          onSelect({ address: "" });
-          setStatus("Arizona address required.");
-          return;
-        }
-
-        setStatus(`Selected: ${address}`);
-        setFallbackActive(false);
-        setAddressError(null);
-        onSelect({ address });
+      if (isSelectingRef.current) {
         return;
       }
 
+      isSelectingRef.current = true;
+      setIsSelecting(true);
+      const controller = new AbortController();
+      selectionController.current = controller;
+
       try {
+        const address = prediction.description;
+
+        setQuery(address);
+        setPredictions([]);
+        setActivePredictionIndex(-1);
+        setOpen(false);
+        setStatus("Loading selected address...");
+
+        if (prediction.place_id.startsWith("manual-")) {
+          if (!isArizonaAddress(address)) {
+            setAddressError(
+              "We currently only serve Arizona homes. Please enter an AZ address."
+            );
+            onSelect({ address: "" });
+            setStatus("Arizona address required.");
+            return;
+          }
+
+          setStatus(`Selected: ${address}`);
+          setFallbackActive(false);
+          setAddressError(null);
+          onSelect({ address });
+          return;
+        }
+
         const response = await fetch(
           `/api/places/details?placeId=${encodeURIComponent(prediction.place_id)}`,
-          { cache: "no-store" }
+          { cache: "no-store", signal: controller.signal }
         );
         const payload: PlaceDetailsPayload = await response.json().catch(() => ({}));
-        const formattedAddress =
-          response.ok && payload.formattedAddress ? payload.formattedAddress : address;
+        if (controller.signal.aborted) return;
+        if (!response.ok || !payload.formattedAddress) throw new Error(lookupUnavailableMessage);
+        const formattedAddress = payload.formattedAddress;
 
         if (!isArizonaAddress(formattedAddress)) {
           setAddressError(
@@ -226,13 +241,26 @@ export function AddressSearch({
         setFallbackActive(false);
         setStatus(`Selected: ${formattedAddress}`);
       } catch {
+        if (controller.signal.aborted) return;
         setAddressError(lookupUnavailableMessage);
         setFallbackActive(true);
+        setStatus(lookupUnavailableMessage);
         onSelect({ address: "" });
+      } finally {
+        if (selectionController.current === controller) {
+          isSelectingRef.current = false;
+          setIsSelecting(false);
+        }
       }
     },
     [onSelect, setActivePredictionIndex]
   );
+
+  // Selection needs the latest parent state, but must not restart the lookup
+  // when unrelated parent state (such as the neighborhood count) changes.
+  const autoSelectPrediction = useEffectEvent((prediction: Prediction) => {
+    void selectPrediction(prediction);
+  });
 
   useEffect(() => {
     const handle = window.requestAnimationFrame(() => {
@@ -249,10 +277,10 @@ export function AddressSearch({
     const timer = window.setTimeout(async () => {
       if (!open) return;
 
-      if (!trimmed) {
+      if (trimmed.length < 3) {
         setPredictions([]);
         setActivePredictionIndex(-1);
-        setStatus("Start typing to search Google Places.");
+        setStatus("Enter at least 3 characters to search Google Places.");
         setAddressError(null);
         setFallbackActive(false);
         setSearching(false);
@@ -276,6 +304,7 @@ export function AddressSearch({
 
         const payload: { message?: string; predictions?: Prediction[] } =
           await response.json().catch(() => ({}));
+        if (controller.signal.aborted) return;
 
         if (!response.ok) {
           const fallback = buildFallbackSuggestions(trimmed);
@@ -304,7 +333,7 @@ export function AddressSearch({
           setStatus("Exact property match found. Starting roof scan...");
           setAddressError(null);
           setSearching(false);
-          void selectPrediction(nextPredictions[0]);
+          autoSelectPrediction(nextPredictions[0]);
           return;
         }
 
@@ -343,7 +372,7 @@ export function AddressSearch({
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [open, query, selectPrediction, setActivePredictionIndex]);
+  }, [open, query, setActivePredictionIndex]);
 
   const helperText =
     "Pick the matching address to start the solar report workflow.";
@@ -403,11 +432,17 @@ export function AddressSearch({
             aria-controls={showPredictions ? "address-suggestions" : undefined}
             aria-expanded={showPredictions}
             aria-activedescendant={activePredictionId}
+            aria-busy={isSelecting}
             aria-describedby={`address-helper${
               status !== "Address lookup ready." ? " address-status" : ""
             }${addressError ? " address-error" : ""}`}
             aria-invalid={Boolean(addressError)}
             onChange={(event) => {
+              selectionController.current?.abort();
+              selectionController.current = null;
+              isSelectingRef.current = false;
+              setIsSelecting(false);
+              setPredictions([]);
               setQuery(event.target.value);
               setOpen(true);
               setActivePredictionIndex(-1);
@@ -458,17 +493,17 @@ export function AddressSearch({
               window.setTimeout(() => setOpen(false), 140);
             }}
             placeholder="Enter your Arizona address..."
-            className={`w-full rounded-full border bg-black/24 py-4 pl-12 pr-28 text-base text-white outline-none transition placeholder:text-white/45 focus:border-cyan-200/50 focus:bg-black/32 ${
+            className={`w-full rounded-full border bg-black/24 py-4 pl-12 pr-4 text-base text-white outline-none transition placeholder:text-white/45 focus:border-cyan-200/50 focus:bg-black/32 sm:pr-28 ${
               addressError ? "border-rose-300/55" : "border-white/12"
             }`}
           />
           <button
             type="button"
             aria-label="Start roof analysis with the selected address"
-            disabled={!canSubmitAddress}
+            disabled={!canSubmitAddress || isSelecting}
             onMouseDown={(event) => event.preventDefault()}
             onClick={submitCurrentAddress}
-            className="absolute right-2 top-1/2 z-10 inline-flex h-11 -translate-y-1/2 items-center justify-center gap-1.5 rounded-full bg-white px-3 text-slate-950 shadow-[0_12px_30px_rgba(255,255,255,0.18)] transition hover:scale-105 hover:bg-cyan-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:scale-100"
+            className="mt-3 inline-flex min-h-11 w-full items-center justify-center gap-1.5 rounded-full bg-white px-4 text-slate-950 shadow-[0_12px_30px_rgba(255,255,255,0.18)] transition hover:scale-[1.01] hover:bg-cyan-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:scale-100 sm:absolute sm:right-2 sm:top-1/2 sm:mt-0 sm:h-11 sm:min-h-0 sm:w-auto sm:-translate-y-1/2 sm:px-3 sm:hover:scale-105"
           >
             <span className="text-xs font-bold">Analyze</span>
             <ArrowRight className="h-4 w-4" aria-hidden="true" />
@@ -490,6 +525,7 @@ export function AddressSearch({
             id="address-status"
             role="status"
             aria-live="polite"
+            aria-busy={isSelecting}
             className="mt-2 text-xs leading-5 text-white/45"
           >
             {status}
@@ -536,6 +572,7 @@ export function AddressSearch({
                       type="button"
                       role="option"
                       aria-selected={selected}
+                      disabled={isSelecting}
                       className={`flex w-full items-start gap-3 border-b border-white/6 px-4 py-3 text-left transition last:border-b-0 ${
                         selected ? "bg-white/10" : "hover:bg-white/6"
                       }`}

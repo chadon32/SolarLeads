@@ -75,16 +75,13 @@ export function deriveLeadSubmissionNumbers(
   const batteryCost = input.batteryAdded
     ? nonNegativeNumber(input.batteryCost) ?? 0
     : 0;
+  const installedCostPerWatt =
+    positiveNumber(input.installedCostPerWatt) ?? INSTALLED_COST_PER_WATT;
   const solarSystemCost =
-    systemSizeKw
-      ? Math.round(
-          systemSizeKw *
-            1000 *
-            (positiveNumber(input.installedCostPerWatt) ??
-              INSTALLED_COST_PER_WATT)
-        )
-      : panelCount
-        ? Math.round(panelCount * panelWatts * INSTALLED_COST_PER_WATT)
+    panelCount
+      ? Math.round(panelCount * panelWatts * installedCostPerWatt)
+      : systemSizeKw
+        ? Math.round(systemSizeKw * 1000 * installedCostPerWatt)
         : null;
   const systemCostBeforeIncentives =
     solarSystemCost !== null
@@ -114,7 +111,9 @@ export function deriveLeadSubmissionNumbers(
           monthlyBill,
           totalSolarPayments: netSystemCost,
         }).totalSavings
-      : nonNegativeNumber(input.twentyYearSavings);
+      : typeof input.twentyYearSavings === "number" && Number.isFinite(input.twentyYearSavings)
+        ? input.twentyYearSavings
+        : null;
   const roiYears =
     annualSavings && annualSavings > 0 && netSystemCost !== null && netSystemCost > 0
       ? roundTo(netSystemCost / annualSavings, 1)
