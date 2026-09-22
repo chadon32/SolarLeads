@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { startTransition, useDeferredValue, useEffect, useMemo, useState } from "react";
-import { ArrowDownToLine, Download, Search, Send, SlidersHorizontal, UserRound } from "lucide-react";
+import { ArrowDownToLine, Download, Search, Send, SlidersHorizontal, Trash2, UserRound } from "lucide-react";
 import { formatDisplayAddress } from "@/lib/address-format";
 import { trackEvent } from "@/lib/analytics";
 import { formatName } from "@/lib/name-format";
@@ -11,13 +11,12 @@ import {
   type LeadScoreLabel,
 } from "@/lib/lead-scoring";
 import { getShortPanelBrand } from "@/lib/solarPanels";
+import {
+  LEAD_STATUS_OPTIONS,
+  type LeadStatus,
+} from "@/lib/lead-status";
 
-export type DashboardLeadStatus =
-  | "new"
-  | "contacted"
-  | "quoted"
-  | "closed-won"
-  | "closed-lost";
+export type DashboardLeadStatus = LeadStatus;
 
 export type DashboardCrmLead = {
   id: string;
@@ -92,13 +91,7 @@ type DashboardCrmProps = {
   };
 };
 
-const statusColumns: Array<{ id: DashboardLeadStatus; label: string }> = [
-  { id: "new", label: "New" },
-  { id: "contacted", label: "Contacted" },
-  { id: "quoted", label: "Quote Requested" },
-  { id: "closed-won", label: "Closed Won" },
-  { id: "closed-lost", label: "Closed Lost" },
-];
+const statusColumns = LEAD_STATUS_OPTIONS;
 
 const sortOptions = [
   { label: "Newest", value: "newest" },
@@ -163,7 +156,9 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
     Set<string>
   >(() => new Set());
   const [updatingIds, setUpdatingIds] = useState<Set<string>>(() => new Set());
+  const [deletingIds, setDeletingIds] = useState<Set<string>>(() => new Set());
   const [actionError, setActionError] = useState("");
+  const [actionSuccess, setActionSuccess] = useState("");
   const deferredSearch = useDeferredValue(search);
 
   useEffect(() => {
@@ -371,8 +366,13 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
     lead: DashboardCrmLead,
     nextStatus: DashboardLeadStatus
   ) => {
+    if (deletingIds.has(lead.id)) {
+      return;
+    }
+
     const previousStatus = lead.status;
     setActionError("");
+    setActionSuccess("");
 
     setUpdatingIds((current) => new Set(current).add(lead.id));
     setLeadItems((current) =>
@@ -408,6 +408,55 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
       );
     } finally {
       setUpdatingIds((current) => {
+        const next = new Set(current);
+        next.delete(lead.id);
+        return next;
+      });
+    }
+  };
+
+  const handleDeleteLead = async (lead: DashboardCrmLead) => {
+    if (
+      updatingIds.has(lead.id) ||
+      deletingIds.has(lead.id) ||
+      !window.confirm(
+        `Permanently delete ${formatName(lead.name) || "this lead"}? This removes the lead, related follow-ups and consent history, and any uploaded utility bill. This cannot be undone.`
+      )
+    ) {
+      return;
+    }
+
+    setActionError("");
+    setActionSuccess("");
+    setDeletingIds((current) => new Set(current).add(lead.id));
+
+    try {
+      const response = await fetch(`/api/leads/${encodeURIComponent(lead.id)}`, {
+        credentials: "same-origin",
+        method: "DELETE",
+      });
+      const payload: { message?: string } = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(payload.message ?? "Unable to delete this lead.");
+      }
+
+      const nextVisibleLeadId =
+        filteredLeads.find((item) => item.id !== lead.id)?.id ?? "";
+      setLeadItems((current) => current.filter((item) => item.id !== lead.id));
+      setFollowUpItems((current) =>
+        current.filter((item) => item.leadId !== lead.id)
+      );
+      setSelectedLeadId((current) =>
+        current === lead.id ? nextVisibleLeadId : current
+      );
+      setActionSuccess("Lead and its related data were deleted.");
+    } catch (error) {
+      setActionError(
+        error instanceof Error ? error.message : "Unable to delete this lead."
+      );
+    } finally {
+      setDeletingIds((current) => {
         const next = new Set(current);
         next.delete(lead.id);
         return next;
@@ -531,6 +580,15 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
             {actionError}
           </p>
         ) : null}
+        {actionSuccess ? (
+          <p
+            role="status"
+            aria-live="polite"
+            className="rounded-[1rem] border border-emerald-300/20 bg-emerald-300/10 px-4 py-3 text-sm text-emerald-100"
+          >
+            {actionSuccess}
+          </p>
+        ) : null}
 
         <section className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-7">
           <KpiCard label="Total Leads" value={formatNumber(stats.totalLeads)} />
@@ -595,6 +653,7 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
                   }
                   pdfUnavailableIds={pdfUnavailableIds}
                   selectedLeadId={selectedLead?.id ?? ""}
+                  deletingIds={deletingIds}
                   updatingIds={updatingIds}
                 />
               </div>
@@ -612,12 +671,15 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
                 followUps={followUpsForSelected}
                 lead={selectedLead}
                 onDownloadPdf={() => handlePdfDownload(selectedLead)}
+                onDeleteLead={() => void handleDeleteLead(selectedLead)}
                 onStatusChange={(nextStatus) =>
                   void handleStatusChange(selectedLead, nextStatus)
                 }
+                isUpdating={updatingIds.has(selectedLead.id)}
                 onViewUtilityBill={() => void handleUtilityBillView(selectedLead)}
                 onSendFollowUpNow={(followUp) => void handleSendFollowUpNow(followUp)}
                 pdfUnavailable={pdfUnavailableIds.has(selectedLead.id)}
+                isDeleting={deletingIds.has(selectedLead.id)}
                 utilityBillUnavailable={utilityBillUnavailableIds.has(selectedLead.id)}
               />
             ) : (
@@ -646,7 +708,7 @@ function KpiCard({ label, value }: { label: string; value: string }) {
 
 function StageSummary({ leads }: { leads: DashboardCrmLead[] }) {
   return (
-    <div className="grid gap-3 md:grid-cols-5">
+    <div className="grid gap-3 md:grid-cols-3">
       {statusColumns.map((column) => {
         const count = leads.filter((lead) => lead.status === column.id).length;
 
@@ -685,6 +747,7 @@ function LeadTable({
   onStatusChange,
   pdfUnavailableIds,
   selectedLeadId,
+  deletingIds,
   updatingIds,
 }: {
   leads: DashboardCrmLead[];
@@ -765,7 +828,7 @@ function LeadTable({
                 />
               </div>
               <StatusSelect
-                disabled={updatingIds.has(lead.id)}
+                disabled={updatingIds.has(lead.id) || deletingIds.has(lead.id)}
                 value={lead.status}
                 onChange={(nextStatus) => onStatusChange(lead, nextStatus)}
               />
@@ -901,6 +964,9 @@ function LeadPipelineCard({
 function LeadDetailPanel({
   followUps,
   lead,
+  isDeleting,
+  isUpdating,
+  onDeleteLead,
   onDownloadPdf,
   onSendFollowUpNow,
   onStatusChange,
@@ -910,6 +976,9 @@ function LeadDetailPanel({
 }: {
   followUps: DashboardCrmFollowUp[];
   lead: DashboardCrmLead;
+  isDeleting: boolean;
+  isUpdating: boolean;
+  onDeleteLead: () => void;
   onDownloadPdf: () => void;
   onSendFollowUpNow: (followUp: DashboardCrmFollowUp) => void;
   onStatusChange: (status: DashboardLeadStatus) => void;
@@ -1026,7 +1095,11 @@ function LeadDetailPanel({
       </div>
 
       <div className="mt-6 grid gap-2 sm:grid-cols-2">
-        <StatusSelect value={lead.status} onChange={onStatusChange} />
+        <StatusSelect
+          disabled={isDeleting || isUpdating}
+          value={lead.status}
+          onChange={onStatusChange}
+        />
         {pdfUnavailable ? (
           <div className="rounded-full border border-white/10 bg-slate-950/42 px-4 py-3 text-center text-sm font-semibold text-slate-500">
             PDF unavailable
@@ -1065,6 +1138,15 @@ function LeadDetailPanel({
         >
           Open Report
         </a>
+        <button
+          type="button"
+          disabled={isDeleting || isUpdating}
+          onClick={onDeleteLead}
+          className="inline-flex min-h-11 items-center justify-center gap-2 rounded-full border border-rose-300/25 bg-rose-300/10 px-4 py-3 text-sm font-semibold text-rose-100 transition hover:bg-rose-300/18 disabled:cursor-wait disabled:opacity-60 sm:col-span-2"
+        >
+          <Trash2 className="h-4 w-4" aria-hidden="true" />
+          {isDeleting ? "Deleting lead..." : "Delete lead"}
+        </button>
       </div>
 
       <div className="mt-6 rounded-[1.2rem] border border-white/8 bg-slate-950/38 p-4">

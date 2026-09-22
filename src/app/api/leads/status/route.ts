@@ -2,21 +2,13 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { payloadTooLargeResponse, readJsonWithLimit } from "@/lib/abuse-protection";
 import { requireDashboardAuth } from "@/lib/dashboard-auth";
+import { LEAD_STATUS_OPTIONS, normalizeLeadStatus } from "@/lib/lead-status";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { z } from "zod";
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-const statusLabels = {
-  new: "New",
-  contacted: "Contacted",
-  quoted: "Quote Requested",
-  "closed-won": "Closed Won",
-  "closed-lost": "Closed Lost",
-} as const;
-
-type LeadStatus = keyof typeof statusLabels;
 const statusUpdateSchema = z.object({
   leadId: z.string().uuid(),
   status: z.string().trim().min(1).max(32),
@@ -59,7 +51,7 @@ export async function PATCH(request: Request) {
 
     const parsed = statusUpdateSchema.safeParse(jsonBody.ok ? jsonBody.data : null);
     const leadId = parsed.success ? parsed.data.leadId : "";
-    const status = parsed.success ? normalizeStatus(parsed.data.status) : null;
+    const status = parsed.success ? normalizeLeadStatus(parsed.data.status) : null;
 
     if (!leadId || !status) {
       return NextResponse.json(
@@ -74,10 +66,12 @@ export async function PATCH(request: Request) {
         autoRefreshToken: false,
       },
     });
+    const statusLabel =
+      LEAD_STATUS_OPTIONS.find((option) => option.id === status)?.label ?? "New";
 
     const { data, error } = await supabase
       .from("leads")
-      .update({ status: statusLabels[status] })
+      .update({ status: statusLabel })
       .eq("id", leadId)
       .select("id, status")
       .single();
@@ -92,7 +86,7 @@ export async function PATCH(request: Request) {
     return NextResponse.json({
       lead: {
         id: data.id,
-        status: normalizeStatus(data.status) ?? status,
+        status: normalizeLeadStatus(data.status) ?? status,
       },
     });
   } catch (error) {
@@ -104,14 +98,4 @@ export async function PATCH(request: Request) {
       { status: 500 }
     );
   }
-}
-
-function normalizeStatus(value: unknown): LeadStatus | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-
-  const normalized = value.trim().toLowerCase().replace(/\s+/g, "-");
-
-  return normalized in statusLabels ? (normalized as LeadStatus) : null;
 }

@@ -5,7 +5,7 @@ import { deliverFollowUp, recoverInterruptedFollowUps } from "../src/lib/follow-
 type Row = Record<string, unknown>;
 function databaseFixture(overrides: Row = {}) {
   const step: Row = { id: "follow-up-1", lead_id: "lead-1", step_order: 3, channel: "email", title: "Solar report", body: "Test content", attempts: 0, status: "queued", processed_at: null, ...overrides };
-  const lead: Row = { name: "Test", email: "test@example.test", email_sent_at: null, marketing_email_consent: true };
+  const lead: Row = { name: "Test", email: "test@example.test", email_sent_at: null, marketing_email_consent: true, status: "New" };
   let failFinalize = false;
   const database = {
     from(table: string) {
@@ -98,5 +98,13 @@ test("follow-up claims, failure recovery and status persistence", async (t) => {
     fixture.lead.marketing_email_consent = false;
     const result = await deliverFollowUp(fixture.database, "follow-up-1", "manual", async () => { assert.fail("No consent"); });
     assert.equal(result?.status, "skipped");
+  });
+
+  await t.test("test leads never receive automated or manually triggered follow-ups", async () => {
+    const fixture = databaseFixture();
+    fixture.lead.status = "Test Lead";
+    const result = await deliverFollowUp(fixture.database, "follow-up-1", "manual", async () => { assert.fail("Test leads must not receive email"); });
+    assert.equal(result?.status, "skipped");
+    assert.match(result?.message ?? "", /marked as a test lead/i);
   });
 });

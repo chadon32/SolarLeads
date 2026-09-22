@@ -15,6 +15,7 @@ type FollowUpRow = {
 type LeadRow = {
   name: string | null; email: string | null;
   email_sent_at: string | null; marketing_email_consent: boolean | null;
+  status: string | null;
 };
 type Delivery = { status: "sent" | "skipped" | "needs_review"; message: string };
 type EmailPayload = { from: string; to: string; subject: string; text: string };
@@ -53,11 +54,13 @@ export async function deliverFollowUp(
   if (!step) return null;
 
   const { data: lead, error: leadError } = await supabase.from("leads")
-    .select("name, email, email_sent_at, marketing_email_consent")
+    .select("name, email, email_sent_at, marketing_email_consent, status")
     .eq("id", step.lead_id).single<LeadRow>();
   let delivery: Delivery;
   if (leadError || !lead) {
     delivery = { status: "needs_review", message: "Lead could not be verified. No email attempted." };
+  } else if (lead.status?.trim().toLowerCase().replace(/\s+/g, "-") === "test-lead") {
+    delivery = { status: "skipped", message: "Not sent. This lead is marked as a test lead." };
   } else if (step.step_order === 1) {
     const status = initialReportDeliveryStatus(lead.email_sent_at);
     delivery = { status, message: status === "sent"

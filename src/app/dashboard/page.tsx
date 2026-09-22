@@ -444,7 +444,8 @@ function normalizeLeadStatus(value?: string | null): DashboardLeadStatus | null 
     normalized === "contacted" ||
     normalized === "quoted" ||
     normalized === "closed-won" ||
-    normalized === "closed-lost"
+    normalized === "closed-lost" ||
+    normalized === "test-lead"
   ) {
     return normalized;
   }
