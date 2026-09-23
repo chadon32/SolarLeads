@@ -13,12 +13,22 @@ import {
   normalizeLeadScoreLabel,
 } from "@/lib/lead-scoring";
 import {
+  averageKnown,
+  boundedNumberOrNull,
+  finiteNumberOrNull,
+  getDashboardDataQuality,
+  nonNegativeNumberOrNull,
+  positiveIntegerOrNull,
+  positiveNumberOrNull,
+  readDashboardSnapshot,
+  sumKnown,
+} from "@/lib/dashboard-data";
+import {
   DASHBOARD_SESSION_COOKIE,
   getDashboardAccessToken,
   verifyDashboardSessionCookie,
 } from "@/lib/dashboard-auth";
 import { formatName } from "@/lib/name-format";
-import { buildSolarReportFromSolarValues } from "@/lib/solar-report";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
 import { buildReportPdfPath } from "@/lib/report-access";
 
@@ -49,7 +59,7 @@ type DashboardLead = {
   email: string;
   phone: string | null;
   address: string;
-  monthly_bill: number;
+  monthly_bill: number | null;
   estimated_savings: number | null;
   panel_count?: number | null;
   system_size_kw?: number | null;
@@ -82,6 +92,8 @@ type DashboardLead = {
   referred_by?: string | null;
   status?: string | null;
   created_at: string;
+  updated_at?: string | null;
+  report_snapshot?: unknown;
 };
 
 type LeadsQueryResult = {
@@ -106,11 +118,11 @@ export default async function DashboardPage() {
 
   const supabase = getSupabaseAdminClient();
   const scoredLeadSelect =
-    "id, name, email, phone, address, monthly_bill, estimated_savings, panel_count, system_size_kw, annual_savings, annual_energy_kwh, roi_years, selected_panel_brand, selected_panel_model, selected_panel_watts, roof_area_m2, system_cost_before_incentives, federal_tax_credit, net_system_cost, selected_inverter_type, energy_offset_pct, lead_score, lead_score_label, pdf_downloaded, pdf_generated, quote_requested, solar_suitability_score, twenty_year_savings, utility_bill_uploaded, utility_bill_file_path, battery_added, battery_brand, battery_model, battery_cost, referral_code, referred_by, status, created_at";
+    "id, name, email, phone, address, monthly_bill, estimated_savings, panel_count, system_size_kw, annual_savings, annual_energy_kwh, roi_years, selected_panel_brand, selected_panel_model, selected_panel_watts, roof_area_m2, system_cost_before_incentives, federal_tax_credit, net_system_cost, selected_inverter_type, energy_offset_pct, lead_score, lead_score_label, pdf_downloaded, pdf_generated, quote_requested, solar_suitability_score, twenty_year_savings, utility_bill_uploaded, utility_bill_file_path, battery_added, battery_brand, battery_model, battery_cost, referral_code, referred_by, status, created_at, updated_at, report_snapshot";
   const scoredLeadSelectWithoutNewOptional =
     "id, name, email, phone, address, monthly_bill, estimated_savings, panel_count, system_size_kw, annual_savings, annual_energy_kwh, roi_years, selected_panel_brand, selected_panel_model, selected_panel_watts, roof_area_m2, system_cost_before_incentives, federal_tax_credit, net_system_cost, selected_inverter_type, energy_offset_pct, lead_score, lead_score_label, pdf_downloaded, pdf_generated, quote_requested, solar_suitability_score, twenty_year_savings, utility_bill_uploaded, utility_bill_file_path, status, created_at";
   const scoredLeadSelectWithoutUtilityBillPath =
-    "id, name, email, phone, address, monthly_bill, estimated_savings, panel_count, system_size_kw, annual_savings, annual_energy_kwh, roi_years, selected_panel_brand, selected_panel_model, selected_panel_watts, roof_area_m2, system_cost_before_incentives, federal_tax_credit, net_system_cost, selected_inverter_type, energy_offset_pct, lead_score, lead_score_label, pdf_downloaded, pdf_generated, quote_requested, solar_suitability_score, twenty_year_savings, utility_bill_uploaded, status, created_at";
+    "id, name, email, phone, address, monthly_bill, estimated_savings, panel_count, system_size_kw, annual_savings, annual_energy_kwh, roi_years, selected_panel_brand, selected_panel_model, selected_panel_watts, roof_area_m2, system_cost_before_incentives, federal_tax_credit, net_system_cost, selected_inverter_type, energy_offset_pct, lead_score, lead_score_label, pdf_downloaded, pdf_generated, quote_requested, solar_suitability_score, twenty_year_savings, utility_bill_uploaded, status, created_at, report_snapshot";
   const extendedLeadSelect =
     "id, name, email, phone, address, monthly_bill, estimated_savings, panel_count, system_size_kw, annual_savings, annual_energy_kwh, roi_years, selected_panel_brand, selected_panel_model, selected_panel_watts, roof_area_m2, system_cost_before_incentives, federal_tax_credit, net_system_cost, selected_inverter_type, status, created_at";
   const baseLeadSelect =
@@ -196,14 +208,9 @@ export default async function DashboardPage() {
   const leadList = leads ?? [];
   const followUpList = followUpsError ? [] : followUps ?? [];
   const totalLeads = leadList.length;
-  const totalSavings = leadList.reduce(
-    (sum, lead) => sum + (lead.estimated_savings || 0),
-    0
-  );
-  const averageSavings = totalLeads ? Math.round(totalSavings / totalLeads) : 0;
-  const queuedFollowUps = followUpList.filter(
-    (item) => item.status === "queued"
-  ).length;
+  const queuedFollowUps = followUpsError
+    ? null
+    : followUpList.filter((item) => item.status === "queued").length;
 
   const followUpsByLeadId = new Map<string, typeof followUpList>();
   followUpList.forEach((followUp) => {
@@ -213,27 +220,38 @@ export default async function DashboardPage() {
   });
 
   const crmLeads: DashboardCrmLead[] = leadList.map((lead) => {
-    const annualSavings = Number(
-      lead.annual_savings ?? lead.estimated_savings ?? 0
-    );
-    const panelCount = Number(lead.panel_count ?? 0);
-    const systemSizeKw = Number(lead.system_size_kw ?? panelCount * 0.4);
-    const report = buildSolarReportFromSolarValues({
-      annualSavings,
-      annualKwh: Number(lead.annual_energy_kwh ?? 0),
-      panelCount,
-      systemKw: systemSizeKw,
-      monthlyBill: Number(lead.monthly_bill),
-    });
+    const snapshot = readDashboardSnapshot(lead.report_snapshot);
+    const monthlyBill =
+      positiveNumberOrNull(lead.monthly_bill) ?? snapshot?.monthlyBill ?? null;
+    const annualEnergyKwh =
+      positiveNumberOrNull(lead.annual_energy_kwh) ??
+      snapshot?.metrics.annualKwh ??
+      null;
+    const annualSavings =
+      positiveNumberOrNull(lead.annual_savings) ??
+      positiveNumberOrNull(lead.estimated_savings) ??
+      snapshot?.metrics.annualSavings ??
+      null;
+    const panelCount =
+      positiveIntegerOrNull(lead.panel_count) ?? snapshot?.metrics.panelCount ?? null;
+    const systemSizeKw =
+      positiveNumberOrNull(lead.system_size_kw) ?? snapshot?.metrics.systemKw ?? null;
+    const estimatedRoiYears =
+      positiveNumberOrNull(lead.roi_years) ?? snapshot?.metrics.paybackYears ?? null;
+    const energyOffsetPct =
+      boundedNumberOrNull(lead.energy_offset_pct, 0, 100) ??
+      snapshot?.metrics.coveragePct ??
+      null;
+    const carbonOffsetFactor = snapshot?.carbonOffsetFactorKgPerMwh ?? null;
     const calculatedScore = calculateLeadScore({
-      annualSavings: report.annualSavings,
+      annualSavings,
       email: lead.email,
-      energyOffsetPct: lead.energy_offset_pct ?? report.annualEnergyOffset,
-      monthlyBill: Number(lead.monthly_bill ?? 0),
+      energyOffsetPct,
+      monthlyBill,
       name: lead.name,
-      panelCount: report.panelCount,
+      panelCount,
       pdfDownloaded: lead.pdf_downloaded,
-      pdfGenerated: lead.pdf_generated ?? true,
+      pdfGenerated: lead.pdf_generated,
       phone: lead.phone ?? "",
       quoteRequested: lead.quote_requested,
       roofAreaM2: lead.roof_area_m2,
@@ -242,11 +260,20 @@ export default async function DashboardPage() {
       selectedPanelWatts: lead.selected_panel_watts,
       solarSuitabilityScore: lead.solar_suitability_score,
       systemSizeKw,
-      twentyYearSavings:
-        Number(lead.twenty_year_savings ?? 0) || report.twentyYearSavings,
+      twentyYearSavings: finiteNumberOrNull(lead.twenty_year_savings),
       utilityBillUploaded: lead.utility_bill_uploaded,
     });
-    const leadScore = calculatedScore.score;
+    const leadScore = finiteNumberOrNull(lead.lead_score);
+    const dataQuality = getDashboardDataQuality({
+      hasSnapshot: Boolean(snapshot),
+      modelValues: [
+        annualSavings,
+        panelCount,
+        systemSizeKw,
+        annualEnergyKwh,
+        estimatedRoiYears,
+      ],
+    });
 
     return {
       id: lead.id,
@@ -254,65 +281,85 @@ export default async function DashboardPage() {
       email: lead.email,
       phone: lead.phone ?? "",
       address: lead.address,
-      monthlyBill: Number(lead.monthly_bill ?? 0),
+      monthlyBill,
       createdAt: lead.created_at,
-      annualSavings: report.annualSavings,
-      co2OffsetLbs: report.annualImpactLbs,
-      estimatedRoiYears: Number(lead.roi_years ?? report.estimatedRoiYears),
-      panelCount: report.panelCount,
+      updatedAt: validTimestampOrNull(lead.updated_at),
+      modelCreatedAt: snapshot?.createdAt ?? null,
+      modelVersion: snapshot?.version ?? null,
+      dataQuality,
+      annualSavings,
+      co2OffsetLbs:
+        annualEnergyKwh !== null && carbonOffsetFactor !== null
+          ? Math.round(
+              (annualEnergyKwh / 1000) *
+                carbonOffsetFactor *
+                2.205
+            )
+          : null,
+      estimatedRoiYears,
+      panelCount,
       selectedInverterType: lead.selected_inverter_type ?? null,
       selectedPanelBrand: lead.selected_panel_brand ?? null,
       selectedPanelModel: lead.selected_panel_model ?? null,
-      selectedPanelWatts: Number(lead.selected_panel_watts ?? 0) || null,
-      energyOffsetPct: Number(lead.energy_offset_pct ?? report.annualEnergyOffset),
-      systemCostBeforeIncentives:
-        Number(lead.system_cost_before_incentives ?? 0) || null,
-      federalTaxCredit: Number(lead.federal_tax_credit ?? 0) || null,
-      netSystemCost: Number(lead.net_system_cost ?? 0) || null,
+      selectedPanelWatts: positiveNumberOrNull(lead.selected_panel_watts),
+      energyOffsetPct,
+      systemCostBeforeIncentives: positiveNumberOrNull(
+        lead.system_cost_before_incentives
+      ),
+      federalTaxCredit: nonNegativeNumberOrNull(lead.federal_tax_credit),
+      netSystemCost: positiveNumberOrNull(lead.net_system_cost),
       systemSizeKw,
       leadScore,
-      leadScoreExplanation: calculatedScore.explanation,
-      leadScoreLabel: normalizeLeadScoreLabel(calculatedScore.label, leadScore),
+      leadScoreExplanation:
+        leadScore === null
+          ? "Lead score was not captured for this record."
+          : calculatedScore.explanation,
+      leadScoreLabel:
+        leadScore === null
+          ? null
+          : normalizeLeadScoreLabel(lead.lead_score_label, leadScore),
       reportUrl: buildReportPdfPath(lead.id),
       status:
         normalizeLeadStatus(lead.status) ??
         getLeadStatus(followUpsByLeadId.get(lead.id) ?? []),
-      pdfStatus: "ready",
+      pdfStatus: lead.pdf_generated === true ? "ready" : "pending",
       utilityBillUploaded: Boolean(lead.utility_bill_uploaded),
       batteryAdded: Boolean(lead.battery_added),
       batteryBrand: lead.battery_brand ?? null,
       batteryModel: lead.battery_model ?? null,
-      batteryCost: Number(lead.battery_cost ?? 0) || null,
+      batteryCost: nonNegativeNumberOrNull(lead.battery_cost),
       referralCode: lead.referral_code ?? null,
       referredBy: lead.referred_by ?? null,
       referralsMade: lead.referral_code
         ? leadList.filter((candidate) => candidate.referred_by === lead.referral_code).length
-        : 0,
+      : 0,
     };
   });
-  const averageLeadScore = crmLeads.length
-    ? Math.round(
-        crmLeads.reduce((sum, lead) => sum + lead.leadScore, 0) /
-          crmLeads.length
-      )
-    : 0;
-  const roiValues = crmLeads
-    .map((lead) => lead.estimatedRoiYears)
-    .filter((value) => Number.isFinite(value) && value > 0);
-  const averagePayback = roiValues.length
-    ? roiValues.reduce((sum, value) => sum + value, 0) / roiValues.length
-    : 0;
-  const totalPipelineValue = crmLeads.reduce(
-    (sum, lead) =>
-      sum +
-      (lead.systemCostBeforeIncentives ??
-        buildSolarReportFromSolarValues({
-          annualSavings: lead.annualSavings,
-          panelCount: lead.panelCount,
-          systemKw: lead.systemSizeKw,
-          monthlyBill: lead.monthlyBill,
-        }).systemCostBeforeIncentives),
-    0
+  const averageSavingsValue = averageKnown(
+    crmLeads.map((lead) => lead.annualSavings)
+  );
+  const averageSavings =
+    averageSavingsValue === null ? null : Math.round(averageSavingsValue);
+  const averageLeadScoreValue = averageKnown(
+    crmLeads.map((lead) => lead.leadScore)
+  );
+  const averageLeadScore =
+    averageLeadScoreValue === null ? null : Math.round(averageLeadScoreValue);
+  const averagePayback = averageKnown(
+    crmLeads.map((lead) => lead.estimatedRoiYears)
+  );
+  const totalPipelineValue = sumKnown(
+    crmLeads.map((lead) => lead.systemCostBeforeIncentives)
+  );
+  const pdfGeneratedValues = leadList
+    .map((lead) => lead.pdf_generated)
+    .filter((value): value is boolean => typeof value === "boolean");
+  const pdfsGenerated =
+    pdfGeneratedValues.length === leadList.length
+      ? pdfGeneratedValues.filter(Boolean).length
+      : null;
+  const lastUpdatedAt = latestTimestamp(
+    crmLeads.map((lead) => lead.updatedAt)
   );
 
   const crmFollowUps: DashboardCrmFollowUp[] = followUpList.map((item) => ({
@@ -337,11 +384,12 @@ export default async function DashboardPage() {
         totalLeads,
         averageSavings,
         queuedFollowUps,
-        pdfsGenerated: leadList.length,
+        pdfsGenerated,
         averageLeadScore,
         averagePayback,
         conversionRate: null,
         totalPipelineValue,
+        lastUpdatedAt,
       }}
     />
   );
@@ -407,6 +455,20 @@ function shouldRetryLegacySelect(message: string) {
 
 function isMissingColumn(message: string, column: string) {
   return message.toLowerCase().includes(column.toLowerCase());
+}
+
+function validTimestampOrNull(value: unknown) {
+  if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) {
+    return null;
+  }
+
+  return value;
+}
+
+function latestTimestamp(values: Array<string | null>) {
+  return values
+    .filter((value): value is string => Boolean(value))
+    .sort((a, b) => Date.parse(b) - Date.parse(a))[0] ?? null;
 }
 
 function getLeadStatus(

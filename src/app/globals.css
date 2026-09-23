@@ -377,6 +377,14 @@ h3,
 }
 
 @media print {
+  .solar-guide-page > article > :not(.print-sheet) {
+    display: none !important;
+  }
+
+  .print-hide {
+    display: none !important;
+  }
+
   .print-static-ui,
   .fixed,
   .sticky {
@@ -393,6 +401,20 @@ h3,
   }
 
   body {
-    background: #05070b !important;
+    background: #ffffff !important;
+    color: #0f172a !important;
+  }
+
+  .print-sheet {
+    break-before: auto;
+    border: 1px solid #cbd5e1 !important;
+    background: #ffffff !important;
+    color: #0f172a !important;
+    box-shadow: none !important;
+  }
+
+  .print-sheet * {
+    border-color: #cbd5e1 !important;
+    color: #0f172a !important;
   }
 }

@@ -1,12 +1,14 @@
 import type { Metadata } from "next";
 import { HomeClient } from "@/components/home-client";
-import { APP_NAME, APP_TAGLINE } from "@/lib/brand";
+import { StructuredData } from "@/components/structured-data";
+import { publicPageMetadata } from "@/lib/seo";
 
-export const metadata: Metadata = {
-  title: `${APP_NAME} | Solar Readiness Reports & Roof Analysis`,
-  description: APP_TAGLINE,
-};
+export const metadata: Metadata = publicPageMetadata({
+  title: "Arizona Solar Calculator & 3D Roof Analysis",
+  description: "Explore your Arizona home's solar potential with a free roof analysis, preliminary 3D panel layout and savings estimate. Installer contact is optional.",
+  path: "/",
+});
 
 export default function Page() {
-  return <HomeClient />;
+  return <><StructuredData /><HomeClient /></>;
 }

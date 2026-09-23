@@ -1,5 +1,5 @@
 import {
-  buildFallbackRoofAnalysis,
+  buildInvalidRoofAnalysis,
   normalizeRoofAnalysis,
   type RoofAnalysis,
   type RoofGeoBounds,
@@ -27,6 +27,7 @@ import { selectCohesiveSolarPanels } from "@/lib/panel-layout";
 import { getSelectedPanelEnergy } from "@/lib/selected-panel-energy";
 import { buildActiveSolarEstimate } from "@/lib/active-solar-estimate";
 import { getPanelDimensionsMeters, type SolarPanel } from "@/lib/solarPanels";
+import { calculateSolarReadinessScore } from "@/lib/solar-advisor";
 
 export type ReportSnapshotMetrics = Pick<
   SharedSolarMetrics,
@@ -75,10 +76,11 @@ export function buildSolarReportSnapshot({
   metrics?: SharedSolarMetrics | null;
   monthlyBill?: number | null;
 }): SolarReportSnapshot {
+  const normalizedMonthlyBill = finiteNumberOrNull(monthlyBill);
   const sharedMetrics =
     metrics ??
     buildSolarMetrics(analysis, {
-      monthlyBill,
+      monthlyBill: normalizedMonthlyBill,
       selectedPanelCount: activePanelCount,
     });
   const home = getRoofBoundsCenter(analysis.roofBounds) ?? getValidPoint({ lat, lng });
@@ -107,15 +109,20 @@ export function buildSolarReportSnapshot({
       usablePctRoof: sharedMetrics.usablePctRoof,
       usableRoofAreaM2: sharedMetrics.usableRoofAreaM2,
     },
-    monthlyBill: Number.isFinite(Number(monthlyBill)) ? Number(monthlyBill) : null,
+    monthlyBill: normalizedMonthlyBill,
     panelCount: sharedMetrics.panelCount,
     renderedPanelCount: Math.min(
       sharedMetrics.panelCount,
-      Math.max(analysis.solarPanels.length, analysis.acceptedPanelCount ?? 0)
+      getRenderedPanelCapacity(analysis)
     ),
     roofAnalysis: analysis,
     roofModelConfidence: clampScore(analysis.rooftopConfidenceScore),
-    solarReadinessScore: clampScore(analysis.rooftopConfidenceScore),
+    solarReadinessScore: calculateSolarReadinessScore({
+      annualSunlightHours: analysis.annualSunlightHours,
+      coveragePct: sharedMetrics.coveragePct,
+      panelCount: sharedMetrics.panelCount,
+      usablePctRoof: sharedMetrics.usablePctRoof,
+    }),
     viewport,
   };
 }
@@ -123,16 +130,19 @@ export function buildSolarReportSnapshot({
 export function normalizeSolarReportSnapshot(
   input: unknown
 ): SolarReportSnapshot | null {
-  if (!input || typeof input !== "object") {
+  if (!isRecord(input)) {
     return null;
   }
 
   const candidate = input as Partial<SolarReportSnapshot>;
+  if (!hasPersistedRoofModel(candidate.roofAnalysis)) {
+    return null;
+  }
+
   const fallbackCenter = getValidPoint(candidate.home);
-  const fallback = buildFallbackRoofAnalysis({
-    address: typeof candidate.address === "string" ? candidate.address : "Saved report",
-    lat: fallbackCenter?.lat ?? 33.4152,
-    lng: fallbackCenter?.lng ?? -111.8315,
+  const fallback = buildInvalidRoofAnalysis({
+    propertyType: "unknown",
+    invalidReason: "The saved roof model is incomplete.",
   });
   const roofAnalysis = normalizeRoofAnalysis(candidate.roofAnalysis, fallback);
 
@@ -140,17 +150,36 @@ export function normalizeSolarReportSnapshot(
     return null;
   }
 
+  const rawMetrics = isRecord(candidate.metrics) ? candidate.metrics : null;
+  const normalizedMonthlyBill = finiteNumberOrNull(candidate.monthlyBill);
+  const capacityMetrics = buildSolarMetrics(roofAnalysis, {
+    monthlyBill: normalizedMonthlyBill,
+  });
+  const requestedPanelCount =
+    nonNegativeInteger(candidate.panelCount) ??
+    nonNegativeInteger(rawMetrics?.panelCount);
+  const panelCount = clampInteger(
+    requestedPanelCount ?? capacityMetrics.panelCount,
+    0,
+    capacityMetrics.maxPanelCount
+  );
+  const normalizedMetrics = buildSnapshotMetrics(
+    roofAnalysis,
+    normalizedMonthlyBill,
+    panelCount
+  );
+  const rawMetricPanelCount = nonNegativeInteger(rawMetrics?.panelCount);
   const metrics =
-    candidate.metrics && typeof candidate.metrics === "object"
-      ? candidate.metrics
-      : buildSolarMetrics(roofAnalysis, {
-          monthlyBill: candidate.monthlyBill,
-          selectedPanelCount: candidate.panelCount,
-        });
-  const panelCount = positiveInteger(candidate.panelCount) ?? metrics.panelCount;
+    panelCount > 0 && rawMetrics && rawMetricPanelCount === panelCount
+      ? rawMetrics
+      : normalizedMetrics;
+  const requestedRenderedPanelCount = nonNegativeInteger(candidate.renderedPanelCount);
   const renderedPanelCount =
-    positiveInteger(candidate.renderedPanelCount) ??
-    Math.min(panelCount, roofAnalysis.solarPanels.length);
+    Math.min(
+      panelCount,
+      getRenderedPanelCapacity(roofAnalysis),
+      requestedRenderedPanelCount ?? panelCount
+    );
   const home =
     fallbackCenter ??
     getRoofBoundsCenter(roofAnalysis.roofBounds) ??
@@ -173,33 +202,54 @@ export function normalizeSolarReportSnapshot(
         : new Date().toISOString(),
     home,
     metrics: {
-      annualKwh: numberOr(metrics.annualKwh, 0),
-      annualSavings: numberOr(metrics.annualSavings, 0),
-      avgPitchDeg: numberOr(metrics.avgPitchDeg, roofAnalysis.pitchDeg),
-      coveragePct: clampScore(numberOr(metrics.coveragePct, 0)),
-      grossRoofAreaM2: numberOr(metrics.grossRoofAreaM2, roofAnalysis.grossRoofAreaM2),
-      monthlySavings: numberOr(metrics.monthlySavings, 0),
+      annualKwh: nonNegativeNumberOr(metrics.annualKwh, normalizedMetrics.annualKwh),
+      annualSavings: nonNegativeNumberOr(
+        metrics.annualSavings,
+        normalizedMetrics.annualSavings
+      ),
+      avgPitchDeg: numberOr(metrics.avgPitchDeg, normalizedMetrics.avgPitchDeg),
+      coveragePct: clampScore(
+        numberOr(metrics.coveragePct, normalizedMetrics.coveragePct)
+      ),
+      grossRoofAreaM2: nonNegativeNumberOr(
+        metrics.grossRoofAreaM2,
+        normalizedMetrics.grossRoofAreaM2
+      ),
+      monthlySavings: nonNegativeNumberOr(
+        metrics.monthlySavings,
+        normalizedMetrics.monthlySavings
+      ),
       panelCount,
-      paybackYears: numberOr(metrics.paybackYears, 0),
-      systemKw: numberOr(metrics.systemKw, roofAnalysis.systemKw),
-      usablePctRoof: numberOr(metrics.usablePctRoof, roofAnalysis.usablePctRoof),
-      usableRoofAreaM2: numberOr(
+      paybackYears: nonNegativeNumberOr(
+        metrics.paybackYears,
+        normalizedMetrics.paybackYears
+      ),
+      systemKw: nonNegativeNumberOr(metrics.systemKw, normalizedMetrics.systemKw),
+      usablePctRoof: clampScore(
+        numberOr(metrics.usablePctRoof, normalizedMetrics.usablePctRoof)
+      ),
+      usableRoofAreaM2: nonNegativeNumberOr(
         metrics.usableRoofAreaM2,
-        roofAnalysis.usableRoofAreaM2
+        normalizedMetrics.usableRoofAreaM2
       ),
     },
-    monthlyBill: Number.isFinite(Number(candidate.monthlyBill))
-      ? Number(candidate.monthlyBill)
-      : null,
+    monthlyBill: normalizedMonthlyBill,
     panelCount,
     renderedPanelCount,
     roofAnalysis,
     roofModelConfidence: clampScore(
       candidate.roofModelConfidence ?? roofAnalysis.rooftopConfidenceScore
     ),
-    solarReadinessScore: clampScore(
-      candidate.solarReadinessScore ?? roofAnalysis.rooftopConfidenceScore
-    ),
+    solarReadinessScore: calculateSolarReadinessScore({
+      annualSunlightHours: roofAnalysis.annualSunlightHours,
+      coveragePct: clampScore(
+        numberOr(metrics.coveragePct, normalizedMetrics.coveragePct)
+      ),
+      panelCount,
+      usablePctRoof: clampScore(
+        numberOr(metrics.usablePctRoof, normalizedMetrics.usablePctRoof)
+      ),
+    }),
     viewport,
   };
 }
@@ -214,10 +264,14 @@ export function rebuildTrustedSolarReportSnapshot(
     panelWatts?: number | null;
   } = {}
 ): SolarReportSnapshot {
-  const monthlyBill = Number.isFinite(Number(options.monthlyBill))
-    ? Number(options.monthlyBill)
-    : snapshot.monthlyBill;
+  const monthlyBill =
+    options.monthlyBill === undefined
+      ? finiteNumberOrNull(snapshot.monthlyBill)
+      : finiteNumberOrNull(options.monthlyBill);
   if (options.selectedPanel) {
+    const installedCostPerWatt =
+      positiveNumber(options.installedCostPerWatt) ??
+      options.selectedPanel.installedCostPerWatt;
     const active = buildActiveSolarEstimate({
       analysis: snapshot.roofAnalysis,
       selectedPanel: options.selectedPanel,
@@ -225,11 +279,11 @@ export function rebuildTrustedSolarReportSnapshot(
       monthlyBill,
       batteryCost: options.batteryCost,
       inverterCostAdderPerWatt:
-        (options.installedCostPerWatt ?? options.selectedPanel.installedCostPerWatt) -
-        options.selectedPanel.installedCostPerWatt,
+        installedCostPerWatt - options.selectedPanel.installedCostPerWatt,
     });
     const dimensions = getPanelDimensionsMeters(options.selectedPanel);
     return buildSolarReportSnapshot({
+      activePanelCount: active.panelCount,
       address: snapshot.address,
       analysis: {
         ...snapshot.roofAnalysis,
@@ -542,14 +596,88 @@ function isValidLatLngPoint(
   return Boolean(getValidPoint(point));
 }
 
-function positiveInteger(value: unknown) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : null;
+function hasPersistedRoofModel(value: unknown): value is Record<string, unknown> {
+  if (
+    !isRecord(value) ||
+    !hasRoofOutline(value.roofOutline)
+  ) {
+    return false;
+  }
+
+  if (value.roofSegments === undefined || value.roofSegments === null) {
+    return true;
+  }
+
+  return (
+    Array.isArray(value.roofSegments) &&
+    value.roofSegments.every(
+      (segment) => isRecord(segment) && hasRoofOutline(segment.outline)
+    )
+  );
+}
+
+function hasRoofOutline(value: unknown): value is Array<Record<string, unknown>> {
+  return (
+    Array.isArray(value) &&
+    value.length >= 3 &&
+    value.every(
+      (point) =>
+        isRecord(point) &&
+        finiteNumberOrNull(point.x) !== null &&
+        finiteNumberOrNull(point.y) !== null
+    )
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function buildSnapshotMetrics(
+  analysis: RoofAnalysis,
+  monthlyBill: number | null,
+  panelCount: number
+) {
+  if (panelCount > 0) {
+    return buildSolarMetrics(analysis, {
+      monthlyBill,
+      selectedPanelCount: panelCount,
+    });
+  }
+
+  const baseMetrics = buildSolarMetrics(analysis, {
+    monthlyBill,
+    selectedPanelCount: 1,
+  });
+
+  return {
+    ...baseMetrics,
+    annualKwh: 0,
+    annualSavings: 0,
+    coveragePct: 0,
+    monthlySavings: 0,
+    panelCount: 0,
+    paybackYears: 0,
+    systemKw: 0,
+  };
+}
+
+function getRenderedPanelCapacity(analysis: RoofAnalysis) {
+  if (analysis.source === "solar-api") {
+    return analysis.solarPanels.length;
+  }
+
+  return Math.max(analysis.solarPanels.length, analysis.acceptedPanelCount ?? 0);
+}
+
+function nonNegativeInteger(value: unknown) {
+  const parsed = finiteNumberOrNull(value);
+  return parsed !== null && parsed >= 0 ? Math.floor(parsed) : null;
 }
 
 function positiveNumber(value: unknown) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  const parsed = finiteNumberOrNull(value);
+  return parsed !== null && parsed > 0 ? parsed : null;
 }
 
 function clampInteger(value: number, min: number, max: number) {
@@ -557,12 +685,21 @@ function clampInteger(value: number, min: number, max: number) {
 }
 
 function numberOr(value: unknown, fallback: number) {
+  return finiteNumberOrNull(value) ?? fallback;
+}
+
+function nonNegativeNumberOr(value: unknown, fallback: number) {
+  const parsed = finiteNumberOrNull(value);
+  return parsed !== null && parsed >= 0 ? parsed : fallback;
+}
+
+function finiteNumberOrNull(value: unknown) {
   if (value === null || value === undefined || value === "") {
-    return fallback;
+    return null;
   }
 
   const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function roundTo(value: number, precision: number) {

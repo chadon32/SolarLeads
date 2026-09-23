@@ -1,12 +1,13 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { APP_CANONICAL_URL, APP_NAME } from "@/lib/brand";
+import { APP_NAME } from "@/lib/brand";
+import { publicPageMetadata } from "@/lib/seo";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = publicPageMetadata({
   title: "Estimate Terms",
   description: `Important limitations for ${APP_NAME} solar estimates.`,
-  alternates: { canonical: `${APP_CANONICAL_URL}/terms` },
-};
+  path: "/terms",
+});
 
 export default function TermsPage() {
   return (

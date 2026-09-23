@@ -76,6 +76,29 @@ export function buildSolarAdvisorProfile(input: SolarAdvisorInput): SolarAdvisor
   };
 }
 
+export function calculateSolarReadinessScore(
+  input: Pick<
+    SolarAdvisorInput,
+    "annualSunlightHours" | "coveragePct" | "panelCount" | "usablePctRoof"
+  >
+) {
+  const sunlightScore = clamp((input.annualSunlightHours / 2100) * 100, 0, 100);
+  const areaScore = clamp(input.usablePctRoof, 0, 100);
+  const panelScore = clamp((input.panelCount / 24) * 100, 0, 100);
+  const offsetScore = clamp(input.coveragePct, 0, 100);
+
+  return clamp(
+    Math.round(
+      sunlightScore * 0.28 +
+        areaScore * 0.22 +
+        panelScore * 0.26 +
+        offsetScore * 0.24
+    ),
+    0,
+    100
+  );
+}
+
 export function buildSolarAdvisorInputFromAnalysis(
   analysis: RoofAnalysis,
   metrics: SharedSolarMetrics,
@@ -93,7 +116,6 @@ export function buildSolarAdvisorInputFromAnalysis(
     rejectedCandidateCount: metrics.rejectedCandidateCount,
     roofSegments: analysis.roofSegments,
     shadingRisk: analysis.shadingRisk,
-    suitabilityScore: analysis.rooftopConfidenceScore,
     systemKw: metrics.systemKw,
     usablePctRoof: metrics.usablePctRoof,
     usableRoofAreaM2: metrics.usableRoofAreaM2,
@@ -277,16 +299,7 @@ function getSuitabilityScore(input: SolarAdvisorInput) {
     return clamp(Math.round(input.suitabilityScore), 0, 100);
   }
 
-  const sunlightScore = clamp((input.annualSunlightHours / 2100) * 100, 0, 100);
-  const areaScore = clamp(input.usablePctRoof, 0, 100);
-  const panelScore = clamp((input.panelCount / 24) * 100, 0, 100);
-  const offsetScore = clamp(input.coveragePct, 0, 100);
-
-  return clamp(
-    Math.round(sunlightScore * 0.28 + areaScore * 0.22 + panelScore * 0.26 + offsetScore * 0.24),
-    0,
-    100
-  );
+  return calculateSolarReadinessScore(input);
 }
 
 function getCandidateLabel(score: number): SolarAdvisorProfile["candidateLabel"] {

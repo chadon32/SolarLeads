@@ -77,6 +77,41 @@ test("a failed details lookup does not navigate using an unverified prediction",
   await expect(page).not.toHaveURL(/\/estimate\?/);
 });
 
+test("shows a service-area error instead of an outage for an out-of-state address", async ({
+  page,
+}) => {
+  await installSafeApiMocks(page);
+  await page.unroute("**/api/places/details**");
+  await page.route("**/api/places/details**", (route) =>
+    route.fulfill({
+      status: 422,
+      json: { message: "Solartelligence currently supports Arizona properties only." },
+    })
+  );
+
+  const home = new HomeEstimatePage(page);
+  await home.open();
+  await home.addressInput().fill("1234");
+  await page.getByRole("option").first().click();
+
+  await expect(page.locator("#address-error")).toContainText(/Arizona homes only/i);
+  await expect(page.locator("#address-error")).not.toContainText(/temporarily unavailable/i);
+  await expect(page).not.toHaveURL(/\/estimate\?/);
+});
+
+test("caps overlong address input and explains the length limit", async ({ page }) => {
+  await installSafeApiMocks(page);
+
+  const home = new HomeEstimatePage(page);
+  await home.open();
+  await expect(home.addressInput()).toHaveAttribute("maxlength", "220");
+  await home.addressInput().fill("A".repeat(500));
+
+  await expect(home.addressInput()).toHaveValue("A".repeat(220));
+  await expect(page.getByText(/up to 220 characters/i)).toBeVisible();
+  await expect(page.locator("#address-error")).toHaveCount(0);
+});
+
 test("selects a valid Arizona address with the keyboard", async ({ page }) => {
   await installSafeApiMocks(page);
   const home = new HomeEstimatePage(page);

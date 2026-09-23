@@ -16,6 +16,11 @@ import {
   APP_NAME,
   APP_PRIVACY_COPY,
 } from "@/lib/brand";
+import {
+  getReportEmailDeliveryCopy,
+  normalizeReportEmailDeliveryStatus,
+  type ReportEmailDeliveryStatus,
+} from "@/lib/report-email-status";
 
 type ThankYouPayload = {
   address?: string;
@@ -25,7 +30,7 @@ type ThankYouPayload = {
   batteryCost?: number;
   batteryModel?: string;
   email?: string;
-  emailDeliveryStatus?: "sent" | "delayed";
+  emailDeliveryStatus?: ReportEmailDeliveryStatus;
   firstName?: string;
   panelBrand?: string;
   panelCount?: number;
@@ -49,7 +54,7 @@ const fallbackPayload: Required<Omit<ThankYouPayload, "reportUrl">> & {
   batteryCost: 0,
   batteryModel: "",
   email: "",
-  emailDeliveryStatus: "delayed",
+  emailDeliveryStatus: "unavailable",
   firstName: "there",
   panelBrand: "",
   panelCount: 0,
@@ -94,8 +99,9 @@ export function ThankYouClient() {
       panelBrand: source.panelBrand || "",
       panelModel: source.panelModel || "",
       paybackYears: safeNumber(source.paybackYears),
-      emailDeliveryStatus:
-        source.emailDeliveryStatus === "sent" ? "sent" : "delayed",
+      emailDeliveryStatus: normalizeReportEmailDeliveryStatus(
+        source.emailDeliveryStatus
+      ),
       preferredContactMethod: source.preferredContactMethod || "Not requested",
       quoteRequested: Boolean(source.quoteRequested),
       referralCode: source.referralCode || null,
@@ -104,6 +110,9 @@ export function ThankYouClient() {
     };
   }, [payload]);
   const hasStoredPayload = Boolean(payload && Object.keys(payload).length > 0);
+  const emailDeliveryCopy = getReportEmailDeliveryCopy(
+    summary.emailDeliveryStatus
+  );
   const nameSuffix =
     hasStoredPayload && summary.firstName !== "there"
       ? `, ${summary.firstName}`
@@ -145,10 +154,12 @@ export function ThankYouClient() {
                 {!hasStoredPayload
                   ? "This page is normally opened after a report request. Return to your estimate to generate or request a report."
                   : summary.quoteRequested
-                  ? "Your report is available and your optional installer follow-up request was recorded."
+                  ? summary.emailDeliveryStatus === "sent"
+                    ? "Your report is ready, your email was sent, and your optional installer follow-up request was recorded."
+                    : `${emailDeliveryCopy.message} Your optional installer follow-up request was recorded.`
                   : summary.emailDeliveryStatus === "sent"
                     ? `We emailed your personalized ${APP_NAME} report. No installer follow-up was requested.`
-                    : `Your personalized ${APP_NAME} report is available now. Email delivery may be delayed, and no installer follow-up was requested.`}
+                    : `${emailDeliveryCopy.message} No installer follow-up was requested.`}
               </p>
               <p className="mt-4 rounded-[1rem] border border-white/8 bg-slate-950/28 px-4 py-3 text-sm leading-6 text-slate-300">
                 {APP_PRIVACY_COPY}
@@ -241,16 +252,8 @@ export function ThankYouClient() {
                 <NextStep
                   index="1"
                   icon={Mail}
-                  title={
-                    summary.emailDeliveryStatus === "sent"
-                      ? "Your report email was sent"
-                      : "Your report is available now"
-                  }
-                  body={
-                    summary.emailDeliveryStatus === "sent"
-                      ? "A secure report link was sent to the email you entered."
-                      : "Use the report button here while email delivery is retried or reviewed."
-                  }
+                  title={emailDeliveryCopy.title}
+                  body={emailDeliveryCopy.message}
                 />
                 <NextStep
                   index="2"

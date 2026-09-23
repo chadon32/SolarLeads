@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { generateSuitabilityExplanation } from "../src/lib/solar-advisor";
+import {
+  buildSolarAdvisorInputFromAnalysis,
+  buildSolarAdvisorProfile,
+  calculateSolarReadinessScore,
+  generateSuitabilityExplanation,
+} from "../src/lib/solar-advisor";
+import { buildSolarMetrics } from "../src/lib/solar-metrics";
+import type { RoofAnalysis } from "../src/lib/roof-analysis";
+import { TEST_ROOF_ANALYSIS } from "./fixtures/test-data";
 
 test("solar advisor distinguishes raw candidates from the preliminary ceiling", () => {
   const result = generateSuitabilityExplanation({
@@ -24,4 +32,34 @@ test("solar advisor distinguishes raw candidates from the preliminary ceiling", 
     result.limitingFactors.some((factor) => factor.includes("47 panel candidates were not used")),
     false
   );
+});
+
+test("solar readiness reflects the selected system instead of roof-model confidence", () => {
+  const analysis = {
+    ...structuredClone(TEST_ROOF_ANALYSIS),
+    rooftopConfidenceScore: 100,
+  } as RoofAnalysis;
+  const baseMetrics = buildSolarMetrics(analysis, {
+    monthlyBill: 250,
+    selectedPanelCount: 2,
+  });
+  const metrics = { ...baseMetrics, coveragePct: 11, panelCount: 2 };
+  const advisorInput = buildSolarAdvisorInputFromAnalysis(
+    analysis,
+    metrics,
+    250
+  );
+  const advisor = buildSolarAdvisorProfile(advisorInput);
+
+  assert.equal(advisorInput.suitabilityScore, undefined);
+  assert.equal(
+    advisor.suitability.score,
+    calculateSolarReadinessScore({
+      annualSunlightHours: metrics.annualSunlightHours,
+      coveragePct: metrics.coveragePct,
+      panelCount: metrics.panelCount,
+      usablePctRoof: metrics.usablePctRoof,
+    })
+  );
+  assert.ok(advisor.suitability.score < 100);
 });

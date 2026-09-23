@@ -1,20 +1,14 @@
-/**
- * Homepage FAQ content.
- *
- * Shared so the rendered accordion and the FAQPage structured data are driven
- * by one source: Google requires JSON-LD answers to match what a visitor can
- * actually see on the page, and duplicated copies drift apart silently.
- */
+// Product questions shown on the landing page and shared estimate workspace.
 export const faqItems = [
   {
-    question: "Will this damage my roof?",
+    question: "What do I need to estimate solar for my Arizona home?",
     answer:
-      "A qualified installer should inspect the roof and select an attachment system appropriate for its condition and construction. Final mounting, flashing, and warranty details belong in the installer proposal.",
+      "Start with your Arizona property address and an average monthly electric bill. Choose a suggested address to analyze the roof. You can explore the results without creating an account; contact details are requested when you ask for an emailed report.",
   },
   {
-    question: "What if I sell my house?",
+    question: "Does the calculator work for every roof?",
     answer:
-      "Solar can add value. Homes with solar often attract buyers looking for lower utility costs, but final value depends on ownership structure, system age, and local market conditions.",
+      "Roof and 3D coverage depends on the satellite and elevation data available for the address. Imagery may not reflect recent roof changes, trees, or obstructions. If data is unavailable, the tool cannot replace a site survey.",
   },
   {
     question: "Is this a sales call?",
@@ -27,13 +21,13 @@ export const faqItems = [
       "When available, roof geometry and sunlight inputs come from Google Solar data and satellite imagery. Savings are modeled from your monthly bill and stated assumptions. Final layout, pricing, incentives, and savings require installer confirmation.",
   },
   {
-    question: "Do I need good credit?",
+    question: "Can I compare panels, batteries, and financing?",
     answer:
-      "Financing eligibility and terms vary by lender and homeowner. The report can illustrate common cash and loan scenarios, but it does not represent approval or a financing offer.",
+      "The report workspace lets you adjust panel count, compare the listed equipment options, and explore cash and loan scenarios. These are planning estimates, not equipment offers, lender approval, or guaranteed returns.",
   },
   {
-    question: "How long does installation take?",
+    question: "Is the maximum panel count the right size for me?",
     answer:
-      "Installation commonly takes 1-2 days, plus additional time for permits, utility approval, and final inspection.",
+      "Not necessarily. The roof's estimated capacity is different from the system size that fits your electricity use and budget. Review the selected panel count and the savings assumptions with an installer before choosing a system.",
   },
 ] as const;

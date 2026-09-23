@@ -10,7 +10,7 @@ import { getSelectedPanelEnergy } from "../src/lib/selected-panel-energy";
 import { deriveLeadSubmissionNumbers } from "../src/lib/lead-submission";
 import { calculateTwentyYearSolarCosts } from "../src/lib/financial-model";
 import { initialReportDeliveryStatus } from "../src/lib/follow-up-state";
-import { isEstimateDocument, sanitizeEstimateShareUrl } from "../mobile/src/estimate-navigation";
+import { isEstimateDocument, sanitizeEstimateNavigationUrl } from "../mobile/src/estimate-navigation";
 
 const roof = TEST_ROOF_ANALYSIS as RoofAnalysis;
 
@@ -83,16 +83,16 @@ test("initial follow-up requires affirmative email acceptance evidence", () => {
   assert.equal(initialReportDeliveryStatus("2026-09-04T12:00:00Z"), "sent");
 });
 
-test("native sharing preserves public settings but strips credentials and app-only flags", () => {
+test("native navigation preserves internal settings but strips credentials and app-only flags", () => {
   const base = "https://solartelligence.com";
-  const result = sanitizeEstimateShareUrl("/estimate?address=Test&bill=325&panel=qcells&panels=12&inverter=string&addBattery=1&battery=powerwall&app=ios&token=secret&email=private", base)!;
+  const result = sanitizeEstimateNavigationUrl("/estimate?address=Test&bill=325&panel=qcells&panels=12&inverter=string&addBattery=1&battery=powerwall&app=ios&token=secret&email=private", base)!;
   const url = new URL(result);
   assert.equal(url.searchParams.get("bill"), "325");
   assert.equal(url.searchParams.get("panels"), "12");
   assert.equal(url.searchParams.get("battery"), "powerwall");
   for (const key of ["app", "token", "email"]) assert.equal(url.searchParams.has(key), false);
   for (const unsafe of ["https://evil.example/estimate?address=x", "/report/private?token=secret", "/estimate"]) {
-    assert.equal(sanitizeEstimateShareUrl(unsafe, base), null);
+    assert.equal(sanitizeEstimateNavigationUrl(unsafe, base), null);
   }
 });
 

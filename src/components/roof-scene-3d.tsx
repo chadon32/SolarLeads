@@ -5,7 +5,7 @@ import { Focus, Minus, Plus, RotateCcw, Square } from "lucide-react";
 import * as THREE from "three";
 import { Canvas, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
-import { readGeoTiffRaster, type GeoTiffRaster } from "@/lib/geotiff-utils";
+import { readGeoTiffRaster, SolarRasterLoadError, type GeoTiffRaster } from "@/lib/geotiff-utils";
 import type { RoofAnalysis, RoofGeoBounds } from "@/lib/roof-analysis";
 import { selectCohesiveSolarPanels } from "@/lib/panel-layout";
 import { buildPanelInstanceMatrices, getRoofCameraPose, type ModelBounds, type ViewerPanel } from "@/lib/roof-viewer";
@@ -176,7 +176,9 @@ export default function RoofScene3D({
         if (!cancelled) {
           setState({
             status: "error",
-            message: "The 3D model could not be loaded. Please try again.",
+            message: error instanceof SolarRasterLoadError
+              ? error.message
+              : "The 3D model could not be loaded. Please try again.",
           });
         }
       }

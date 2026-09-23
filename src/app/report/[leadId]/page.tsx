@@ -15,8 +15,7 @@ import {
   normalizeSolarReportSnapshot,
   type SolarReportSnapshot,
 } from "@/lib/report-snapshot";
-import { buildSolarReportFromSolarValues } from "@/lib/solar-report";
-import { STANDARD_PANEL_WATTS } from "@/lib/solar-assumptions";
+import { buildSavedReportSummary, formatSavedReportValue } from "@/lib/report-summary";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
 
 type ReportViewerPageProps = {
@@ -49,7 +48,7 @@ type ReportLead = {
 };
 
 export const metadata: Metadata = {
-  title: `Solar Report | ${APP_NAME}`,
+  title: { absolute: `Solar Report | ${APP_NAME}` },
   description: "View and download a homeowner solar report.",
   robots: { index: false, follow: false },
 };
@@ -115,42 +114,8 @@ export default async function ReportViewerPage({
   }
 
   const snapshot = normalizeSolarReportSnapshot(lead.report_snapshot);
-  const report = buildSolarReportFromSolarValues({
-    annualKwh: Number(lead.annual_energy_kwh ?? 0),
-    annualSavings: Number(lead.annual_savings ?? lead.estimated_savings ?? 0),
-    monthlyBill: Number(lead.monthly_bill ?? 0),
-    panelCount: Number(lead.panel_count ?? 0),
-    systemKw: Number(lead.system_size_kw ?? 0),
-  });
-  const annualSavings = firstFiniteNumber(
-    snapshot?.metrics.annualSavings,
-    lead.annual_savings,
-    lead.estimated_savings,
-    report.annualSavings
-  );
-  const systemSizeKw = firstFiniteNumber(
-    snapshot?.metrics.systemKw,
-    lead.system_size_kw,
-    report.panelCount > 0
-      ? (report.panelCount * STANDARD_PANEL_WATTS) / 1000
-      : undefined
-  );
-  const panelCount = firstFiniteNumber(
-    snapshot?.panelCount,
-    snapshot?.metrics.panelCount,
-    lead.panel_count,
-    report.panelCount
-  );
-  const roiYears = firstFiniteNumber(
-    snapshot?.metrics.paybackYears,
-    lead.roi_years,
-    report.estimatedRoiYears
-  );
-  const energyOffset = firstFiniteNumber(
-    snapshot?.metrics.coveragePct,
-    lead.energy_offset_pct,
-    report.annualEnergyOffset
-  );
+  const { annualSavings, systemSizeKw, panelCount, roiYears, energyOffset } =
+    buildSavedReportSummary(lead, snapshot);
   const solarReadinessScore = firstFiniteOptionalNumber(
     snapshot?.solarReadinessScore,
     lead.solar_suitability_score
@@ -210,11 +175,11 @@ export default async function ReportViewerPage({
           </div>
 
           <div className="mt-5 grid gap-3 sm:grid-cols-2">
-            <Metric label="Annual savings" value={formatMoney(annualSavings)} source="Modeled" />
-            <Metric label="System size" value={`${formatDecimal(systemSizeKw)} kW`} source="Modeled" />
-            <Metric label="Panel count" value={`${Math.round(panelCount || 0)}`} source="Solar API" />
-            <Metric label="Estimated Payback" value={`${formatDecimal(roiYears)} yrs`} source="Modeled" />
-            <Metric label="Estimated annual bill covered" value={`${Math.round(energyOffset || 0)}%`} source="Modeled" />
+            <Metric label="Annual savings" value={formatSavedReportValue(annualSavings, "money")} source="Modeled" />
+            <Metric label="System size" value={formatSavedReportValue(systemSizeKw, "kw")} source="Modeled" />
+            <Metric label="Panel count" value={formatSavedReportValue(panelCount, "panels")} source="Solar API" />
+            <Metric label="Estimated Payback" value={formatSavedReportValue(roiYears, "years")} source="Modeled" />
+            <Metric label="Estimated annual bill covered" value={formatSavedReportValue(energyOffset, "percent")} source="Modeled" />
             <Metric
               label="Solar Readiness Score"
               value={
@@ -434,38 +399,6 @@ function Metric({
       <p className="mt-3 text-2xl font-semibold tracking-tight">{value}</p>
     </div>
   );
-}
-
-function formatMoney(value: number) {
-  if (!Number.isFinite(value) || value <= 0) {
-    return "Unavailable";
-  }
-
-  return new Intl.NumberFormat("en-US", {
-    currency: "USD",
-    maximumFractionDigits: 0,
-    style: "currency",
-  }).format(value);
-}
-
-function formatDecimal(value: number) {
-  if (!Number.isFinite(value) || value <= 0) {
-    return "Unavailable";
-  }
-
-  return Number(value.toFixed(1)).toLocaleString("en-US");
-}
-
-function firstFiniteNumber(...values: unknown[]) {
-  for (const value of values) {
-    const parsed = toFiniteOptionalNumber(value);
-
-    if (parsed !== null && parsed >= 0) {
-      return parsed;
-    }
-  }
-
-  return 0;
 }
 
 function firstFiniteOptionalNumber(...values: unknown[]) {

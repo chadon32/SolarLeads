@@ -10,6 +10,11 @@ import {
   LEAD_SCORE_EXPLANATION,
   type LeadScoreLabel,
 } from "@/lib/lead-scoring";
+import {
+  compareNullableNumbers,
+  selectVisibleLead,
+  type DashboardRecordDataQuality,
+} from "@/lib/dashboard-data";
 import { getShortPanelBrand } from "@/lib/solarPanels";
 import {
   LEAD_STATUS_OPTIONS,
@@ -24,13 +29,17 @@ export type DashboardCrmLead = {
   email: string;
   phone: string;
   address: string;
-  monthlyBill: number;
+  monthlyBill: number | null;
   createdAt: string;
-  annualSavings: number;
-  co2OffsetLbs: number;
-  estimatedRoiYears: number;
-  energyOffsetPct: number;
-  panelCount: number;
+  updatedAt: string | null;
+  modelCreatedAt: string | null;
+  modelVersion: number | null;
+  dataQuality: DashboardRecordDataQuality;
+  annualSavings: number | null;
+  co2OffsetLbs: number | null;
+  estimatedRoiYears: number | null;
+  energyOffsetPct: number | null;
+  panelCount: number | null;
   federalTaxCredit: number | null;
   netSystemCost: number | null;
   selectedInverterType: string | null;
@@ -38,10 +47,10 @@ export type DashboardCrmLead = {
   selectedPanelModel: string | null;
   selectedPanelWatts: number | null;
   systemCostBeforeIncentives: number | null;
-  systemSizeKw: number;
-  leadScore: number;
+  systemSizeKw: number | null;
+  leadScore: number | null;
   leadScoreExplanation: string;
-  leadScoreLabel: LeadScoreLabel;
+  leadScoreLabel: LeadScoreLabel | null;
   reportUrl: string;
   status: DashboardLeadStatus;
   pdfStatus: "ready" | "pending";
@@ -81,13 +90,14 @@ type DashboardCrmProps = {
   followUps: DashboardCrmFollowUp[];
   stats: {
     totalLeads: number;
-    averageSavings: number;
-    averageLeadScore: number;
-    queuedFollowUps: number;
-    pdfsGenerated: number;
-    averagePayback: number;
+    averageSavings: number | null;
+    averageLeadScore: number | null;
+    queuedFollowUps: number | null;
+    pdfsGenerated: number | null;
+    averagePayback: number | null;
     conversionRate: number | null;
-    totalPipelineValue: number;
+    totalPipelineValue: number | null;
+    lastUpdatedAt: string | null;
   };
 };
 
@@ -196,11 +206,11 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
       })
       .sort((a, b) => {
         if (sortBy === "savings-desc") {
-          return b.annualSavings - a.annualSavings;
+          return compareNullableNumbers(a.annualSavings, b.annualSavings, "desc");
         }
 
         if (sortBy === "savings-asc") {
-          return a.annualSavings - b.annualSavings;
+          return compareNullableNumbers(a.annualSavings, b.annualSavings, "asc");
         }
 
         return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
@@ -209,11 +219,7 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
     return nextLeads;
   }, [deferredSearch, leadItems, sortBy, statusFilter]);
 
-  const selectedLead =
-    leadItems.find((lead) => lead.id === selectedLeadId) ??
-    filteredLeads[0] ??
-    leadItems[0] ??
-    null;
+  const selectedLead = selectVisibleLead(filteredLeads, selectedLeadId);
 
   const followUpsForSelected = selectedLead
     ? followUpItems.filter((followUp) => followUp.leadId === selectedLead.id)
@@ -310,8 +316,8 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
               ...item,
               attempts: item.attempts + 1,
               deliveryMessage: "Sending now...",
-              processedAt: new Date().toISOString(),
-              status: "sent",
+              processedAt: item.processedAt,
+              status: "processing",
             }
           : item
       )
@@ -327,6 +333,7 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
         body: JSON.stringify({ followUpId: followUp.id }),
       });
       const payload: {
+        message?: string;
         followUp?: {
           attempts: number;
           deliveryMessage: string | null;
@@ -336,7 +343,7 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
       } = await response.json().catch(() => ({}));
 
       if (!response.ok || !payload.followUp) {
-        throw new Error("Unable to send follow-up");
+        throw new Error(payload.message ?? "Unable to send follow-up");
       }
 
       setFollowUpItems((current) =>
@@ -500,28 +507,28 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
         lead.email,
         lead.phone,
         formatDisplayAddress(lead.address),
-        String(Math.round(lead.monthlyBill || 0)),
-        String(Math.round(lead.annualSavings || 0)),
-        String(lead.leadScore),
-        lead.leadScoreLabel,
-        String(lead.estimatedRoiYears || ""),
-        String(Math.round(lead.co2OffsetLbs || 0)),
-        String(Math.round(lead.energyOffsetPct || 0)),
+        lead.monthlyBill === null ? "" : String(Math.round(lead.monthlyBill)),
+        lead.annualSavings === null ? "" : String(Math.round(lead.annualSavings)),
+        lead.leadScore === null ? "" : String(lead.leadScore),
+        lead.leadScoreLabel ?? "",
+        lead.estimatedRoiYears === null ? "" : String(lead.estimatedRoiYears),
+        lead.co2OffsetLbs === null ? "" : String(Math.round(lead.co2OffsetLbs)),
+        lead.energyOffsetPct === null ? "" : String(Math.round(lead.energyOffsetPct)),
         lead.selectedPanelBrand ?? "",
         lead.selectedPanelModel ?? "",
-        lead.selectedPanelWatts ? String(lead.selectedPanelWatts) : "",
+        lead.selectedPanelWatts === null ? "" : String(lead.selectedPanelWatts),
         lead.utilityBillUploaded ? "Yes" : "No",
         lead.batteryAdded ? "Yes" : "No",
         lead.batteryBrand ?? "",
         lead.batteryModel ?? "",
-        lead.batteryCost ? String(Math.round(lead.batteryCost)) : "",
+        lead.batteryCost === null ? "" : String(Math.round(lead.batteryCost)),
         lead.referralCode ?? "",
         lead.referredBy ?? "",
-        lead.systemCostBeforeIncentives
-          ? String(Math.round(lead.systemCostBeforeIncentives))
-          : "",
-        lead.federalTaxCredit ? String(Math.round(lead.federalTaxCredit)) : "",
-        lead.netSystemCost ? String(Math.round(lead.netSystemCost)) : "",
+        lead.systemCostBeforeIncentives === null
+          ? ""
+          : String(Math.round(lead.systemCostBeforeIncentives)),
+        lead.federalTaxCredit === null ? "" : String(Math.round(lead.federalTaxCredit)),
+        lead.netSystemCost === null ? "" : String(Math.round(lead.netSystemCost)),
         lead.selectedInverterType ?? "",
         getStatusLabel(lead.status),
         lead.createdAt,
@@ -551,6 +558,11 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
             </h1>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">
               Manage leads, download reports, and move each homeowner through the pipeline.
+            </p>
+            <p className="mt-2 text-xs leading-5 text-slate-500">
+              {stats.lastUpdatedAt
+                ? `Lead records last updated ${formatDateTime(stats.lastUpdatedAt)}. Unknown values were not captured.`
+                : "Record freshness is unavailable. Unknown values were not captured."}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -592,12 +604,15 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
 
         <section className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-7">
           <KpiCard label="Total Leads" value={formatNumber(stats.totalLeads)} />
-          <KpiCard label="Avg Savings" value={formatMoney(stats.averageSavings)} />
-          <KpiCard label="Avg Lead Score" value={`${formatNumber(stats.averageLeadScore)}/100`} />
-          <KpiCard label="Avg Payback" value={`${formatDecimal(stats.averagePayback)} yrs`} />
-          <KpiCard label="Queued Follow-ups" value={formatNumber(stats.queuedFollowUps)} />
-          <KpiCard label="PDFs Generated" value={formatNumber(stats.pdfsGenerated)} />
-          <KpiCard label="Total Pipeline Value" value={formatMoney(stats.totalPipelineValue)} />
+          <KpiCard label="Avg Savings (known)" value={formatMoneyMaybe(stats.averageSavings)} />
+          <KpiCard
+            label="Avg Lead Score (stored)"
+            value={stats.averageLeadScore === null ? "Unknown" : `${formatNumber(stats.averageLeadScore)}/100`}
+          />
+          <KpiCard label="Avg Payback (known)" value={formatYearsMaybe(stats.averagePayback)} />
+          <KpiCard label="Queued Follow-ups" value={formatNumberMaybe(stats.queuedFollowUps)} />
+          <KpiCard label="PDFs Generated" value={formatNumberMaybe(stats.pdfsGenerated)} />
+          <KpiCard label="Captured Pipeline Value" value={formatMoneyMaybe(stats.totalPipelineValue)} />
         </section>
 
         <section className="grid gap-5 xl:grid-cols-[minmax(0,1.45fr)_minmax(26rem,0.95fr)] 2xl:grid-cols-[minmax(0,1.55fr)_minmax(31rem,0.95fr)]">
@@ -759,6 +774,7 @@ function LeadTable({
   ) => void;
   pdfUnavailableIds: Set<string>;
   selectedLeadId: string;
+  deletingIds: Set<string>;
   updatingIds: Set<string>;
 }) {
   return (
@@ -814,7 +830,7 @@ function LeadTable({
                 </div>
               </button>
 
-              <TableMetric label="Savings" value={formatMoney(lead.annualSavings)} />
+              <TableMetric label="Savings" value={formatMoneyMaybe(lead.annualSavings)} />
               <div className="flex min-w-0 items-center gap-3 justify-self-start">
                 <LeadScoreBadge label={lead.leadScoreLabel} score={lead.leadScore} />
                 <span className="text-sm font-semibold text-white lg:hidden">
@@ -824,7 +840,7 @@ function LeadTable({
               <div className="lg:pl-2">
                 <TableMetric
                   label="Payback"
-                  value={`${formatDecimal(lead.estimatedRoiYears)} yrs`}
+                  value={formatYearsMaybe(lead.estimatedRoiYears)}
                 />
               </div>
               <StatusSelect
@@ -925,9 +941,12 @@ function LeadPipelineCard({
           <LeadScoreBadge label={lead.leadScoreLabel} score={lead.leadScore} />
         </div>
         <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-3">
-          <MiniMetric label="Savings" value={formatMoney(lead.annualSavings)} />
-          <MiniMetric label="Lead score" value={`${lead.leadScore}/100`} />
-          <MiniMetric label="Payback" value={`${formatDecimal(lead.estimatedRoiYears)} yrs`} />
+          <MiniMetric label="Savings" value={formatMoneyMaybe(lead.annualSavings)} />
+          <MiniMetric
+            label="Lead score"
+            value={lead.leadScore === null ? "Unknown" : `${lead.leadScore}/100`}
+          />
+          <MiniMetric label="Payback" value={formatYearsMaybe(lead.estimatedRoiYears)} />
         </div>
       </button>
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-white/8 pt-3">
@@ -1007,6 +1026,35 @@ function LeadDetailPanel({
         </div>
       </div>
 
+      <div className="mt-4 grid gap-2 rounded-[1.1rem] border border-amber-300/15 bg-amber-300/[0.06] p-3 text-xs sm:grid-cols-3">
+        <div>
+          <p className="font-semibold uppercase tracking-[0.16em] text-slate-500">
+            Data status
+          </p>
+          <p className="mt-1 font-semibold text-amber-100">
+            {getDataQualityLabel(lead.dataQuality)}
+          </p>
+        </div>
+        <div>
+          <p className="font-semibold uppercase tracking-[0.16em] text-slate-500">
+            Record updated
+          </p>
+          <p className="mt-1 font-semibold text-white">
+            {formatDateTimeMaybe(lead.updatedAt)}
+          </p>
+        </div>
+        <div>
+          <p className="font-semibold uppercase tracking-[0.16em] text-slate-500">
+            Model snapshot
+          </p>
+          <p className="mt-1 font-semibold text-white">
+            {lead.modelVersion !== null && lead.modelCreatedAt
+              ? `v${lead.modelVersion} - ${formatDateTime(lead.modelCreatedAt)}`
+              : "Not captured"}
+          </p>
+        </div>
+      </div>
+
       <div className="mt-5 rounded-[1.1rem] border border-white/8 bg-slate-950/38 p-4">
         <div className="flex items-center justify-between gap-3">
           <div>
@@ -1014,7 +1062,7 @@ function LeadDetailPanel({
               Lead score
             </p>
             <p className="mt-1 text-3xl font-semibold text-white">
-              {lead.leadScore}/100
+              {lead.leadScore === null ? "Unknown" : `${lead.leadScore}/100`}
             </p>
           </div>
           <LeadScoreBadge label={lead.leadScoreLabel} score={lead.leadScore} />
@@ -1027,14 +1075,17 @@ function LeadDetailPanel({
       <div className="mt-5 grid gap-3 text-sm md:grid-cols-2">
         <DetailRow label="Email" value={lead.email} />
         <DetailRow label="Phone" value={lead.phone} />
-        <DetailRow label="Monthly bill" value={formatMoney(lead.monthlyBill)} />
+        <DetailRow label="Monthly bill" value={formatMoneyMaybe(lead.monthlyBill)} />
         <DetailRow
           label="Utility bill"
           value={lead.utilityBillUploaded ? "Uploaded for review" : "Not uploaded"}
         />
-        <DetailRow label="Annual savings" value={formatMoney(lead.annualSavings)} />
-        <DetailRow label="System size" value={`${formatDecimal(lead.systemSizeKw)} kW`} />
-        <DetailRow label="Panel count" value={`${lead.panelCount} panels`} />
+        <DetailRow label="Annual savings" value={formatMoneyMaybe(lead.annualSavings)} />
+        <DetailRow label="System size" value={formatKwMaybe(lead.systemSizeKw)} />
+        <DetailRow
+          label="Panel count"
+          value={lead.panelCount === null ? "Unknown" : `${lead.panelCount} panels`}
+        />
         <DetailRow
           label="Selected panel"
           value={
@@ -1052,10 +1103,14 @@ function LeadDetailPanel({
         <DetailRow
           label="Battery"
           value={
-            lead.batteryAdded && lead.batteryBrand && lead.batteryModel
-              ? `${lead.batteryBrand} ${lead.batteryModel}${
-                  lead.batteryCost ? ` - ${formatMoney(lead.batteryCost)}` : ""
-                }`
+            lead.batteryAdded
+              ? lead.batteryBrand && lead.batteryModel
+                ? `${lead.batteryBrand} ${lead.batteryModel}${
+                    lead.batteryCost !== null
+                      ? ` - ${formatMoney(lead.batteryCost)}`
+                      : ""
+                  }`
+                : "Added - details not captured"
               : "None"
           }
         />
@@ -1074,24 +1129,20 @@ function LeadDetailPanel({
         <DetailRow
           label="Gross system cost"
           value={
-            lead.systemCostBeforeIncentives
-              ? formatMoney(lead.systemCostBeforeIncentives)
-              : "Not captured"
+            formatMoneyMaybe(lead.systemCostBeforeIncentives)
           }
         />
         <DetailRow
           label="Federal credit"
-          value={
-            lead.federalTaxCredit ? formatMoney(lead.federalTaxCredit) : "Not captured"
-          }
+          value={formatMoneyMaybe(lead.federalTaxCredit)}
         />
         <DetailRow
           label="Net system cost"
-          value={lead.netSystemCost ? formatMoney(lead.netSystemCost) : "Not captured"}
+          value={formatMoneyMaybe(lead.netSystemCost)}
         />
-        <DetailRow label="Estimated Payback" value={`${formatDecimal(lead.estimatedRoiYears)} yrs`} />
-        <DetailRow label="Energy offset" value={`${formatNumber(lead.energyOffsetPct)}%`} />
-        <DetailRow label="CO2 offset" value={`${formatNumber(lead.co2OffsetLbs)} lbs`} />
+        <DetailRow label="Estimated Payback" value={formatYearsMaybe(lead.estimatedRoiYears)} />
+        <DetailRow label="Energy offset" value={formatPctMaybe(lead.energyOffsetPct)} />
+        <DetailRow label="CO2 offset" value={formatLbsMaybe(lead.co2OffsetLbs)} />
       </div>
 
       <div className="mt-6 grid gap-2 sm:grid-cols-2">
@@ -1158,37 +1209,62 @@ function LeadDetailPanel({
         </div>
         {followUps.length ? (
           <div className="mt-3 grid gap-2">
-            {followUps.slice(0, 4).map((followUp) => (
-              <div
-                key={followUp.id}
-                className="rounded-[1rem] border border-white/8 bg-white/[0.035] px-3.5 py-3 text-xs text-slate-300"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-semibold text-white">{followUp.title}</span>
-                  <div className="flex shrink-0 items-center gap-1.5">
-                    <span className="rounded-full bg-white/[0.08] px-2 py-0.5 text-[0.58rem] uppercase tracking-[0.14em] text-slate-400">
-                      {followUp.status}
-                    </span>
-                    {followUp.status === "queued" || followUp.status === "scheduled" ? (
-                      <button
-                        type="button"
-                        onClick={() => onSendFollowUpNow(followUp)}
-                        className="inline-flex items-center gap-1 rounded-full border border-cyan-200/20 bg-cyan-300/10 px-2 py-0.5 text-[0.58rem] font-bold uppercase tracking-[0.12em] text-cyan-100 transition hover:bg-cyan-300/18"
-                      >
-                        <Send className="h-3 w-3" aria-hidden="true" />
-                        Send now
-                      </button>
-                    ) : null}
+            {followUps.slice(0, 4).map((followUp) => {
+              const needsReview =
+                followUp.status === "failed" ||
+                followUp.status === "needs_review" ||
+                /not found|could not be verified/i.test(followUp.deliveryMessage ?? "");
+
+              return (
+                <div
+                  key={followUp.id}
+                  className={`rounded-[1rem] border px-3.5 py-3 text-xs text-slate-300 ${
+                    needsReview
+                      ? "border-amber-300/20 bg-amber-300/[0.06]"
+                      : "border-white/8 bg-white/[0.035]"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold text-white">{followUp.title}</span>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <span className="rounded-full bg-white/[0.08] px-2 py-0.5 text-[0.58rem] uppercase tracking-[0.14em] text-slate-400">
+                        {formatFollowUpStatus(followUp.status)}
+                      </span>
+                      {followUp.status === "queued" || followUp.status === "scheduled" ? (
+                        <button
+                          type="button"
+                          onClick={() => onSendFollowUpNow(followUp)}
+                          className="inline-flex items-center gap-1 rounded-full border border-cyan-200/20 bg-cyan-300/10 px-2 py-0.5 text-[0.58rem] font-bold uppercase tracking-[0.12em] text-cyan-100 transition hover:bg-cyan-300/18"
+                        >
+                          <Send className="h-3 w-3" aria-hidden="true" />
+                          Send now
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
+                  <p className="mt-1 line-clamp-2 text-slate-500">{followUp.message}</p>
+                  {followUp.deliveryMessage ? (
+                    <p
+                      className={`mt-1 text-[0.65rem] ${
+                        needsReview ? "text-amber-100" : "text-slate-500"
+                      }`}
+                      role={needsReview ? "alert" : undefined}
+                    >
+                      {followUp.deliveryMessage}
+                    </p>
+                  ) : null}
+                  {needsReview ? (
+                    <button
+                      type="button"
+                      onClick={() => window.location.reload()}
+                      className="mt-2 rounded-full border border-amber-200/20 bg-amber-200/10 px-2.5 py-1 text-[0.6rem] font-semibold text-amber-100 transition hover:bg-amber-200/20"
+                    >
+                      Refresh dashboard before retrying
+                    </button>
+                  ) : null}
                 </div>
-                <p className="mt-1 line-clamp-2 text-slate-500">{followUp.message}</p>
-                {followUp.deliveryMessage ? (
-                  <p className="mt-1 text-[0.65rem] text-slate-500">
-                    {followUp.deliveryMessage}
-                  </p>
-                ) : null}
-              </div>
-            ))}
+              );
+            })}
           </div>
         ) : (
           <EmptyState
@@ -1288,9 +1364,17 @@ function LeadScoreBadge({
   label,
   score,
 }: {
-  label: LeadScoreLabel;
-  score: number;
+  label: LeadScoreLabel | null;
+  score: number | null;
 }) {
+  if (label === null || score === null) {
+    return (
+      <span className="shrink-0 rounded-full border border-amber-300/20 bg-amber-300/10 px-2.5 py-1 text-[0.58rem] font-bold uppercase tracking-[0.14em] text-amber-100">
+        Score unavailable
+      </span>
+    );
+  }
+
   const color =
     label === "Premium Lead"
       ? "border-fuchsia-300/30 bg-fuchsia-300/18 text-fuchsia-50"
@@ -1386,10 +1470,18 @@ function formatMoney(value: number) {
   }).format(Number.isFinite(value) ? value : 0);
 }
 
+function formatMoneyMaybe(value: number | null) {
+  return value === null ? "Unknown" : formatMoney(value);
+}
+
 function formatNumber(value: number) {
   return new Intl.NumberFormat("en-US", {
     maximumFractionDigits: 0,
   }).format(Number.isFinite(value) ? value : 0);
+}
+
+function formatNumberMaybe(value: number | null) {
+  return value === null ? "Unknown" : formatNumber(value);
 }
 
 function formatDecimal(value: number) {
@@ -1399,7 +1491,22 @@ function formatDecimal(value: number) {
   }).format(Number.isFinite(value) ? value : 0);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function formatYearsMaybe(value: number | null) {
+  return value === null ? "Unknown" : `${formatDecimal(value)} yrs`;
+}
+
+function formatKwMaybe(value: number | null) {
+  return value === null ? "Unknown" : `${formatDecimal(value)} kW`;
+}
+
+function formatPctMaybe(value: number | null) {
+  return value === null ? "Unknown" : `${formatNumber(value)}%`;
+}
+
+function formatLbsMaybe(value: number | null) {
+  return value === null ? "Unknown" : `${formatNumber(value)} lbs`;
+}
+
 function formatDateTime(value: string) {
   const date = new Date(value);
 
@@ -1411,6 +1518,34 @@ function formatDateTime(value: string) {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(date);
+}
+
+function formatDateTimeMaybe(value: string | null) {
+  return value === null ? "Unknown" : formatDateTime(value);
+}
+
+function getDataQualityLabel(value: DashboardRecordDataQuality) {
+  if (value === "complete") {
+    return "Complete saved model";
+  }
+
+  if (value === "partial") {
+    return "Partial / legacy fields";
+  }
+
+  return "Legacy record - model not captured";
+}
+
+function formatFollowUpStatus(status: DashboardCrmFollowUp["status"]) {
+  if (status === "needs_review") {
+    return "Needs review";
+  }
+
+  if (status === "processing") {
+    return "Processing";
+  }
+
+  return status;
 }
 
 function formatInverterLabel(value: string | null) {
@@ -1452,8 +1587,9 @@ function buildPdfFilename(lead: DashboardCrmLead) {
   return `solar-report-${safeName}-${date}.pdf`;
 }
 
-function escapeCsvCell(value: string) {
-  const needsEscaping = /[",\n]/.test(value);
-  const escaped = value.replace(/"/g, '""');
+function escapeCsvCell(value: string | number | boolean | null | undefined) {
+  const normalized = value == null ? "" : String(value);
+  const needsEscaping = /[",\n]/.test(normalized);
+  const escaped = normalized.replace(/"/g, '""');
   return needsEscaping ? `"${escaped}"` : escaped;
 }

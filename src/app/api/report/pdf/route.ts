@@ -23,8 +23,10 @@ import {
   APP_NAME,
   APP_REPORT_NAME,
 } from "@/lib/brand";
+import { getPublicSiteUrl } from "@/lib/public-site-url";
 import {
   buildSolarAdvisorProfile,
+  calculateSolarReadinessScore,
   type SolarAdvisorProfile,
 } from "@/lib/solar-advisor";
 import {
@@ -53,15 +55,11 @@ import {
   type RoofViewportPoint,
 } from "@/lib/roof-analysis-viewport";
 import {
-  buildPanelCornerLatLngPoints,
-  boundsToLatLngPoints,
   getRoofAnalysisSnapshotPoints,
   normalizeSolarReportSnapshot,
-  outlineToLatLngPoints,
   type SolarReportSnapshot,
 } from "@/lib/report-snapshot";
-import type { RoofAnalysis } from "@/lib/roof-analysis";
-import { selectCohesiveSolarPanels } from "@/lib/panel-layout";
+import { buildReportRoofIllustration } from "@/lib/report-roof-illustration";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
 import {
   calculateFederalResidentialSolarCredit,
@@ -180,6 +178,7 @@ type ProposalData = {
   costWithSolar20Yr?: number;
   advisor: SolarAdvisorProfile;
   reportSnapshot: SolarReportSnapshot | null;
+  roofIllustration: ReturnType<typeof buildReportRoofIllustration>;
 };
 
 type PdfAssets = {
@@ -337,7 +336,6 @@ export async function GET(request: Request) {
     };
     const colors = createColors();
     const proposal = buildProposalData(lead, report, reportSnapshot);
-    await markPdfDownloaded(supabase, lead.id, proposal);
     const roofAsset = await loadRoofImage(pdf, proposal);
     const assets: PdfAssets = {
       roofImage: roofAsset.image,
@@ -356,7 +354,18 @@ export async function GET(request: Request) {
     drawNextStepsPage(pdf.addPage([612, 792]), proposal, assets, fonts, colors);
     drawInstallerVerificationPage(pdf.addPage([612, 792]), proposal, fonts, colors);
 
+    pdf.setTitle(`${APP_REPORT_NAME} - ${sanitizePdfText(proposal.address)}`);
+    pdf.setAuthor(APP_NAME);
+    pdf.setSubject("Preliminary solar analysis; installer verification required");
+    pdf.setLanguage("en-US");
+    pdf.getPages().forEach((page, index) => {
+      page.drawText(`${index + 1} / ${pdf.getPageCount()}`, {
+        x: 530, y: 30, size: 7.5, font: fonts.regular, color: colors.muted,
+      });
+    });
     const bytes = await pdf.save();
+    // Do not record a completed report until the document actually exists.
+    await markPdfDownloaded(supabase, lead.id, proposal);
 
     const disposition =
       searchParams.get("download") === "1" ? "attachment" : "inline";
@@ -445,24 +454,23 @@ function buildProposalData(
 ): ProposalData {
   const snapshotMetrics = reportSnapshot?.metrics ?? null;
   const snapshotAnalysis = reportSnapshot?.roofAnalysis ?? null;
-  const monthlyBill = positiveNumber(lead.monthly_bill ?? reportSnapshot?.monthlyBill);
-  const annualSavings = positiveNumber(
+  const monthlyBill = nonNegativeNumber(lead.monthly_bill ?? reportSnapshot?.monthlyBill);
+  const annualSavings = nonNegativeNumber(
     snapshotMetrics?.annualSavings ??
       lead.annual_savings ??
-      lead.estimated_savings ??
-      report.annualSavings
+      lead.estimated_savings
   );
   const monthlySavings =
-    positiveNumber(snapshotMetrics?.monthlySavings ?? lead.monthly_savings) ??
-    (annualSavings ? annualSavings / 12 : undefined);
+    nonNegativeNumber(snapshotMetrics?.monthlySavings ?? lead.monthly_savings) ??
+    (annualSavings !== undefined ? annualSavings / 12 : undefined);
   const panelCount =
-    positiveNumber(reportSnapshot?.panelCount ?? snapshotMetrics?.panelCount) ??
+    nonNegativeNumber(reportSnapshot?.panelCount ?? snapshotMetrics?.panelCount) ??
     positiveNumber(lead.panel_count) ??
     positiveNumber(report.panelCount);
-  const annualKwh = positiveNumber(
+  const annualKwh = nonNegativeNumber(
     snapshotMetrics?.annualKwh ?? lead.annual_energy_kwh
   );
-  const directSystemKw = positiveNumber(
+  const directSystemKw = nonNegativeNumber(
     snapshotMetrics?.systemKw ?? lead.system_size_kw
   );
   const systemKw =
@@ -488,8 +496,8 @@ function buildProposalData(
     (roofAreaSqFt && usableAreaSqFt
       ? clamp(Math.round((usableAreaSqFt / roofAreaSqFt) * 100), 1, 100)
       : undefined);
-  const sunlightHours =
-    annualKwh && systemKw ? Math.round(annualKwh / systemKw) : undefined;
+  // kWh / kW is specific yield, not the saved Solar API sunlight-hours metric.
+  const sunlightHours = nonNegativeNumber(snapshotAnalysis?.annualSunlightHours);
   const installedCost = positiveNumber(lead.system_cost_before_incentives) ?? (systemKw
     ? systemKw * 1000 * INSTALLED_COST_PER_WATT
     : panelCount
@@ -509,7 +517,7 @@ function buildProposalData(
       : undefined;
   const roiYears = netPaybackYears;
   const twentyYearCosts =
-    monthlyBill && annualSavings && netSystemCost !== undefined
+    monthlyBill && annualSavings !== undefined && netSystemCost !== undefined
       ? calculateTwentyYearSolarCosts({
           annualSavings,
           monthlyBill,
@@ -522,25 +530,21 @@ function buildProposalData(
       : twentyYearCosts?.totalSavings;
   const costWithoutSolar20Yr = twentyYearCosts?.totalCostWithoutSolar;
   const costWithSolar20Yr = twentyYearCosts?.totalCostWithSolar;
-  const annualImpactLbs = positiveNumber(report.annualImpactLbs);
+  const annualImpactLbs = annualKwh === undefined ? undefined : buildSolarReportFromSolarValues({
+    annualKwh, annualSavings: 0, panelCount: panelCount ?? 0,
+    carbonOffsetFactorKgPerMwh: snapshotAnalysis?.carbonOffsetFactorKgPerMwh,
+  }).annualImpactLbs;
   const energyOffsetPct =
-    positiveNumber(snapshotMetrics?.coveragePct) ??
-    (annualKwh && monthlyBill
+    nonNegativeNumber(snapshotMetrics?.coveragePct) ??
+    (annualKwh !== undefined && monthlyBill
       ? calculateEnergyOffsetPct(annualKwh, monthlyBill)
-      : positiveNumber(lead.energy_offset_pct ?? report.annualEnergyOffset));
-  const suitabilityScore =
-    positiveNumber(
-      reportSnapshot?.solarReadinessScore ??
-        reportSnapshot?.roofModelConfidence ??
-        snapshotAnalysis?.rooftopConfidenceScore ??
-        lead.solar_suitability_score
-    ) ??
-    getPdfSuitabilityScore({
-      energyOffsetPct,
-      panelCount,
-      sunlightHours,
-      usableRoofPct,
-    });
+      : nonNegativeNumber(lead.energy_offset_pct));
+  const suitabilityScore = calculateSolarReadinessScore({
+    annualSunlightHours: sunlightHours ?? 0,
+    coveragePct: energyOffsetPct ?? 0,
+    panelCount: panelCount ?? 0,
+    usablePctRoof: usableRoofPct ?? 0,
+  });
   const confidence = getPdfConfidenceLabel(suitabilityScore);
   const calculatedLeadScore = calculateLeadScore({
     annualSavings,
@@ -584,6 +588,29 @@ function buildProposalData(
     usableRoofAreaM2: positiveNumber(lead.usable_area_m2) ?? 0,
   });
 
+  if (sunlightHours === undefined) {
+    advisor.sunlightQuality = {
+      label: "Unavailable",
+      score: 0,
+      source: "Estimated",
+      segments: [],
+      summary: "Sunlight data was not saved. Missing data does not mean poor sunlight; run a new analysis and verify shade with an installer.",
+    };
+    advisor.suitability.limitingFactors = advisor.suitability.limitingFactors.filter(
+      (factor) => factor !== "Lower usable sunlight may reduce production."
+    );
+    advisor.suitability.limitingFactors.unshift("Sunlight data requires a new analysis.");
+  }
+  if (!reportSnapshot) {
+    advisor.summary = "This report preserves the estimates saved with your request. Detailed roof geometry was not saved, so roof fit, panel placement and sunlight quality cannot be confirmed here. Run a new analysis before comparing installation options. Final design, pricing and savings require installer verification.";
+    advisor.suitability.headline = "Saved readiness estimate";
+    advisor.suitability.positiveFactors = ["Previously saved estimates remain available for reference."];
+    advisor.suitability.limitingFactors = [
+      "Saved roof geometry and sunlight data are unavailable.",
+      "A new roof analysis and installer review are required.",
+    ];
+  }
+
   return {
     id: lead.id,
     name: formatName(lead.name) || "Homeowner",
@@ -625,7 +652,7 @@ function buildProposalData(
     roofAreaSqFt,
     usableAreaSqFt,
     usableRoofPct,
-    roofPitchDeg: positiveNumber(snapshotMetrics?.avgPitchDeg ?? lead.roof_pitch_deg),
+    roofPitchDeg: nonNegativeNumber(snapshotMetrics?.avgPitchDeg ?? lead.roof_pitch_deg),
     sunlightHours,
     suitabilityScore,
     suitabilityLabel: getHomeownerSuitabilityLabel(suitabilityScore),
@@ -634,6 +661,7 @@ function buildProposalData(
     costWithSolar20Yr,
     advisor,
     reportSnapshot,
+    roofIllustration: buildReportRoofIllustration(reportSnapshot),
   };
 }
 
@@ -668,59 +696,22 @@ function drawExecutiveSummary(
     color: colors.muted,
   });
 
-  drawCard(page, 42, 562, 528, 92, colors);
-  page.drawText("Homeowner", {
-    x: 58,
-    y: 634,
-    size: 8.5,
-    font: fonts.bold,
-    color: colors.muted,
-  });
-  drawTextBlock(page, proposal.name, 58, 616, 250, fonts.bold, 15.5, 17, colors.text);
-  drawTextBlock(page, proposal.address, 58, 598, 250, fonts.regular, 10, 13, colors.muted);
-  page.drawText(`Report ID ${proposal.id.slice(0, 8).toUpperCase()}`, {
-    x: 58,
-    y: 582,
-    size: 8.2,
-    font: fonts.bold,
-    color: colors.cyan,
-  });
-  page.drawText("Generated", {
-    x: 330,
-    y: 634,
-    size: 8.5,
-    font: fonts.bold,
-    color: colors.muted,
-  });
-  drawTextBlock(page, proposal.generatedDate, 330, 616, 106, fonts.bold, 12.8, 13.4, colors.text);
-  drawConfidenceBadge(page, 448, 608, proposal.confidence, fonts, colors);
-  page.drawText("Readiness", {
-    x: 330,
-    y: 596,
-    size: 8.5,
-    font: fonts.bold,
-    color: colors.muted,
-  });
-  page.drawText(`${proposal.suitabilityScore}/100`, {
-    x: 330,
-    y: 578,
-    size: 15,
-    font: fonts.bold,
-    color: colors.cyan,
-  });
-  page.drawText(proposal.suitabilityLabel, {
-    x: 412,
-    y: 582,
-    size: 8.8,
-    font: fonts.bold,
-    color: colors.green,
-  });
+  drawCard(page, 42, 514, 528, 130, colors);
+  page.drawText("PREPARED FOR", { x: 58, y: 625, size: 7.8, font: fonts.bold, color: colors.cyan });
+  const nameLines = drawFittedTextBlock(page, proposal.name, 58, 605, 318, 2, fonts.bold, 16, 11, 18, colors.text);
+  drawFittedTextBlock(page, proposal.address, 58, 605 - nameLines * 18 - 9, 318, 4, fonts.regular, 10.2, 8.5, 12, colors.muted);
+  page.drawLine({ start: { x: 392, y: 532 }, end: { x: 392, y: 628 }, thickness: 0.6, color: colors.line });
+  page.drawText("ANALYSIS SAVED", { x: 408, y: 625, size: 7.8, font: fonts.bold, color: colors.muted });
+  drawFittedTextBlock(page, proposal.generatedDate, 408, 607, 144, 1, fonts.bold, 10.5, 8, 12, colors.text);
+  page.drawText("PRELIMINARY READINESS", { x: 408, y: 579, size: 7, font: fonts.bold, color: colors.muted });
+  page.drawText(`${proposal.suitabilityScore}/100`, { x: 408, y: 551, size: 25, font: fonts.bold, color: colors.cyan });
+  drawFittedTextBlock(page, proposal.suitabilityLabel, 408, 533, 144, 1, fonts.bold, 9, 8, 11, colors.green);
 
-  drawRoofVisual(page, 42, 320, 528, 232, proposal, assets.roofImage, assets.roofImageViewport, fonts, colors, {
+  drawRoofVisual(page, 42, 255, 528, 245, proposal, assets.roofImage, assets.roofImageViewport, fonts, colors, {
     compact: false,
     visualization: "panels",
   });
-  drawRoofVisualCaption(page, 42, 303, 528, proposal, fonts, colors, "panels");
+  drawRoofVisualCaption(page, 42, 243, 528, proposal, fonts, colors, "panels");
 
   const primaryMetrics = [
     {
@@ -736,69 +727,36 @@ function drawExecutiveSummary(
       accent: colors.cyan,
     },
     {
-      label: "Solar readiness / energy offset",
+      label: "Estimated energy offset",
       value: formatPctMaybe(proposal.energyOffsetPct),
       source: "User-adjusted" as SourceLabel,
       accent: colors.green,
     },
   ];
-  const secondaryMetrics = [
-    {
-      label: "Solar-ready area",
-      value: formatSqFtMaybe(proposal.usableAreaSqFt),
-      source: "Solar API" as SourceLabel,
-      accent: colors.blue,
-    },
-    {
-      label: "Usable sunlight",
-      value: proposal.sunlightHours
-        ? `${formatNumber(proposal.sunlightHours)} hrs`
-        : "Estimate unavailable",
-      source: "Modeled" as SourceLabel,
-      accent: colors.orange,
-    },
-  ];
-
   primaryMetrics.forEach((metric, index) => {
-    drawMetricCard(page, 42 + index * 182, 212, 164, 78, metric.label, metric.value, metric.source, metric.accent, fonts, colors);
+    drawMetricCard(page, 42 + index * 182, 127, 164, 82, metric.label, metric.value, metric.source, metric.accent, fonts, colors);
   });
-
-  secondaryMetrics.forEach((metric, index) => {
-    drawMetricCard(page, 42 + index * 273, 128, 255, 78, metric.label, metric.value, metric.source, metric.accent, fonts, colors);
-  });
-
-  drawCard(page, 42, 50, 528, 70, colors, colors.line);
+  drawCard(page, 42, 62, 528, 53, colors);
   page.drawText("How to read this report", {
     x: 60,
-    y: 100,
-    size: 12,
+    y: 98,
+    size: 10,
     font: fonts.bold,
     color: colors.text,
   });
   drawTextBlock(
     page,
     proposal.utilityBillUploaded
-      ? "This report uses satellite imagery, available solar data, modeled savings assumptions, and your submitted utility bill for quote review. It is a preliminary estimate; final design, pricing, incentives, and savings require installer verification."
-      : "This report uses satellite imagery, available solar data, and modeled savings assumptions. It is a preliminary estimate; final design, pricing, incentives, and savings require installer verification.",
+      ? "Saved roof data, modeled savings and your submitted bill support this preliminary estimate. Final design, pricing, incentives and savings require installer verification."
+      : "Saved roof data and modeled savings support this preliminary estimate. Final design, pricing, incentives and savings require installer verification.",
     60,
     82,
-    274,
+    490,
     fonts.regular,
     8.2,
     10.4,
     colors.muted
   );
-  const guidanceBadges: Array<{ label: SourceLabel; description: string }> = [
-    { label: "Solar API", description: "Roof + imagery inputs" },
-    { label: "Modeled", description: "Savings assumptions" },
-    { label: "User-adjusted", description: "Bill + usage inputs" },
-  ];
-  guidanceBadges.forEach((badge, index) => {
-    drawBadgeWithDescription(page, 356, 94 - index * 19, badge.label, badge.description, fonts, colors);
-  });
-  if (proposal.utilityBillUploaded) {
-    drawSourceBadge(page, 260, 94, "Utility Bill", fonts, colors, 88);
-  }
 }
 
 async function markPdfDownloaded(
@@ -815,7 +773,9 @@ async function markPdfDownloaded(
         pdf_downloaded: true,
         pdf_generated: true,
       })
-      .eq("id", leadId);
+      .eq("id", leadId)
+      .abortSignal(AbortSignal.timeout(2_000))
+      .retry(false);
   } catch (error) {
     console.error("[pdf-downloaded-score]", error);
   }
@@ -899,7 +859,7 @@ function drawSolarReadinessPage(
   });
   drawTextBlock(
     page,
-    "This section translates the technical roof model into a homeowner-friendly readiness score. It uses roof fit, available sunlight, system size, and estimated bill offset. Internal lead scoring is intentionally not shown in this homeowner report.",
+    "Use this preliminary readiness score as a starting point, not a guarantee of suitability. Review the saved roof fit, sunlight, system size and estimated bill offset together with an installer.",
     42,
     674,
     492,
@@ -1024,7 +984,7 @@ function drawPanelLayoutPage(
     120,
     84,
     "Accepted panels",
-    proposal.panelCount ? `${proposal.panelCount}` : "Unavailable",
+    proposal.panelCount !== undefined ? `${proposal.panelCount}` : "Unavailable",
     "Solar API",
     colors.cyan,
     fonts,
@@ -1050,7 +1010,7 @@ function drawPanelLayoutPage(
     194,
     132,
     84,
-    "Panel model",
+    "Module",
     getPanelDisplayName(proposal),
     "Modeled",
     colors.gold,
@@ -1059,20 +1019,23 @@ function drawPanelLayoutPage(
   );
 
   drawCard(page, 42, 70, 528, 100, colors);
-  page.drawText("Why this panel selection", {
+  page.drawText("Selected equipment", {
     x: 60,
     y: 142,
     size: 13,
     font: fonts.bold,
     color: colors.text,
   });
+  drawFittedTextBlock(page,
+    [proposal.selectedPanelBrand, proposal.selectedPanelModel].filter(Boolean).join(" / ") || "Equipment details were not saved.",
+    60, 122, 492, 2, fonts.bold, 10.5, 8.2, 13, colors.cyan);
   drawTextBlock(
     page,
     proposal.panelCount && proposal.systemKw
-      ? `The model prioritizes usable roof planes with stronger sunlight and enough continuous area for a practical residential array. The current layout supports ${proposal.panelCount} accepted panels and a modeled ${formatKwMaybe(proposal.systemKw)} system. Panel count, equipment brand, and inverter selection should be confirmed during final installer design.`
-      : "Detailed panel geometry was not available when this report was saved. The house-centered roof image is provided for context; panel count, system size, and equipment selection require a new analysis and installer verification.",
+      ? `${proposal.panelCount} selected panels / ${formatKwMaybe(proposal.systemKw)}. Confirm module availability, final placement, setbacks and inverter selection with your installer.`
+      : "Panel count, system size and equipment selection require a new analysis and installer verification.",
     60,
-    122,
+    90,
     492,
     fonts.regular,
     8.5,
@@ -1099,7 +1062,7 @@ function drawSunlightAnalysisPage(
   });
   drawTextBlock(
     page,
-    "The sunlight layer explains where the roof appears strongest for solar production. Green areas indicate stronger sunlight quality, yellow indicates moderate sunlight, and orange/red indicates limited sunlight or possible shading.",
+    "Review the saved sunlight estimate alongside the roof context. This PDF does not include a measured sunlight heat map. Roof direction, pitch, nearby trees and seasonal shade still require installer review.",
     42,
     674,
     492,
@@ -1128,7 +1091,9 @@ function drawSunlightAnalysisPage(
     y: 208,
     size: 22,
     font: fonts.bold,
-    color: getSunlightPdfColor(proposal.advisor.sunlightQuality.label, colors),
+    color: proposal.sunlightHours === undefined
+      ? colors.muted
+      : getSunlightPdfColor(proposal.advisor.sunlightQuality.label, colors),
   });
   drawSourceBadge(page, 60, 182, proposal.advisor.sunlightQuality.source, fonts, colors);
 
@@ -1144,7 +1109,7 @@ function drawSunlightAnalysisPage(
     page,
     proposal.sunlightHours
       ? `${formatNumber(proposal.sunlightHours)} modeled annual sunlight hours are used with the accepted panel layout to estimate production. Exposure depends on roof direction, pitch, shade, and nearby obstructions.`
-      : "Detailed sunlight hours were not saved for this lead, so the report uses the saved production and savings estimate.",
+      : "Detailed sunlight hours were not saved. Any recorded estimates are shown separately; run a new analysis to check roof exposure.",
     332,
     214,
     210,
@@ -1155,7 +1120,7 @@ function drawSunlightAnalysisPage(
   );
 
   drawCard(page, 42, 58, 528, 92, colors);
-  page.drawText("How to interpret the layer", {
+  page.drawText("How to interpret the estimate", {
     x: 60,
     y: 122,
     size: 12,
@@ -1487,8 +1452,8 @@ function drawFinancingPage(
       ? `The estimate models a ${Math.round(federalCreditRate * 100)}% federal residential credit. Eligibility and timing require tax-professional confirmation.`
       : "No federal residential clean-energy credit is modeled for new 2026 expenditures under current IRS guidance. Arizona credit eligibility is not deducted from payback and requires tax-professional confirmation.",
     60,
-    142,
-    455,
+    156,
+    490,
     fonts.regular,
     7.4,
     9.6,
@@ -1499,15 +1464,15 @@ function drawFinancingPage(
     page,
     "Production degradation, export compensation, dealer or origination fees, and maintenance or replacement reserves are not modeled. Verify utility tariffs, warranties, lender terms, and long-term service costs with the installer.",
     60,
-    106,
-    455,
+    119,
+    490,
     fonts.regular,
     7.4,
     9.6,
     colors.muted
   );
 
-  drawDisclaimer(page, 42, 68, fonts, colors);
+  drawDisclaimer(page, 42, 50, fonts, colors);
 }
 
 function drawAiSolarAdvisorPage(
@@ -1570,10 +1535,14 @@ function drawAiSolarAdvisorPage(
     proposal.panelCount && proposal.systemKw
       ? `${proposal.panelCount} accepted panels for a modeled ${formatKwMaybe(proposal.systemKw)} system.`
       : "Detailed panel count and system size are unavailable in this saved report.",
-    `${formatMoneyMaybe(proposal.annualSavings)} estimated annual savings from the current bill input.`,
-    `${formatPctMaybe(proposal.energyOffsetPct)} estimated energy offset from modeled production.`,
+    proposal.annualSavings !== undefined
+      ? `${formatMoneyMaybe(proposal.annualSavings)} estimated annual savings from the saved bill input.`
+      : "Annual savings were not saved in this report.",
+    proposal.energyOffsetPct !== undefined
+      ? `${formatPctMaybe(proposal.energyOffsetPct)} estimated energy offset from modeled production.`
+      : "Energy offset is unavailable in this saved report.",
     `Sunlight quality is ${proposal.advisor.sunlightQuality.label.toLowerCase()}.`,
-  ].forEach((item, index) => drawBullet(page, 60, 392 - index * 25, item, fonts, colors, 7.8));
+  ].forEach((item, index) => drawBullet(page, 60, 392 - index * 28, item, fonts, colors, 7.8, 210));
 
   drawCard(page, 320, 292, 250, 154, colors);
   page.drawText("Homeowner questions", {
@@ -1657,7 +1626,7 @@ function drawNextStepsPage(
   drawStep(page, 42, 450, "2", "Request a final installer review", "A licensed installer can verify roof condition, setbacks, electrical requirements, incentives, and final pricing.", fonts, colors);
   drawStep(page, 42, 340, "3", "Decide when you're ready", "Use this report as a starting point for a no-pressure solar conversation.", fonts, colors);
 
-  drawCard(page, 338, 330, 232, 328, colors);
+  drawCard(page, 338, 288, 232, 370, colors);
   page.drawText("Next Step", {
     x: 356,
     y: 630,
@@ -1686,26 +1655,21 @@ function drawNextStepsPage(
     11.3,
     colors.muted
   );
-  drawContactRow(page, 356, 512, "Email", proposal.email, fonts, colors);
-  drawContactRow(page, 356, 466, "Report ID", proposal.id, fonts, colors);
+  drawContactRow(page, 356, 512, "Report recipient", proposal.email, fonts, colors);
+  drawContactRow(page, 356, 466, "Report ID", proposal.id.slice(0, 8).toUpperCase(), fonts, colors);
   drawContactRow(page, 356, 420, "Website", new URL(APP_CANONICAL_URL).hostname, fonts, colors);
 
-  page.drawText("Open this report", {
-    x: 356,
-    y: 386,
-    size: 9.2,
-    font: fonts.bold,
-    color: colors.muted,
-  });
+  drawTextBlock(page, "Reopen address analysis", 356, 364, 96, fonts.bold, 9.2, 12, colors.muted);
+  drawTextBlock(page, "Scan to start a new estimate for this address.", 356, 329, 96, fonts.regular, 7.8, 10, colors.muted);
   if (assets.qrImage) {
-    page.drawRectangle({ x: 356, y: 350, width: 90, height: 90, color: rgb(1, 1, 1) });
-    page.drawImage(assets.qrImage, { x: 356, y: 350, width: 90, height: 90 });
+    page.drawRectangle({ x: 461, y: 302, width: 92, height: 92, color: rgb(1, 1, 1) });
+    page.drawImage(assets.qrImage, { x: 466, y: 307, width: 82, height: 82 });
   } else {
-    drawCard(page, 356, 350, 90, 90, colors);
+    drawCard(page, 461, 302, 92, 92, colors);
     page.drawText("QR unavailable", {
-      x: 364,
-      y: 390,
-      size: 9,
+      x: 468,
+      y: 344,
+      size: 8,
       font: fonts.bold,
       color: colors.muted,
     });
@@ -1806,7 +1770,7 @@ function drawInstallerVerificationPage(
     page,
     proposal.panelCount && proposal.systemKw
       ? `This report is a strong starting point for ${proposal.address}. The saved model shows ${proposal.panelCount} accepted panels, ${formatKwMaybe(proposal.systemKw)} system size, ${formatMoneyMaybe(proposal.annualSavings)} estimated annual savings, and ${formatPctMaybe(proposal.energyOffsetPct)} energy offset. Final design may change after installer verification.`
-      : `This report is a starting point for ${proposal.address}. Detailed roof geometry, panel count, and system size were not available in the saved report. The bill-based model estimates ${formatMoneyMaybe(proposal.annualSavings)} annual savings and ${formatPctMaybe(proposal.energyOffsetPct)} energy offset. Final design requires a new analysis and installer verification.`,
+      : `This report preserves the saved estimates for ${proposal.address}. Some detailed roof and system information is unavailable. Missing figures are marked unavailable, not treated as zero. Final design requires a new analysis and installer verification.`,
     60,
     214,
     492,
@@ -1848,14 +1812,7 @@ function drawPageShell(
     font: fonts.bold,
     color: colors.muted,
   });
-  page.drawText(proposal.address, {
-    x: 42,
-    y: 42,
-    size: 7.5,
-    font: fonts.regular,
-    color: colors.muted,
-    maxWidth: 360,
-  });
+  drawFittedTextBlock(page, proposal.address, 42, 42, 390, 1, fonts.regular, 7.5, 6.5, 9, colors.muted);
   page.drawText(`Report ${proposal.id.slice(0, 8).toUpperCase()}`, {
     x: 454,
     y: 42,
@@ -1866,100 +1823,64 @@ function drawPageShell(
 }
 
 function drawRoofVisual(
-  page: PDFPage,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  proposal: ProposalData,
-  image: PDFImage | null,
-  imageViewport: RoofImageViewport | null,
-  fonts: PdfFonts,
-  colors: PdfColors,
-  options: {
-    compact?: boolean;
-    showLegend?: boolean;
-    visualization?: "roof" | "panels" | "sunlight";
-  } = {}
+  page: PDFPage, x: number, y: number, width: number, height: number,
+  proposal: ProposalData, image: PDFImage | null, _imageViewport: RoofImageViewport | null,
+  fonts: PdfFonts, colors: PdfColors,
+  options: { compact?: boolean; showLegend?: boolean; visualization?: "roof" | "panels" | "sunlight" } = {}
 ) {
-  const visualization = options.visualization ?? "roof";
-  const overlayMode = getPdfRoofOverlayMode(proposal, visualization);
-  const imageFrame = {
-    height: height - 12,
-    width: width - 12,
-    x: x + 6,
-    y: y + 6,
-  };
-
+  const mode = options.visualization ?? "roof";
+  const model = proposal.roofIllustration;
+  const useModel = model.available && (mode === "panels" || !image);
   drawCard(page, x, y, width, height, colors);
-  page.drawRectangle({
-    x: imageFrame.x,
-    y: imageFrame.y,
-    width: imageFrame.width,
-    height: imageFrame.height,
-    color: colors.mapBg,
+  page.drawText(useModel ? "3D ROOF ILLUSTRATION" : "SATELLITE ROOF CONTEXT", {
+    x: x + 18, y: y + height - 23, size: 9, font: fonts.bold, color: colors.cyan,
   });
-
-  if (image) {
-    drawRoofBaseImage(page, image, imageFrame, colors);
-    drawRoofModelOverlay(
-      page,
-      imageFrame,
-      proposal,
-      imageViewport,
-      fonts,
-      colors,
-      visualization,
-      overlayMode
-    );
-    drawSelectedPropertyMarker(page, imageFrame, proposal, imageViewport, fonts, colors);
-  } else {
-    page.drawRectangle({
-      x: imageFrame.x,
-      y: imageFrame.y,
-      width: imageFrame.width,
-      height: imageFrame.height,
-      color: colors.bg,
-      opacity: 0.72,
-    });
-    page.drawText("Roof image unavailable", {
-      x: x + 28,
-      y: y + height / 2 + 8,
-      size: 15,
-      font: fonts.bold,
-      color: colors.text,
-    });
-    drawTextBlock(
-      page,
-      "Live satellite imagery could not be embedded for this report. Metrics are still shown from the saved solar estimate where available.",
-      x + 28,
-      y + height / 2 - 14,
-      width - 72,
-      fonts.regular,
-      8.8,
-      11.5,
-      colors.muted
-    );
-  }
-
-  drawRoofImageHeader(page, imageFrame, proposal, fonts, colors, visualization, overlayMode, image);
-
-  if (options.showLegend) {
-    drawImageLegend(
-      page,
-      imageFrame.x + 6,
-      imageFrame.y + 6,
-      180,
-      proposal,
-      fonts,
-      colors,
-      {
-        hasImage: Boolean(image),
-        overlayMode,
-        visualization,
+  const detail = useModel
+    ? mode === "panels"
+      ? `${model.renderedPanelCount} placements shown / ${proposal.panelCount ?? 0} selected  |  ${formatKwMaybe(proposal.systemKw)}`
+      : "Saved roof planes  |  Approximate height"
+    : "Property context only; not an installation drawing";
+  drawFittedTextBlock(page, detail, x + 18, y + height - 39, width - 36, 1, fonts.regular, 8.5, 7, 10, colors.muted);
+  const frame = { x: x + 18, y: y + 22, width: width - 36, height: height - 76 };
+  if (useModel && model.extents) {
+    const extents = model.extents;
+    const scale = Math.min(frame.width / extents.width, frame.height / extents.height) * 0.94;
+    const offsetX = frame.x + (frame.width - extents.width * scale) / 2;
+    const offsetY = frame.y + (frame.height - extents.height * scale) / 2;
+    for (const polygon of model.projectedPolygons) {
+      if (mode !== "panels" && polygon.kind === "panel") continue;
+      const points = polygon.points.map((point) => [
+        offsetX + (point.x - extents.minX) * scale,
+        offsetY + (point.y - extents.minY) * scale,
+      ]);
+      drawPolygon(page, points, pdfHexColor(polygon.fill), 1, pdfHexColor(polygon.stroke), polygon.kind === "panel" ? 0.45 : 0.55);
+      if (polygon.kind === "panel" && points.length === 4) {
+        // Cell lines stay in the same perspective quadrilateral as each module.
+        for (const t of [0.25, 0.5, 0.75]) {
+          const from = interpolatePoint(points[0], points[1], t);
+          const to = interpolatePoint(points[3], points[2], t);
+          page.drawLine({ start: from, end: to, thickness: 0.2, color: rgb(0.35, 0.49, 0.61), opacity: 0.6 });
+        }
       }
-    );
+    }
+    page.drawText("Roof height is approximate. Not an elevation scan or engineering plan.", {
+      x: x + 18, y: y + 9, size: 7, font: fonts.regular, color: colors.muted,
+    });
+  } else if (image) {
+    drawRoofBaseImage(page, image, frame, colors);
+  } else {
+    drawFittedTextBlock(page, "Roof visual unavailable", x + 24, y + height / 2 + 10, width - 48, 1, fonts.bold, 16, 12, 18, colors.text);
+    drawTextBlock(page, "This saved report has no usable roof geometry or imagery. Your saved estimate remains below; start a new analysis to refresh the roof view.",
+      x + 24, y + height / 2 - 14, width - 48, fonts.regular, 9.5, 13, colors.muted);
   }
+}
+
+function pdfHexColor(hex: string) {
+  return rgb(parseInt(hex.slice(1, 3), 16) / 255, parseInt(hex.slice(3, 5), 16) / 255, parseInt(hex.slice(5, 7), 16) / 255);
+}
+
+function interpolatePoint(a: number[], b: number[], t: number) {
+  return { x: a[0] + (b[0] - a[0]) * t, y: a[1] + (b[1] - a[1]) * t };
 }
 
 function drawRoofBaseImage(
@@ -1968,7 +1889,8 @@ function drawRoofBaseImage(
   frame: { x: number; y: number; width: number; height: number },
   colors: PdfColors
 ) {
-  const coverScale = Math.max(frame.width / image.width, frame.height / image.height);
+  // Contain instead of crop: keep the full roof and imagery attribution visible.
+  const coverScale = Math.min(frame.width / image.width, frame.height / image.height);
   const drawnWidth = image.width * coverScale;
   const drawnHeight = image.height * coverScale;
   const drawX = frame.x + (frame.width - drawnWidth) / 2;
@@ -2005,536 +1927,6 @@ function drawRoofBaseImage(
     borderColor: colors.line,
     borderWidth: 0.7,
     opacity: 0.9,
-  });
-}
-
-function drawSelectedPropertyMarker(
-  page: PDFPage,
-  frame: { x: number; y: number; width: number; height: number },
-  proposal: ProposalData,
-  imageViewport: RoofImageViewport | null,
-  fonts: PdfFonts,
-  colors: PdfColors
-) {
-  const projector = imageViewport ? createStaticMapProjector(imageViewport, frame) : null;
-  const projectedHome =
-    proposal.reportSnapshot?.home && projector
-      ? projector(proposal.reportSnapshot.home)
-      : null;
-  const cx = projectedHome?.x ?? frame.x + frame.width * 0.52;
-  const cy = projectedHome?.y ?? frame.y + frame.height * 0.5;
-  page.drawCircle({ x: cx, y: cy, size: 11, color: colors.cyan, opacity: 0.12 });
-  page.drawCircle({
-    x: cx,
-    y: cy,
-    size: 4.4,
-    borderColor: colors.cyan,
-    borderWidth: 1.2,
-    color: colors.bg,
-    opacity: 0.82,
-  });
-  page.drawLine({ start: { x: cx - 14, y: cy }, end: { x: cx - 6, y: cy }, color: colors.cyan, opacity: 0.75, thickness: 0.8 });
-  page.drawLine({ start: { x: cx + 6, y: cy }, end: { x: cx + 14, y: cy }, color: colors.cyan, opacity: 0.75, thickness: 0.8 });
-  page.drawLine({ start: { x: cx, y: cy - 14 }, end: { x: cx, y: cy - 6 }, color: colors.cyan, opacity: 0.75, thickness: 0.8 });
-  page.drawLine({ start: { x: cx, y: cy + 6 }, end: { x: cx, y: cy + 14 }, color: colors.cyan, opacity: 0.75, thickness: 0.8 });
-  page.drawRectangle({
-    x: cx + 12,
-    y: cy + 12,
-    width: 78,
-    height: 16,
-    color: colors.badgeFill,
-    opacity: 0.84,
-  });
-  page.drawText("Selected Home", {
-    x: cx + 20,
-    y: cy + 17,
-    size: 6.6,
-    font: fonts.bold,
-    color: colors.text,
-  });
-}
-
-function drawRoofModelOverlay(
-  page: PDFPage,
-  frame: { x: number; y: number; width: number; height: number },
-  proposal: ProposalData,
-  imageViewport: RoofImageViewport | null,
-  fonts: PdfFonts,
-  colors: PdfColors,
-  visualization: "roof" | "panels" | "sunlight",
-  overlayMode: "exact" | "estimated"
-) {
-  if (
-    drawSnapshotRoofModelOverlay(
-      page,
-      frame,
-      proposal,
-      imageViewport,
-      fonts,
-      colors,
-      visualization,
-      overlayMode
-    )
-  ) {
-    return;
-  }
-
-  const roof = getReportRoofPolygon(frame);
-  const usable = getReportUsablePolygon(frame);
-  const setback = getReportSetbackPolygon(roof, usable);
-
-  if (visualization === "sunlight") {
-    drawSunlightBands(page, usable, proposal, colors);
-  }
-
-  drawPolygon(
-    page,
-    roof,
-    colors.cyan,
-    visualization === "sunlight" ? 0.03 : 0.045,
-    colors.cyan,
-    0.85,
-    0.58
-  );
-  drawPolygon(
-    page,
-    setback,
-    colors.gold,
-    0.015,
-    colors.gold,
-    0.5,
-    0.36
-  );
-  drawPolygon(
-    page,
-    usable,
-    visualization === "sunlight" ? colors.green : colors.cyan,
-    visualization === "sunlight" ? 0.05 : 0.07,
-    visualization === "sunlight" ? colors.green : colors.cyan,
-    0.65,
-    0.42
-  );
-
-  if (visualization === "panels") {
-    if (overlayMode === "exact") {
-      drawPanelLayoutOverlay(page, frame, proposal, colors);
-    } else {
-      drawEstimatedCapacityOverlay(page, frame, proposal, fonts, colors);
-    }
-  }
-}
-
-function drawSnapshotRoofModelOverlay(
-  page: PDFPage,
-  frame: { x: number; y: number; width: number; height: number },
-  proposal: ProposalData,
-  imageViewport: RoofImageViewport | null,
-  fonts: PdfFonts,
-  colors: PdfColors,
-  visualization: "roof" | "panels" | "sunlight",
-  overlayMode: "exact" | "estimated"
-) {
-  const snapshot = proposal.reportSnapshot;
-
-  if (!snapshot || !imageViewport) {
-    return false;
-  }
-
-  const roofData = snapshot.roofAnalysis;
-  const projector = createStaticMapProjector(imageViewport, frame);
-  const roofPolygon = projectLatLngPolygon(
-    outlineToLatLngPoints(roofData.roofOutline, roofData.roofBounds),
-    projector
-  );
-  const usablePolygon = projectLatLngPolygon(
-    outlineToLatLngPoints(roofData.usableOutline, roofData.roofBounds),
-    projector
-  );
-  const fallbackRoof = projectLatLngPolygon(
-    boundsToLatLngPoints(roofData.roofBounds),
-    projector
-  );
-  const roof = roofPolygon.length >= 3 ? roofPolygon : fallbackRoof;
-  const usable = usablePolygon.length >= 3 ? usablePolygon : roof;
-
-  if (roof.length < 3) {
-    return false;
-  }
-
-  if (visualization === "sunlight" && usable.length >= 3) {
-    drawSunlightBands(page, usable, proposal, colors);
-  }
-
-  roofData.roofSegments.forEach((segment) => {
-    const segmentPolygon = projectLatLngPolygon(
-      segment.outline.length >= 3
-        ? outlineToLatLngPoints(segment.outline, roofData.roofBounds)
-        : boundsToLatLngPoints(segment.bounds),
-      projector
-    );
-
-    if (segmentPolygon.length >= 3) {
-      drawPolygon(
-        page,
-        segmentPolygon,
-        segment.usable ? colors.cyan : colors.slate,
-        segment.usable ? 0.022 : 0.012,
-        segment.usable ? colors.cyan : colors.slate,
-        0.46,
-        0.26
-      );
-    }
-  });
-
-  drawPolygon(page, roof, colors.cyan, 0.022, colors.cyan, 0.9, 0.42);
-
-  if (usable.length >= 3) {
-    drawPolygon(
-      page,
-      usable,
-      visualization === "sunlight" ? colors.green : colors.cyan,
-      visualization === "sunlight" ? 0.05 : 0.055,
-      visualization === "sunlight" ? colors.green : colors.cyan,
-      0.65,
-      0.34
-    );
-  }
-
-  if (visualization === "panels") {
-    if (overlayMode === "exact" && roofData.solarPanels.length > 0) {
-      drawSnapshotPanelLayoutOverlay(
-        page,
-        roofData,
-        Math.round(proposal.panelCount ?? snapshot.panelCount),
-        projector,
-        colors
-      );
-    } else {
-      drawEstimatedCapacityOverlay(page, frame, proposal, fonts, colors);
-    }
-  }
-
-  return true;
-}
-
-function drawSnapshotPanelLayoutOverlay(
-  page: PDFPage,
-  roofData: RoofAnalysis,
-  panelCount: number,
-  projector: (point: RoofViewportPoint) => { x: number; y: number },
-  colors: PdfColors
-) {
-  const panels = selectCohesiveSolarPanels({
-    panels: roofData.solarPanels,
-    targetCount: panelCount,
-    panelWidthMeters: roofData.panelWidthMeters,
-    panelHeightMeters: roofData.panelHeightMeters,
-  });
-
-  panels.forEach((panel) => {
-    const corners = buildPanelCornerLatLngPoints({
-      analysis: roofData,
-      panel,
-      panels: roofData.solarPanels,
-    }).slice(1);
-    const panelPolygon = projectLatLngPolygon(corners, projector);
-
-    if (panelPolygon.length >= 4) {
-      drawPolygon(page, panelPolygon, colors.blue, 0.64, colors.text, 0.5, 0.4);
-    }
-
-    const center = projector(panel.center);
-    page.drawRectangle({
-      x: center.x - 6.5,
-      y: center.y - 9,
-      width: 13,
-      height: 18,
-      color: colors.blue,
-      opacity: 0.88,
-      borderColor: colors.cyan,
-      borderOpacity: 0.82,
-      borderWidth: 0.75,
-    });
-  });
-}
-
-function projectLatLngPolygon(
-  points: RoofViewportPoint[],
-  projector: (point: RoofViewportPoint) => { x: number; y: number }
-) {
-  return points
-    .map((point) => {
-      const projected = projector(point);
-      return [projected.x, projected.y];
-    })
-    .filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y));
-}
-
-function getReportRoofPolygon(frame: {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}) {
-  const left = frame.x + frame.width * 0.27;
-  const right = frame.x + frame.width * 0.73;
-  const bottom = frame.y + frame.height * 0.17;
-  const top = frame.y + frame.height * 0.78;
-  const width = frame.width;
-  const height = frame.height;
-
-  return [
-    [left + width * 0.05, top],
-    [right - width * 0.03, top - height * 0.05],
-    [right, bottom + height * 0.24],
-    [right - width * 0.16, bottom],
-    [left + width * 0.06, bottom + height * 0.04],
-    [left, bottom + height * 0.31],
-  ];
-}
-
-function getReportUsablePolygon(frame: {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}) {
-  const left = frame.x + frame.width * 0.33;
-  const right = frame.x + frame.width * 0.67;
-  const bottom = frame.y + frame.height * 0.27;
-  const top = frame.y + frame.height * 0.68;
-  const width = frame.width;
-  const height = frame.height;
-
-  return [
-    [left + width * 0.04, top],
-    [right - width * 0.02, top - height * 0.02],
-    [right, bottom + height * 0.13],
-    [right - width * 0.12, bottom],
-    [left + width * 0.02, bottom + height * 0.04],
-    [left, bottom + height * 0.22],
-  ];
-}
-
-function getReportSetbackPolygon(roof: number[][], usable: number[][]) {
-  return roof.map(([roofX, roofY], index) => {
-    const [usableX, usableY] = usable[index] ?? [roofX, roofY];
-
-    return [roofX + (usableX - roofX) * 0.45, roofY + (usableY - roofY) * 0.45];
-  });
-}
-
-function drawPanelLayoutOverlay(
-  page: PDFPage,
-  frame: { x: number; y: number; width: number; height: number },
-  proposal: ProposalData,
-  colors: PdfColors
-) {
-  const panelCount = clamp(Math.round(proposal.panelCount ?? 0), 0, 48);
-  if (panelCount <= 0) return;
-
-  const rows = Math.max(2, Math.ceil(Math.sqrt(panelCount / 1.8)));
-  const cols = Math.ceil(panelCount / rows);
-  const panelW = Math.min(19, (frame.width * 0.29) / cols);
-  const panelH = Math.min(11, (frame.height * 0.26) / rows);
-  const gap = 2.2;
-  const layoutW = cols * panelW + (cols - 1) * gap;
-  const layoutH = rows * panelH + (rows - 1) * gap;
-  const startX = frame.x + frame.width * 0.5 - layoutW / 2;
-  const startY = frame.y + frame.height * 0.5 - layoutH / 2;
-
-  for (let index = 0; index < panelCount; index += 1) {
-    const row = Math.floor(index / cols);
-    const col = index % cols;
-    drawRotatedRect(
-      page,
-      startX + col * (panelW + gap),
-      startY + (rows - row - 1) * (panelH + gap),
-      panelW,
-      panelH,
-      -5.5,
-      colors.blue,
-      0.54,
-      colors.text,
-      0.32
-    );
-  }
-}
-
-function drawEstimatedCapacityOverlay(
-  page: PDFPage,
-  frame: { x: number; y: number; width: number; height: number },
-  proposal: ProposalData,
-  fonts: PdfFonts,
-  colors: PdfColors
-) {
-  page.drawRectangle({
-    x: frame.x + frame.width - 168,
-    y: frame.y + 18,
-    width: 150,
-    height: 38,
-    color: colors.badgeFill,
-    opacity: 0.72,
-  });
-  page.drawText("Estimated capacity view", {
-    x: frame.x + frame.width - 156,
-    y: frame.y + 42,
-    size: 7.2,
-    font: fonts.bold,
-    color: colors.text,
-  });
-  page.drawText(
-    proposal.panelCount ? `Up to ${proposal.panelCount} panels` : "Panel count unavailable",
-    {
-    x: frame.x + frame.width - 156,
-    y: frame.y + 28,
-    size: 6.8,
-    font: fonts.regular,
-    color: colors.muted,
-    }
-  );
-}
-
-function drawRoofImageHeader(
-  page: PDFPage,
-  frame: { x: number; y: number; width: number; height: number },
-  proposal: ProposalData,
-  fonts: PdfFonts,
-  colors: PdfColors,
-  visualization: "roof" | "panels" | "sunlight",
-  overlayMode: "exact" | "estimated",
-  image: PDFImage | null
-) {
-  const title =
-    visualization === "panels"
-      ? overlayMode === "exact"
-        ? "Sample Panel Layout"
-        : "Estimated Capacity View"
-      : visualization === "sunlight"
-        ? "Solar Readiness View"
-        : "Usable Roof Area";
-  const secondary =
-    visualization === "sunlight"
-      ? `${proposal.advisor.sunlightQuality.label} sunlight quality`
-      : visualization === "roof"
-        ? overlayMode === "exact"
-          ? "Saved roof geometry"
-          : "Roof geometry unavailable"
-        : proposal.panelCount
-          ? overlayMode === "exact"
-            ? `${proposal.panelCount} panel sample layout`
-            : `Up to ${proposal.panelCount} panels`
-          : "Panel layout unavailable";
-
-  page.drawRectangle({
-    x: frame.x + 12,
-    y: frame.y + frame.height - 24,
-    width: 126,
-    height: 16,
-    color: colors.badgeFill,
-    opacity: 0.76,
-  });
-  page.drawText(title, {
-    x: frame.x + 20,
-    y: frame.y + frame.height - 19,
-    size: 6.9,
-    font: fonts.bold,
-    color: colors.text,
-  });
-
-  page.drawRectangle({
-    x: frame.x + 146,
-    y: frame.y + frame.height - 24,
-    width: Math.min(136, fonts.regular.widthOfTextAtSize(secondary, 6.8) + 18),
-    height: 16,
-    color: colors.badgeFill,
-    opacity: 0.64,
-  });
-  page.drawText(secondary, {
-    x: frame.x + 154,
-    y: frame.y + frame.height - 19,
-    size: 6.8,
-    font: fonts.regular,
-    color: colors.text,
-  });
-
-  if (!image) {
-    return;
-  }
-
-  drawConfidenceBadge(page, frame.x + frame.width - 112, frame.y + frame.height - 24, proposal.confidence, fonts, colors);
-}
-
-function getPdfRoofOverlayMode(
-  proposal: ProposalData,
-  visualization: "roof" | "panels" | "sunlight"
-) {
-  const snapshot = proposal.reportSnapshot;
-  const score = proposal.suitabilityScore ?? 0;
-  const hasSavedRoofModel = Boolean(
-    snapshot?.roofAnalysis.validSite && snapshot.roofModelConfidence >= 50
-  );
-
-  if (!hasSavedRoofModel) {
-    return "estimated" as const;
-  }
-
-  if (visualization !== "panels") {
-    return "exact" as const;
-  }
-
-  if (
-    proposal.panelCount &&
-    proposal.panelCount > 0 &&
-    snapshot?.roofAnalysis.solarPanels.length &&
-    score >= 72 &&
-    proposal.confidence !== "Limited"
-  ) {
-    return "exact" as const;
-  }
-
-  return "estimated" as const;
-}
-
-function drawSunlightBands(
-  page: PDFPage,
-  polygon: number[][],
-  proposal: ProposalData,
-  colors: PdfColors
-) {
-  const xs = polygon.map(([px]) => px);
-  const ys = polygon.map(([, py]) => py);
-  const minX = Math.min(...xs);
-  const maxX = Math.max(...xs);
-  const minY = Math.min(...ys);
-  const maxY = Math.max(...ys);
-  const sunlightLabel = proposal.advisor.sunlightQuality.label;
-  const strongShare = sunlightLabel === "HIGH" ? 0.62 : sunlightLabel === "MODERATE" ? 0.42 : 0.26;
-  const bandWidth = (maxX - minX) / 3;
-
-  page.drawRectangle({
-    x: minX,
-    y: minY,
-    width: bandWidth,
-    height: maxY - minY,
-    color: colors.green,
-    opacity: 0.18 + strongShare * 0.1,
-  });
-  page.drawRectangle({
-    x: minX + bandWidth,
-    y: minY,
-    width: bandWidth,
-    height: maxY - minY,
-    color: colors.gold,
-    opacity: 0.2,
-  });
-  page.drawRectangle({
-    x: minX + bandWidth * 2,
-    y: minY,
-    width: bandWidth,
-    height: maxY - minY,
-    color: colors.orange,
-    opacity: 0.16,
   });
 }
 
@@ -2593,7 +1985,7 @@ function drawRoofSummary(
       color: proposal.usableAreaSqFt ? colors.text : colors.muted,
     }
   );
-  const pitch = proposal.roofPitchDeg
+  const pitch = hasFiniteValue(proposal.roofPitchDeg)
     ? `${Number(proposal.roofPitchDeg.toFixed(1))} deg roof pitch`
     : "Roof pitch unavailable";
   page.drawText(pitch, {
@@ -2700,18 +2092,18 @@ function drawFinanceOption(
   });
   drawTextBlock(page, body, x + 14, y + 124, width - 28, fonts.regular, 8.2, 10.8, colors.muted);
   bullets.forEach((bullet, index) => {
-    drawBullet(page, x + 16, y + 78 - index * 18, bullet, fonts, colors, 7.8);
+    drawBullet(page, x + 16, y + 78 - index * 18, bullet, fonts, colors, 7.2, width - 43);
   });
   page.drawText(impactLabel, {
     x: x + 14,
-    y: y + 18,
+    y: y + 12,
     size: 7.4,
     font: fonts.bold,
     color: colors.muted,
   });
   page.drawText(monthlyImpact, {
     x: x + 14,
-    y: y + 36,
+    y: y + 25,
     size: 10.5,
     font: fonts.bold,
     color: colors.gold,
@@ -2802,7 +2194,7 @@ function drawContactRow(
     font: fonts.bold,
     color: colors.cyan,
   });
-  drawTextBlock(page, value, x, y - 15, 176, fonts.bold, 9.6, 11.4, colors.text);
+  drawFittedTextBlock(page, value, x, y - 15, 194, 2, fonts.bold, 9.6, 7.4, 11.4, colors.text);
 }
 
 function drawMetricCard(
@@ -2896,181 +2288,19 @@ function drawSourceBadge(
   });
 }
 
-function drawBadgeWithDescription(
-  page: PDFPage,
-  x: number,
-  y: number,
-  label: SourceLabel,
-  description: string,
-  fonts: PdfFonts,
-  colors: PdfColors
-) {
-  drawSourceBadge(page, x, y, label, fonts, colors);
-  page.drawText(description, {
-    x: x + 106,
-    y: y + 6,
-    size: 7.5,
-    font: fonts.regular,
-    color: colors.muted,
-  });
-}
-
-function drawConfidenceBadge(
-  page: PDFPage,
-  x: number,
-  y: number,
-  confidence: ProposalData["confidence"],
-  fonts: PdfFonts,
-  colors: PdfColors
-) {
-  const color =
-    confidence === "High"
-      ? colors.green
-      : confidence === "Good"
-        ? colors.gold
-        : confidence === "Moderate"
-          ? colors.orange
-          : colors.slate;
-  const label = `${confidence} confidence`;
-  const width = Math.max(108, fonts.bold.widthOfTextAtSize(label, 8.4) + 22);
-  page.drawRectangle({
-    x,
-    y,
-    width,
-    height: 26,
-    color,
-    opacity: 0.15,
-    borderColor: color,
-    borderWidth: 0.8,
-  });
-  page.drawText(label, {
-    x: x + 10,
-    y: y + 9,
-    size: 8.4,
-    font: fonts.bold,
-    color: colors.text,
-  });
-}
-
-function drawImageLegend(
-  page: PDFPage,
-  x: number,
-  y: number,
-  width: number,
-  proposal: ProposalData,
-  fonts: PdfFonts,
-  colors: PdfColors,
-  options: {
-    hasImage: boolean;
-    overlayMode: "exact" | "estimated";
-    visualization: "roof" | "panels" | "sunlight";
-  }
-) {
-  const items = [
-    {
-      color: colors.cyan,
-      fillOpacity: 0.18,
-      label: options.hasImage ? "Selected Home" : "Satellite image unavailable",
-    },
-    {
-      color: colors.blue,
-      fillOpacity: 0.42,
-      label:
-        options.overlayMode === "exact"
-          ? "Sample Panel Layout"
-          : proposal.panelCount
-            ? `Estimated capacity up to ${proposal.panelCount} panels`
-            : "Panel layout unavailable",
-    },
-    {
-      color: colors.green,
-      fillOpacity: options.visualization === "sunlight" ? 0.34 : 0.14,
-      label:
-        options.visualization === "sunlight"
-          ? `${proposal.advisor.sunlightQuality.label} sunlight quality`
-          : "Sunlight quality layer",
-    },
-    {
-      color: colors.gold,
-      fillOpacity: 0.08,
-      label: "Usable Roof Area / Required Setback",
-    },
-    {
-      color: colors.slate,
-      fillOpacity: 0.12,
-      label: "Final installer verification required",
-    },
-  ];
-  const rowHeight = 11;
-  const legendHeight = items.length * rowHeight + 12;
-
-  page.drawRectangle({
-    x,
-    y,
-    width,
-    height: legendHeight,
-    color: colors.badgeFill,
-    opacity: 0.75,
-    borderColor: colors.line,
-    borderWidth: 0.5,
-  });
-
-  items.forEach((item, index) => {
-    const itemY = y + legendHeight - 18 - index * rowHeight;
-    page.drawRectangle({
-      x: x + 6,
-      y: itemY,
-      width: 7,
-      height: 7,
-      color: item.color,
-      opacity: item.fillOpacity,
-      borderColor: item.color,
-      borderWidth: 0.45,
-    });
-    page.drawText(item.label, {
-      x: x + 18,
-      y: itemY + 0.5,
-      size: 6.5,
-      font: fonts.regular,
-      color: colors.text,
-      maxWidth: width - 24,
-    });
-  });
-}
-
 function drawRoofVisualCaption(
-  page: PDFPage,
-  x: number,
-  y: number,
-  width: number,
-  proposal: ProposalData,
-  fonts: PdfFonts,
-  colors: PdfColors,
-  visualization: "roof" | "panels" | "sunlight"
+  page: PDFPage, x: number, y: number, width: number, proposal: ProposalData,
+  fonts: PdfFonts, colors: PdfColors, visualization: "roof" | "panels" | "sunlight"
 ) {
-  const overlayMode = getPdfRoofOverlayMode(proposal, visualization);
-  const leading =
-    overlayMode === "exact"
-      ? "Preliminary rooftop analysis based on satellite imagery and available solar data."
-      : proposal.reportSnapshot
-        ? "Estimated capacity view based on usable roof area and saved solar metrics."
-        : "House-centered satellite view; detailed roof geometry was not saved with this report.";
-  const trailing =
-    visualization === "sunlight"
-      ? "Final panel placement and sunlight performance require installer verification."
-      : "Final panel placement requires installer verification.";
-
-  drawTextBlock(
-    page,
-    `${leading} ${trailing}`,
-    x,
-    y,
-    width,
-    fonts.regular,
-    8.2,
-    10.4,
-    colors.muted
-  );
+  const model = proposal.roofIllustration;
+  const text = visualization === "panels" && model.available
+    ? model.renderedPanelCount !== proposal.panelCount
+      ? "Only placements inside usable saved roof faces are shown. Missing or invalid placements are omitted; final layout requires installer verification."
+      : "Saved roof planes and selected panels, shown in perspective. Heights are approximate; final layout requires installer verification."
+    : visualization === "sunlight"
+      ? "Roof context only, not a measured heat map. Sunlight figures below come from saved analysis; verify shade and production with an installer."
+      : "Preliminary roof context from available saved data. Roof condition, usable area and measurements require installer verification.";
+  drawFittedTextBlock(page, text, x, y, width, 2, fonts.regular, 8.2, 7.8, 10.4, colors.muted);
 }
 
 function drawDisclaimer(page: PDFPage, x: number, y: number, fonts: PdfFonts, colors: PdfColors) {
@@ -3098,7 +2328,7 @@ function drawBullet(
   size = 8.5,
   maxWidth = 470
 ) {
-  page.drawCircle({ x: x + 3, y: y + 3, size: 2.5, color: colors.cyan, opacity: 0.85 });
+  page.drawCircle({ x: x + 3, y: y + 8 + size * 0.33, size: 2, color: colors.cyan, opacity: 0.85 });
   drawTextBlock(page, text, x + 13, y + 8, maxWidth, fonts.regular, size, size + 3, colors.muted);
 }
 
@@ -3140,30 +2370,6 @@ function drawCard(
   });
 }
 
-function drawRotatedRect(
-  page: PDFPage,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  angleDeg: number,
-  color: Color,
-  opacity: number,
-  borderColor: Color,
-  borderOpacity: number
-) {
-  const cx = x + width / 2;
-  const cy = y + height / 2;
-  const angle = (angleDeg * Math.PI) / 180;
-  const points = [
-    rotatePoint(x, y, cx, cy, angle),
-    rotatePoint(x + width, y, cx, cy, angle),
-    rotatePoint(x + width, y + height, cx, cy, angle),
-    rotatePoint(x, y + height, cx, cy, angle),
-  ];
-  drawPolygon(page, points, color, opacity, borderColor, 0.6, borderOpacity);
-}
-
 function drawPolygon(
   page: PDFPage,
   points: number[][],
@@ -3174,7 +2380,7 @@ function drawPolygon(
   borderOpacity = 0.9
 ) {
   const path = points
-    .map(([px, py], index) => `${index === 0 ? "M" : "L"} ${px} ${py}`)
+    .map(([px, py], index) => `${index === 0 ? "M" : "L"} ${px} ${-py}`)
     .join(" ");
   page.drawSvgPath(`${path} Z`, {
     color: fill,
@@ -3216,7 +2422,20 @@ function countTextLines(text: string, maxWidth: number, font: PDFFont, size: num
 }
 
 function wrapTextLines(text: string, maxWidth: number, font: PDFFont, size: number) {
-  const words = sanitizePdfText(text).split(/\s+/);
+  const words = sanitizePdfText(text).split(/\s+/).flatMap((word) => {
+    // Emails and model identifiers can be longer than a whole line.
+    const chunks: string[] = [];
+    let chunk = "";
+    for (const character of word) {
+      if (chunk && font.widthOfTextAtSize(chunk + character, size) > maxWidth) {
+        chunks.push(chunk);
+        chunk = "";
+      }
+      chunk += character;
+    }
+    if (chunk) chunks.push(chunk);
+    return chunks;
+  });
   const lines: string[] = [];
   let current = "";
 
@@ -3232,6 +2451,26 @@ function wrapTextLines(text: string, maxWidth: number, font: PDFFont, size: numb
   if (current) lines.push(current);
 
   return lines;
+}
+
+function drawFittedTextBlock(
+  page: PDFPage, text: string, x: number, y: number, width: number, maxLines: number,
+  font: PDFFont, initialSize: number, minSize: number, lineHeight: number, color: Color
+) {
+  let size = initialSize;
+  let lines = wrapTextLines(text, width, font, size);
+  while (lines.length > maxLines && size > minSize) {
+    size = Math.max(minSize, size - 0.25);
+    lines = wrapTextLines(text, width, font, size);
+  }
+  const visible = lines.slice(0, maxLines);
+  if (lines.length > maxLines) {
+    let tail = visible[maxLines - 1];
+    while (tail && font.widthOfTextAtSize(tail + "...", size) > width) tail = tail.slice(0, -1);
+    visible[maxLines - 1] = tail.trimEnd() + "...";
+  }
+  visible.forEach((line, index) => page.drawText(line, { x, y: y - index * lineHeight, size, font, color }));
+  return visible.length;
 }
 
 function sanitizePdfText(text: string) {
@@ -3326,7 +2565,7 @@ async function loadRoofImage(pdf: PDFDocument, proposal: ProposalData) {
         return emptyAsset;
       }
 
-      const response = await fetch(staticMapUrl);
+      const response = await fetch(staticMapUrl, { signal: AbortSignal.timeout(6_000) });
 
       if (response.ok) {
         const bytes = Buffer.from(await response.arrayBuffer());
@@ -3366,6 +2605,7 @@ async function geocodeReportAddress(address: string, mapsKey: string) {
     const response = await fetch(url, {
       headers: { Accept: "application/json" },
       cache: "no-store",
+      signal: AbortSignal.timeout(4_000),
     });
 
     if (!response.ok) {
@@ -3427,38 +2667,6 @@ function toRoofGeoBounds(bounds?: GoogleGeocodeBounds | null) {
   };
 }
 
-function createStaticMapProjector(
-  viewport: RoofImageViewport,
-  frame: { x: number; y: number; width: number; height: number }
-) {
-  const centerWorld = latLngToWorldPoint(viewport.center);
-  const zoomScale = 2 ** viewport.zoom;
-
-  return (point: RoofViewportPoint) => {
-    const world = latLngToWorldPoint(point);
-    const pixelX = (world.x - centerWorld.x) * zoomScale + viewport.width / 2;
-    const pixelY = (world.y - centerWorld.y) * zoomScale + viewport.height / 2;
-
-    return {
-      x: frame.x + (pixelX / viewport.width) * frame.width,
-      y: frame.y + frame.height - (pixelY / viewport.height) * frame.height,
-    };
-  };
-}
-
-function latLngToWorldPoint(point: RoofViewportPoint) {
-  const siny = clamp(
-    Math.sin((point.lat * Math.PI) / 180),
-    -0.9999,
-    0.9999
-  );
-
-  return {
-    x: ((point.lng + 180) / 360) * 256,
-    y: (0.5 - Math.log((1 + siny) / (1 - siny)) / (4 * Math.PI)) * 256,
-  };
-}
-
 async function loadQrImage(pdf: PDFDocument, url: string) {
   try {
     const dataUrl = await QRCode.toDataURL(url, {
@@ -3478,9 +2686,7 @@ async function loadQrImage(pdf: PDFDocument, url: string) {
 }
 
 function buildEstimateUrl(address: string) {
-  const configuredSiteUrl =
-    process.env.NEXT_PUBLIC_SITE_URL?.trim() || APP_CANONICAL_URL;
-  const url = new URL("/estimate", configuredSiteUrl);
+  const url = new URL("/estimate", getPublicSiteUrl());
   url.searchParams.set("address", address);
   return url.toString();
 }
@@ -3496,48 +2702,11 @@ function buildPdfFilename(proposal: ProposalData) {
   return `solar-report-${safeName}-${date}.pdf`;
 }
 
-function rotatePoint(x: number, y: number, cx: number, cy: number, angle: number) {
-  const dx = x - cx;
-  const dy = y - cy;
-  return [
-    cx + dx * Math.cos(angle) - dy * Math.sin(angle),
-    cy + dx * Math.sin(angle) + dy * Math.cos(angle),
-  ];
-}
-
 function shouldRetryLegacySelect(message: string) {
   return (
     message.includes("does not exist") ||
     message.includes("schema cache") ||
     message.includes("Could not find")
-  );
-}
-
-function getPdfSuitabilityScore({
-  energyOffsetPct,
-  panelCount,
-  sunlightHours,
-  usableRoofPct,
-}: {
-  energyOffsetPct?: number;
-  panelCount?: number;
-  sunlightHours?: number;
-  usableRoofPct?: number;
-}) {
-  const sunlightScore = clamp(((sunlightHours ?? 0) / 2100) * 100, 0, 100);
-  const areaScore = clamp(usableRoofPct ?? 0, 0, 100);
-  const panelScore = clamp(((panelCount ?? 0) / 24) * 100, 0, 100);
-  const offsetScore = clamp(energyOffsetPct ?? 0, 0, 100);
-
-  return clamp(
-    Math.round(
-      sunlightScore * 0.28 +
-        areaScore * 0.22 +
-        panelScore * 0.26 +
-        offsetScore * 0.24
-    ),
-    0,
-    100
   );
 }
 
@@ -3556,15 +2725,14 @@ function getHomeownerSuitabilityLabel(score: number) {
 }
 
 function buildPanelSizeLabel(watts?: number) {
-  const normalizedWatts = watts && watts > 0 ? Math.round(watts) : 400;
-  return `${normalizedWatts}W module`;
+  return watts && watts > 0 ? `${Math.round(watts)}W module` : "Not saved";
 }
 
 function getPanelDisplayName(proposal: ProposalData) {
   const brand = proposal.selectedPanelBrand?.trim();
   const watts = proposal.selectedPanelWatts
     ? `${Math.round(proposal.selectedPanelWatts)}W`
-    : "400W";
+    : "Not saved";
 
   if (!brand) {
     return watts;
@@ -3593,7 +2761,14 @@ function positiveNumber(value: unknown) {
   return parsed > 0 ? parsed : undefined;
 }
 
+function nonNegativeNumber(value: unknown) {
+  if (value === null || value === undefined || value === "") return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
 function finiteCoordinate(value: unknown, type: "lat" | "lng") {
+  if (value === null || value === undefined || value === "") return undefined;
   const parsed = Number(value);
   const limit = type === "lat" ? 90 : 180;
 

@@ -20,6 +20,33 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 
 The app uses the Next.js App Router and self-hosts its UI fonts through `next/font`.
 
+## SEO maintenance
+
+Public metadata uses the production origin in `src/lib/brand.ts`, not a preview
+or dashboard URL. Use `publicPageMetadata` in `src/lib/seo.ts` for new public
+pages, and add only canonical, indexable pages to `INDEXABLE_PATHS`. Private
+estimate, report, dashboard, and confirmation routes must retain `noindex` and
+their existing access checks. Robots rules are not authentication.
+
+Homepage organization/site/service markup belongs only on the homepage. The
+solar guide has a matching visible breadcrumb and `BreadcrumbList`. Do not add
+invented reviews, local offices, installation prices, or credentials.
+
+After building and starting a local production server on a free port, run:
+
+```powershell
+$env:PLAYWRIGHT_BASE_URL='http://localhost:3101'
+npx playwright test tests/e2e/seo.spec.ts --project=chromium-desktop
+$env:SEO_BASE_URL='http://localhost:3101'
+$env:SEO_PHASE='current'
+npm run seo:audit
+```
+
+The read-only audit saves raw metadata, screenshots, and three cold-browser lab
+samples per route/device in `qa-evidence/seo-current`. It does not submit leads.
+Set `SEO_INVENTORY_ONLY=1` to skip lab measurements. The September 2026 audit and
+measurement/access requirements are in `docs/seo-audit-2026-09-22.md`.
+
 ## Environment Variables
 
 Create a `.env.local` file with:
@@ -31,6 +58,9 @@ GOOGLE_SOLAR_API_KEY=your_google_solar_api_key_here
 NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=your_google_maps_browser_key_here
 NEXT_PUBLIC_SITE_URL=https://your-domain.com
 NEXT_PUBLIC_TURNSTILE_SITE_KEY=your_cloudflare_turnstile_site_key_here
+# Optional Fourfold conversion delivery. Disabled unless both values are set.
+# FOURFOLD_ATTRIBUTION_ENDPOINT=
+# FOURFOLD_ATTRIBUTION_SECRET=
 REPORT_SIGNING_SECRET=your_report_link_signing_secret_here
 UTILITY_BILL_UPLOAD_SECRET=your_utility_bill_claim_secret_here
 RATE_LIMIT_SECRET=your_rate_limit_secret_here
@@ -56,6 +86,8 @@ MAINTENANCE_MODE=false
 For Vercel, add the same values in the project environment settings. Keep `GOOGLE_MAPS_API_KEY`, `GOOGLE_PLACES_API_KEY`, `GOOGLE_SOLAR_API_KEY`, the service role key, report signing secret, rate limit secret, follow-up process secret, dashboard access token, Turnstile secret, and Resend values server-side only. `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` is the browser key used only for rendering the satellite map overlays. Do not create or deploy a `NEXT_PUBLIC_GOOGLE_SOLAR_API_KEY`; Solar API calls must stay behind server routes.
 
 Lead notifications are sent server-side after Supabase confirms a new lead. Resend sends the homeowner report email and the optional admin lead email. If `RESEND_API_KEY` is missing in development, the app logs the email payload and still lets the homeowner reach the success screen. `FROM_EMAIL` and `ADMIN_EMAIL` are preferred; `RESEND_FROM_EMAIL` and `OWNER_EMAIL` remain supported for existing deployments. `FROM_EMAIL` should point to a verified Resend sender such as `reports@solartelligence.com`.
+
+Fourfold attribution is an optional, best-effort server hook after a lead is saved. It is disabled unless `FOURFOLD_ATTRIBUTION_ENDPOINT` and `FOURFOLD_ATTRIBUTION_SECRET` are both configured. When enabled, it posts Fourfold's `eventId`/`occurredAt` payload to `/api/conversions`, with `attributionKey` only when the incoming `utm_id` matches Fourfold's deterministic `solarai-<platform>-<contentId>` format and the content ID is a Fourfold-generated UUID. Arbitrary or human-readable UTM values are discarded; the request never sends contact, address, utility, or report values, and redirects are rejected. A provider error is logged without failing the report request. No production endpoint or source bearer is configured in this repository, so attribution remains disabled until the owner supplies the Fourfold source and environment values.
 
 To verify production notifications without creating a lead, mint a dashboard session with the token in a POST body, then call the protected test endpoint with the HttpOnly session cookie. For a non-browser check, send the token in an `Authorization` header:
 

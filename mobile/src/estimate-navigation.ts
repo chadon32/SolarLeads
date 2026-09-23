@@ -1,7 +1,21 @@
-const SHARE_KEYS = ["address", "lat", "lng", "bill", "panel", "panels", "inverter", "addBattery", "battery"];
+const INTERNAL_NAVIGATION_KEYS = [
+  "address",
+  "lat",
+  "lng",
+  "bill",
+  "panel",
+  "panels",
+  "inverter",
+  "addBattery",
+  "battery",
+];
 
-/** Only public estimate settings may cross the native share boundary. */
-export function sanitizeEstimateShareUrl(raw: unknown, appUrl: string) {
+/**
+ * Preserve refresh-safe calculator state inside the trusted WebView boundary.
+ * This URL is for internal navigation only and must never be sent to a
+ * public/native share target.
+ */
+export function sanitizeEstimateNavigationUrl(raw: unknown, appUrl: string) {
   if (typeof raw !== "string") return null;
   try {
     const url = new URL(raw, appUrl);
@@ -9,7 +23,7 @@ export function sanitizeEstimateShareUrl(raw: unknown, appUrl: string) {
     const address = url.searchParams.get("address")?.trim();
     if (!address || address.length > 300) return null;
     const clean = new URL("/estimate", appUrl);
-    for (const key of SHARE_KEYS) {
+    for (const key of INTERNAL_NAVIGATION_KEYS) {
       const value = url.searchParams.get(key);
       if (value !== null && value.length <= 300) clean.searchParams.set(key, value);
     }

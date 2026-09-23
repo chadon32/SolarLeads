@@ -3,11 +3,13 @@
 import type { ChangeEvent, FormEvent, InputHTMLAttributes } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import Script from "next/script";
 import { FileCheck2, UploadCloud } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatDisplayAddress } from "@/lib/address-format";
 import { trackEvent } from "@/lib/analytics";
+import { normalizeFourfoldAttributionKey } from "@/lib/attribution";
 import {
   APP_LEAD_DISCLOSURE_COPY,
   APP_PRIVACY_COPY,
@@ -34,6 +36,18 @@ import {
   normalizePhoneNumber,
 } from "@/lib/phone";
 import { formatCurrency } from "@/lib/number-format";
+import {
+  getReportEmailDeliveryCopy,
+  normalizeReportEmailDeliveryStatus,
+  type ReportEmailDeliveryStatus,
+} from "@/lib/report-email-status";
+import {
+  UTILITY_BILL_FILE_TYPE_MESSAGE,
+  UTILITY_BILL_MAX_FILE_SIZE_BYTES,
+  UTILITY_BILL_MAX_FILE_SIZE_MESSAGE,
+  UTILITY_BILL_UPLOAD_TIMEOUT_MS,
+  getUtilityBillMimeType,
+} from "@/lib/utility-bill-upload";
 import {
   getRoofAreaM2,
   getUsableAreaM2,
@@ -98,7 +112,7 @@ type SavedLead = {
     systemSizeKw: number | null;
   };
   utilityBillUploaded?: boolean;
-  emailDeliveryStatus?: "sent" | "delayed";
+  emailDeliveryStatus?: ReportEmailDeliveryStatus;
 };
 
 type UtilityBillState = {
@@ -130,8 +144,6 @@ const emptyValues: FormValues = {
   notes: "",
 };
 
-const utilityBillMimeTypes = ["application/pdf", "image/jpeg", "image/png"];
-const utilityBillMaxBytes = 10 * 1024 * 1024;
 const turnstileSiteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
 const leadFieldIds: Partial<Record<keyof FormValues, string>> = {
   name: "lead-name",
@@ -177,6 +189,41 @@ function buildFingerprint(values: FormValues) {
   ].join("|");
 }
 
+function readSessionStorageItem(key: string) {
+  try {
+    return window.sessionStorage.getItem(key) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function readAttributionUtmId() {
+  const queryValue = normalizeFourfoldAttributionKey(
+    new URLSearchParams(window.location.search).get("utm_id")
+  );
+  return queryValue ?? normalizeFourfoldAttributionKey(
+    readSessionStorageItem("solartelligenceUtmId")
+  );
+}
+
+function persistSessionStorageItem(key: string, value: string) {
+  try {
+    window.sessionStorage.setItem(key, value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function removeLocalStorageItem(key: string) {
+  try {
+    window.localStorage.removeItem(key);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function LeadCaptureForm({
   initialAddress,
   analysis,
@@ -191,6 +238,7 @@ export function LeadCaptureForm({
   addBattery = false,
   selectedBattery,
 }: LeadCaptureFormProps) {
+  const router = useRouter();
   const [values, setValues] = useState<FormValues>({
     ...emptyValues,
     address: formatDisplayAddress(initialAddress),
@@ -203,6 +251,8 @@ export function LeadCaptureForm({
   const [status, setStatus] = useState<
     "idle" | "submitting" | "error"
   >("idle");
+  const [savedLead, setSavedLead] = useState<SavedLead | null>(null);
+  const [storageWarning, setStorageWarning] = useState(false);
   const [message, setMessage] = useState(
     "Complete the form to receive your full report."
   );
@@ -215,6 +265,8 @@ export function LeadCaptureForm({
   const formRef = useRef<HTMLFormElement | null>(null);
   const errorSummaryRef = useRef<HTMLDivElement | null>(null);
   const lastSubmittedFingerprint = useRef<string>("");
+  const utilityBillUploadSequenceRef = useRef(0);
+  const utilityBillAbortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     formStartedAt.current = Date.now();
@@ -223,6 +275,8 @@ export function LeadCaptureForm({
     };
 
     return () => {
+      utilityBillUploadSequenceRef.current += 1;
+      utilityBillAbortControllerRef.current?.abort();
       delete window.onSolartelligenceTurnstile;
     };
   }, []);
@@ -363,32 +417,50 @@ export function LeadCaptureForm({
   const handleUtilityBillChange = async (
     event: ChangeEvent<HTMLInputElement>
   ) => {
-    const file = event.target.files?.[0];
+    const input = event.currentTarget;
+    const file = input.files?.[0];
 
     if (!file) {
-      setUtilityBill({ status: "idle" });
       return;
     }
 
-    if (!utilityBillMimeTypes.includes(file.type)) {
+    const uploadSequence = utilityBillUploadSequenceRef.current + 1;
+    utilityBillUploadSequenceRef.current = uploadSequence;
+    utilityBillAbortControllerRef.current?.abort();
+    utilityBillAbortControllerRef.current = null;
+
+    // Clear the native value so selecting the same file retries the upload.
+    input.value = "";
+
+    const isCurrentUpload = () =>
+      utilityBillUploadSequenceRef.current === uploadSequence;
+    const mimeType = getUtilityBillMimeType(file.name, file.type);
+
+    if (!mimeType) {
       setUtilityBill({
-        error: "Upload a PDF, JPG, or PNG utility bill.",
+        error: UTILITY_BILL_FILE_TYPE_MESSAGE,
         fileName: file.name,
         status: "error",
       });
-      event.target.value = "";
       return;
     }
 
-    if (file.size > utilityBillMaxBytes) {
+    if (file.size > UTILITY_BILL_MAX_FILE_SIZE_BYTES) {
       setUtilityBill({
-        error: "Utility bill uploads must be 10MB or smaller.",
+        error: UTILITY_BILL_MAX_FILE_SIZE_MESSAGE,
         fileName: file.name,
         status: "error",
       });
-      event.target.value = "";
       return;
     }
+
+    const abortController = new AbortController();
+    utilityBillAbortControllerRef.current = abortController;
+    let timedOut = false;
+    const timeoutId = window.setTimeout(() => {
+      timedOut = true;
+      abortController.abort();
+    }, UTILITY_BILL_UPLOAD_TIMEOUT_MS);
 
     setUtilityBill({
       fileName: file.name,
@@ -406,14 +478,24 @@ export function LeadCaptureForm({
       const response = await fetch("/api/utility-bills", {
         method: "POST",
         body: formData,
+        signal: abortController.signal,
       });
+
+      if (!isCurrentUpload()) return;
+
+      if (response.status === 413) {
+        throw new Error(UTILITY_BILL_MAX_FILE_SIZE_MESSAGE);
+      }
+
       const payload = (await response.json().catch(() => ({}))) as {
         message?: string;
         uploadClaim?: string;
         uploaded?: boolean;
       };
 
-      if (response.status === 503 || !payload.uploaded) {
+      if (!isCurrentUpload()) return;
+
+      if (response.status === 503) {
         setUtilityBill({
           fileName: file.name,
           message:
@@ -424,7 +506,7 @@ export function LeadCaptureForm({
         return;
       }
 
-      if (!response.ok || !payload.uploadClaim) {
+      if (!response.ok || !payload.uploaded || !payload.uploadClaim) {
         throw new Error(payload.message || "Utility bill upload failed.");
       }
 
@@ -435,15 +517,33 @@ export function LeadCaptureForm({
         uploadClaim: payload.uploadClaim,
       });
     } catch (error) {
+      if (!isCurrentUpload()) return;
+
       setUtilityBill({
         error:
-          error instanceof Error
+          timedOut
+            ? "Utility bill upload timed out. Please try again."
+            : error instanceof Error && error.name === "AbortError"
+              ? "Utility bill upload was canceled. Please try again."
+              : error instanceof Error
             ? error.message
             : "Unable to upload the utility bill. You can still send the report without it.",
         fileName: file.name,
         status: "error",
       });
+    } finally {
+      window.clearTimeout(timeoutId);
+      if (utilityBillAbortControllerRef.current === abortController) {
+        utilityBillAbortControllerRef.current = null;
+      }
     }
+  };
+
+  const handleUtilityBillRemove = () => {
+    utilityBillUploadSequenceRef.current += 1;
+    utilityBillAbortControllerRef.current?.abort();
+    utilityBillAbortControllerRef.current = null;
+    setUtilityBill({ status: "idle" });
   };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -500,7 +600,9 @@ export function LeadCaptureForm({
 
     if (utilityBill.status === "uploading") {
       setStatus("error");
-      setMessage("Your utility bill is still uploading. Please wait a moment or submit without it.");
+      setMessage(
+        "Your utility bill is still uploading. Please wait a moment or remove it before submitting."
+      );
       return;
     }
 
@@ -515,7 +617,12 @@ export function LeadCaptureForm({
     setStatus("submitting");
     setMessage("Saving your report request...");
 
+    const referredBy = readSessionStorageItem("referredBy");
+
     try {
+      const utilityBillUploadClaim =
+        utilityBill.status === "uploaded" ? utilityBill.uploadClaim : undefined;
+
       const response = await fetch("/api/leads", {
         method: "POST",
         headers: {
@@ -542,8 +649,8 @@ export function LeadCaptureForm({
           annualSavings: metrics.annualSavings,
           monthlySavings: metrics.monthlySavings,
           annualEnergyKwh: metrics.annualKwh,
-          roofAnalysisProof: analysisProof,
-          signedRoofAnalysis,
+          roofAnalysisProof: analysisProof ?? undefined,
+          signedRoofAnalysis: signedRoofAnalysis ?? undefined,
           energyOffsetPct: metrics.coveragePct,
           solarSuitabilityScore: analysis.rooftopConfidenceScore,
           roofAreaSqm: getRoofAreaM2(analysis),
@@ -553,17 +660,13 @@ export function LeadCaptureForm({
           lat,
           lng,
           pdfGenerated: false,
-          utilityBillUploadClaim:
-            utilityBill.status === "uploaded" ? utilityBill.uploadClaim : undefined,
-          utilityBillUploaded: utilityBill.status === "uploaded",
+          utilityBillUploadClaim,
+          utilityBillUploaded: Boolean(utilityBillUploadClaim),
           batteryAdded: addBattery,
           batteryBrand: selectedBattery?.brand,
           batteryModel: selectedBattery?.model,
           batteryCost: selectedBattery?.cost,
-          referredBy:
-            typeof window !== "undefined"
-              ? window.sessionStorage.getItem("referredBy")
-              : undefined,
+          referredBy,
           selectedPanelBrand: selectedPanel?.brand,
           selectedPanelModel: selectedPanel?.model,
           selectedPanelWatts: selectedPanel?.watts,
@@ -572,6 +675,7 @@ export function LeadCaptureForm({
           netSystemCost: totalNetSystemCost,
           selectedInverterType,
           turnstileToken,
+          utm_id: readAttributionUtmId() ?? undefined,
           website: honeypot,
         }),
       });
@@ -587,11 +691,9 @@ export function LeadCaptureForm({
       }
 
       lastSubmittedFingerprint.current = fingerprint;
-      trackEvent("lead_submitted", {
-        contact_requested: values.installerContactConsent,
-        panel_count_bucket: getPanelCountBucket(metrics.panelCount),
-      });
-      setMessage("Preparing your confirmation...");
+      // Keep the server-confirmed lead in memory before optional browser APIs
+      // run. A storage failure must not turn a successful save into a retry.
+      setSavedLead(payload.lead);
 
       const thankYouPayload = {
           address: formatDisplayAddress(payload.lead.address),
@@ -619,18 +721,41 @@ export function LeadCaptureForm({
           utilityBillUploaded: Boolean(payload.lead.utilityBillUploaded),
       };
 
-      sessionStorage.setItem(
-        "solartelligenceThankYou",
-        JSON.stringify(thankYouPayload)
-      );
-      sessionStorage.setItem("solarLeadData", JSON.stringify(thankYouPayload));
-      localStorage.removeItem("solarProgress");
-      window.location.assign("/thank-you");
+      try {
+        trackEvent("lead_submitted", {
+          contact_requested: values.installerContactConsent,
+          panel_count_bucket: getPanelCountBucket(metrics.panelCount),
+        });
+      } catch {
+        // Analytics is optional and must not affect a confirmed submission.
+      }
+
+      const serializedThankYouPayload = JSON.stringify(thankYouPayload);
+      const sessionStoragePersisted =
+        persistSessionStorageItem("solartelligenceThankYou", serializedThankYouPayload) &&
+        persistSessionStorageItem("solarLeadData", serializedThankYouPayload);
+      const localStorageCleaned = removeLocalStorageItem("solarProgress");
+
+      if (!sessionStoragePersisted || !localStorageCleaned) {
+        setStorageWarning(true);
+        return;
+      }
+
+      router.push("/thank-you");
     } catch {
       setStatus("error");
       setMessage("Network error. Please try again.");
     }
   };
+
+  if (savedLead) {
+    return (
+      <SavedReportConfirmation
+        lead={savedLead}
+        storageWarning={storageWarning}
+      />
+    );
+  }
 
   const activeErrors = (
     Object.entries(errors) as [keyof FormValues, string | undefined][]
@@ -832,6 +957,7 @@ export function LeadCaptureForm({
           <UtilityBillUploadCard
             state={utilityBill}
             onChange={handleUtilityBillChange}
+            onRemove={handleUtilityBillRemove}
           />
 
           <label className="mt-5 flex cursor-pointer items-start gap-3 rounded-[1.15rem] border border-white/10 bg-slate-950/34 px-4 py-4 text-left">
@@ -987,6 +1113,71 @@ export function LeadCaptureForm({
   );
 }
 
+function SavedReportConfirmation({
+  lead,
+  storageWarning,
+}: {
+  lead: SavedLead;
+  storageWarning: boolean;
+}) {
+  const confirmationHeadingRef = useRef<HTMLHeadingElement | null>(null);
+  const emailDeliveryStatus = normalizeReportEmailDeliveryStatus(
+    lead.emailDeliveryStatus
+  );
+  const emailDeliveryCopy = getReportEmailDeliveryCopy(emailDeliveryStatus);
+
+  useEffect(() => {
+    confirmationHeadingRef.current?.focus();
+  }, []);
+
+  return (
+    <section
+      aria-labelledby="report-save-confirmation"
+      className="rounded-[1.6rem] border border-emerald-300/20 bg-emerald-300/[0.06] p-5 shadow-[0_24px_80px_rgba(2,8,20,0.35)] sm:p-6"
+    >
+      <p className="text-xs font-semibold uppercase tracking-[0.34em] text-emerald-200">
+        Report saved
+      </p>
+      <h3
+        id="report-save-confirmation"
+        ref={confirmationHeadingRef}
+        tabIndex={-1}
+        className="mt-3 text-2xl font-semibold tracking-tight text-white"
+      >
+        Your solar report is ready.
+      </h3>
+      <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-200">
+        {emailDeliveryStatus === "sent"
+          ? `We emailed your personalized report to ${lead.email}.`
+          : emailDeliveryCopy.message}
+      </p>
+      {storageWarning ? (
+        <p
+          role="status"
+          aria-live="polite"
+          className="mt-4 rounded-[1rem] border border-amber-200/20 bg-amber-200/10 px-4 py-3 text-sm leading-6 text-amber-50"
+        >
+          Browser storage was unavailable, but your report was saved. This
+          confirmation is kept on this page and no second request is needed.
+        </p>
+      ) : null}
+      <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center">
+        <a
+          href={lead.reportUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex min-h-12 items-center justify-center rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100"
+        >
+          Open PDF report
+        </a>
+        <p className="text-sm text-slate-300">
+          Saved for {formatDisplayAddress(lead.address)}.
+        </p>
+      </div>
+    </section>
+  );
+}
+
 function getPanelCountBucket(panelCount: number) {
   if (panelCount < 10) return "under_10";
   if (panelCount < 20) return "10_19";
@@ -1024,7 +1215,11 @@ function Field({
 
   return (
     <label className="block" htmlFor={inputId}>
-      <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">
+      <span
+        className={`mb-2 block text-xs font-semibold uppercase tracking-[0.22em] ${
+          error ? "text-rose-100" : "text-slate-300"
+        }`}
+      >
         {label}
       </span>
       <div className="relative">
@@ -1043,9 +1238,13 @@ function Field({
           autoComplete={autoComplete}
           aria-invalid={Boolean(error)}
           aria-describedby={error || helperText ? descriptionId : undefined}
-          className={`min-h-12 w-full rounded-[1.05rem] border bg-slate-950/46 px-4 py-3 text-base text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/45 focus:bg-slate-950/68 ${
+          className={`min-h-12 w-full rounded-[1.05rem] border px-4 py-3 text-base text-white outline-none transition ${
             prefix ? "pl-8" : ""
-          } ${error ? "border-rose-400/50" : "border-white/10"}`}
+          } ${
+            error
+              ? "border-rose-300/80 bg-rose-950/25 shadow-[0_0_0_1px_rgba(251,113,133,0.15),0_0_24px_rgba(244,63,94,0.12)] placeholder:text-rose-100/60 focus:border-rose-200 focus:bg-rose-950/35 focus:ring-2 focus:ring-rose-300/60 focus:ring-offset-2 focus:ring-offset-slate-950"
+              : "border-white/10 bg-slate-950/46 placeholder:text-slate-500 focus:border-cyan-300/45 focus:bg-slate-950/68"
+          }`}
         />
       </div>
       {error ? (
@@ -1082,7 +1281,11 @@ function SelectField({
 
   return (
     <label className="block" htmlFor={inputId}>
-      <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">
+      <span
+        className={`mb-2 block text-xs font-semibold uppercase tracking-[0.22em] ${
+          error ? "text-rose-100" : "text-slate-300"
+        }`}
+      >
         {label}
       </span>
       <select
@@ -1091,8 +1294,10 @@ function SelectField({
         onChange={(event) => onChange(event.target.value)}
         aria-invalid={Boolean(error)}
         aria-describedby={error || helperText ? descriptionId : undefined}
-        className={`min-h-12 w-full rounded-[1.05rem] border bg-slate-950/46 px-4 py-3 text-base text-white outline-none transition focus:border-cyan-300/45 focus:bg-slate-950/68 ${
-          error ? "border-rose-400/50" : "border-white/10"
+        className={`min-h-12 w-full rounded-[1.05rem] border px-4 py-3 text-base text-white outline-none transition ${
+          error
+            ? "border-rose-300/80 bg-rose-950/25 shadow-[0_0_0_1px_rgba(251,113,133,0.15),0_0_24px_rgba(244,63,94,0.12)] focus:border-rose-200 focus:bg-rose-950/35 focus:ring-2 focus:ring-rose-300/60 focus:ring-offset-2 focus:ring-offset-slate-950"
+            : "border-white/10 bg-slate-950/46 focus:border-cyan-300/45 focus:bg-slate-950/68"
         }`}
       >
         <option value="" disabled className="bg-slate-950">
@@ -1153,16 +1358,22 @@ function toFieldId(label: string) {
 
 function UtilityBillUploadCard({
   onChange,
+  onRemove,
   state,
 }: {
   onChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  onRemove: () => void;
   state: UtilityBillState;
 }) {
   const isUploaded = state.status === "uploaded";
   const isUploading = state.status === "uploading";
+  const hasSelectedFile = Boolean(state.fileName);
 
   return (
-    <section className="mt-5 rounded-[1.35rem] border border-cyan-300/14 bg-cyan-300/[0.055] p-4">
+    <section
+      aria-busy={isUploading}
+      className="mt-5 rounded-[1.35rem] border border-cyan-300/14 bg-cyan-300/[0.055] p-4"
+    >
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex gap-3">
           <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-cyan-200/18 bg-cyan-300/10 text-cyan-100">
@@ -1179,24 +1390,44 @@ function UtilityBillUploadCard({
             <p className="mt-1 text-sm leading-6 text-slate-300">
               Upload a recent utility bill so we can verify your usage and prepare a more accurate solar quote.
             </p>
-            <p className="mt-2 text-xs leading-5 text-slate-400">
-              Optional. PDF, JPG, or PNG. Used only for your solar estimate.
+            <p
+              id="utility-bill-upload-help"
+              className="mt-2 text-xs leading-5 text-slate-400"
+            >
+              Optional. PDF, JPG, or PNG up to 4MB. Used only for your solar estimate.
             </p>
           </div>
         </div>
-        <label className="inline-flex shrink-0 cursor-pointer items-center justify-center rounded-full border border-white/10 bg-white px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100">
-          {isUploading ? "Uploading..." : isUploaded ? "Replace bill" : "Upload bill"}
+        <label
+          htmlFor="utility-bill-upload"
+          className="inline-flex min-h-11 shrink-0 cursor-pointer items-center justify-center rounded-full border border-white/10 bg-white px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100 focus-within:ring-2 focus-within:ring-cyan-200 focus-within:ring-offset-2 focus-within:ring-offset-slate-950"
+        >
+          {isUploading
+            ? "Choose another bill"
+            : isUploaded
+              ? "Replace bill"
+              : "Upload bill"}
           <input
+            id="utility-bill-upload"
             type="file"
             accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
             className="sr-only"
-            disabled={isUploading}
+            aria-describedby="utility-bill-upload-help"
             onChange={onChange}
           />
         </label>
       </div>
-      {state.fileName ? (
-        <p className="mt-3 text-xs text-slate-400">Selected file: {state.fileName}</p>
+      {hasSelectedFile ? (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-xs text-slate-400">Selected file: {state.fileName}</p>
+          <button
+            type="button"
+            onClick={onRemove}
+            className="inline-flex min-h-11 items-center justify-center rounded-full border border-white/12 bg-slate-950/45 px-4 py-2 text-xs font-semibold text-cyan-100 transition hover:border-cyan-200/35 hover:bg-slate-950/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200"
+          >
+            {isUploading ? "Continue without bill" : "Remove bill"}
+          </button>
+        </div>
       ) : null}
       {state.message ? (
         <p
@@ -1205,12 +1436,19 @@ function UtilityBillUploadCard({
               ? "bg-emerald-300/14 text-emerald-100"
               : "bg-amber-300/12 text-amber-100"
           }`}
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
         >
           {state.message}
         </p>
       ) : null}
       {state.error ? (
-        <p className="mt-3 rounded-[0.9rem] border border-rose-300/18 bg-rose-300/10 px-3 py-2 text-sm text-rose-100">
+        <p
+          className="mt-3 rounded-[0.9rem] border border-rose-300/18 bg-rose-300/10 px-3 py-2 text-sm text-rose-100"
+          role="alert"
+          aria-atomic="true"
+        >
           {state.error}
         </p>
       ) : null}

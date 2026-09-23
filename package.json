@@ -9,6 +9,8 @@
     "capture:ads": "node scripts/capture-marketing-assets.js",
     "capture:ltx-hero": "tsx scripts/capture-ltx-hero.ts",
     "perf:benchmark": "tsx scripts/benchmark-performance.ts",
+    "seo:audit": "tsx scripts/seo-benchmark.ts",
+    "pdf:preview": "tsx --conditions=react-server scripts/preview-report-pdf.ts",
     "mobile:start": "npm --prefix mobile start",
     "mobile:typecheck": "npm --prefix mobile run typecheck",
     "mobile:export:ios": "npm --prefix mobile run export:ios",

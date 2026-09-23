@@ -2205,7 +2205,6 @@ function createEstimatedSunlightQualityOverlays({
     rejectedCandidateCount: roofData.rejectedPanelCandidateCount,
     roofSegments: roofData.roofSegments,
     shadingRisk: roofData.shadingRisk,
-    suitabilityScore: roofData.rooftopConfidenceScore,
     systemKw: roofData.systemKw,
     usablePctRoof: roofData.usablePctRoof,
     usableRoofAreaM2: roofData.usableRoofAreaM2,

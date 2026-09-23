@@ -13,7 +13,7 @@ type Prediction = {
 };
 
 type AddressSearchProps = {
-  onSelect: (property: { address: string; lat?: number; lng?: number }) => void;
+  onSelect: (property: { address: string; lat?: number; lng?: number }) => boolean | void;
   selectedAddress?: string;
 };
 
@@ -34,6 +34,11 @@ type PlaceDetailsPayload = {
 
 const lookupUnavailableMessage =
   "Address lookup is temporarily unavailable. Please try again shortly.";
+const serviceAreaMessage =
+  "We currently serve Arizona homes only. Please choose an Arizona street address.";
+const MAX_ADDRESS_LENGTH = 220;
+const addressTooLongMessage =
+  `Keep your address under ${MAX_ADDRESS_LENGTH} characters, including the city and state.`;
 
 function buildFallbackSuggestions(query: string) {
   const typedAddress = query.trim();
@@ -55,7 +60,7 @@ function buildFallbackSuggestions(query: string) {
 }
 
 function isArizonaAddress(address: string) {
-  return address.includes(", AZ") || address.includes("Arizona");
+  return /(?:,\s*AZ\b|\bArizona\b)/i.test(address);
 }
 
 function normalizeAddress(value: string) {
@@ -189,18 +194,24 @@ export function AddressSearch({
 
         if (prediction.place_id.startsWith("manual-")) {
           if (!isArizonaAddress(address)) {
-            setAddressError(
-              "We currently only serve Arizona homes. Please enter an AZ address."
-            );
+            setAddressError(serviceAreaMessage);
             onSelect({ address: "" });
             setStatus("Arizona address required.");
+            return;
+          }
+
+          const accepted = onSelect({ address });
+          if (accepted === false) {
+            setPredictions([prediction]);
+            setActivePredictionIndex(0);
+            setOpen(true);
+            setStatus("Update the monthly bill before starting the roof scan.");
             return;
           }
 
           setStatus(`Selected: ${address}`);
           setFallbackActive(false);
           setAddressError(null);
-          onSelect({ address });
           return;
         }
 
@@ -210,13 +221,25 @@ export function AddressSearch({
         );
         const payload: PlaceDetailsPayload = await response.json().catch(() => ({}));
         if (controller.signal.aborted) return;
-        if (!response.ok || !payload.formattedAddress) throw new Error(lookupUnavailableMessage);
+        if (!response.ok) {
+          const isServiceAreaFailure =
+            response.status === 422 || /Arizona/i.test(payload.message ?? "");
+
+          if (isServiceAreaFailure) {
+            setAddressError(serviceAreaMessage);
+            setStatus("Arizona address required.");
+            onSelect({ address: "" });
+            return;
+          }
+
+          throw new Error(lookupUnavailableMessage);
+        }
+
+        if (!payload.formattedAddress) throw new Error(lookupUnavailableMessage);
         const formattedAddress = payload.formattedAddress;
 
         if (!isArizonaAddress(formattedAddress)) {
-          setAddressError(
-            "We currently only serve Arizona homes. Please enter an AZ address."
-          );
+          setAddressError(serviceAreaMessage);
           setStatus("Arizona address required.");
           onSelect({ address: "" });
           return;
@@ -232,11 +255,19 @@ export function AddressSearch({
         }
 
         setQuery(formattedAddress);
-        onSelect({
+        const accepted = onSelect({
           address: formattedAddress,
           lat: payload.lat,
           lng: payload.lng,
         });
+        if (accepted === false) {
+          setPredictions([prediction]);
+          setActivePredictionIndex(0);
+          setOpen(true);
+          setStatus("Update the monthly bill before starting the roof scan.");
+          return;
+        }
+
         setAddressError(null);
         setFallbackActive(false);
         setStatus(`Selected: ${formattedAddress}`);
@@ -283,6 +314,15 @@ export function AddressSearch({
         setStatus("Enter at least 3 characters to search Google Places.");
         setAddressError(null);
         setFallbackActive(false);
+        setSearching(false);
+        return;
+      }
+
+      if (trimmed.length > MAX_ADDRESS_LENGTH) {
+        setPredictions([]);
+        setActivePredictionIndex(-1);
+        setStatus(addressTooLongMessage);
+        setAddressError(addressTooLongMessage);
         setSearching(false);
         return;
       }
@@ -374,8 +414,7 @@ export function AddressSearch({
     };
   }, [open, query, setActivePredictionIndex]);
 
-  const helperText =
-    "Pick the matching address to start the solar report workflow.";
+  const helperText = `Pick the matching address to start the solar report workflow. Use a full street address, city, and state (up to ${MAX_ADDRESS_LENGTH} characters).`;
 
   const exactPredictionMatch = predictions.find(
     (prediction) =>
@@ -438,16 +477,22 @@ export function AddressSearch({
             }${addressError ? " address-error" : ""}`}
             aria-invalid={Boolean(addressError)}
             onChange={(event) => {
+              const nextQuery = event.target.value;
               selectionController.current?.abort();
               selectionController.current = null;
               isSelectingRef.current = false;
               setIsSelecting(false);
               setPredictions([]);
-              setQuery(event.target.value);
+              setQuery(nextQuery);
               setOpen(true);
               setActivePredictionIndex(-1);
               setFallbackActive(false);
-              setAddressError(null);
+              if (nextQuery.length > MAX_ADDRESS_LENGTH) {
+                setStatus(addressTooLongMessage);
+                setAddressError(addressTooLongMessage);
+              } else {
+                setAddressError(null);
+              }
             }}
             onFocus={() => setOpen(true)}
             onKeyDown={(event) => {
@@ -493,6 +538,7 @@ export function AddressSearch({
               window.setTimeout(() => setOpen(false), 140);
             }}
             placeholder="Enter your Arizona address..."
+            maxLength={MAX_ADDRESS_LENGTH}
             className={`w-full rounded-full border bg-black/24 py-4 pl-12 pr-4 text-base text-white outline-none transition placeholder:text-white/45 focus:border-cyan-200/50 focus:bg-black/32 sm:pr-28 ${
               addressError ? "border-rose-300/55" : "border-white/12"
             }`}

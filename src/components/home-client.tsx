@@ -12,9 +12,11 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AddressSearch } from "@/components/address-search";
 import { AnalysisSequence } from "@/components/analysis-sequence";
+import { SampleSolarReport } from "@/components/sample-solar-report";
 import type { DetailTab } from "@/components/solar-report-dashboard";
 import { formatDisplayAddress } from "@/lib/address-format";
 import { trackEvent } from "@/lib/analytics";
+import { normalizeFourfoldAttributionKey } from "@/lib/attribution";
 import { faqItems } from "@/lib/faq";
 import {
   APP_NAME,
@@ -135,6 +137,21 @@ type SavedProgress = {
 };
 
 const MAX_MONTHLY_BILL = 5_000;
+const MONTHLY_BILL_RANGE_MESSAGE =
+  `Enter a whole-dollar bill from $1 to $${MAX_MONTHLY_BILL.toLocaleString()}.`;
+
+function getMonthlyBillError(rawValue: string) {
+  if (!rawValue.trim()) {
+    return "Enter your average monthly bill to personalize the estimate.";
+  }
+
+  const parsed = Number(rawValue);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > MAX_MONTHLY_BILL) {
+    return MONTHLY_BILL_RANGE_MESSAGE;
+  }
+
+  return "";
+}
 
 function normalizeMonthlyBill(value: unknown, fallback = 200) {
   const parsed = Number(value);
@@ -221,13 +238,14 @@ export function HomeClient({
     String(startingMonthlyBill)
   );
   const [monthlyBillError, setMonthlyBillError] = useState("");
+  const [initialBillValidationComplete, setInitialBillValidationComplete] =
+    useState(false);
   const [selectedPanelId, setSelectedPanelId] = useState(initialPanelId);
   const [addBattery, setAddBattery] = useState(initialAddBattery);
   const [batteryOption, setBatteryOption] = useState(initialBatteryOption);
   const [selectedInverterType, setSelectedInverterType] =
     useState<InverterType>(initialInverterType ?? "string");
   const [reportTab, setReportTab] = useState<DetailTab>("overview");
-  const [shareStatus, setShareStatus] = useState("");
   const [savedProgress, setSavedProgress] = useState<SavedProgress | null>(null);
   const [showReturnBanner, setShowReturnBanner] = useState(false);
   const [totalEstimateCount, setTotalEstimateCount] = useState<number | null>(
@@ -282,12 +300,20 @@ export function HomeClient({
   );
 
   useEffect(() => {
-    const referralCode = new URLSearchParams(window.location.search)
-      .get("ref")
-      ?.trim();
+    const searchParams = new URLSearchParams(window.location.search);
+    const referralCode = searchParams.get("ref")?.trim();
+    const utmId = normalizeFourfoldAttributionKey(searchParams.get("utm_id"));
 
-    if (referralCode) {
-      window.sessionStorage.setItem("referredBy", referralCode.toUpperCase());
+    try {
+      if (referralCode) {
+        window.sessionStorage.setItem("referredBy", referralCode.toUpperCase());
+      }
+
+      if (utmId) {
+        window.sessionStorage.setItem("solartelligenceUtmId", utmId);
+      }
+    } catch {
+      // Referral and attribution are optional and must not affect the estimate workflow.
     }
 
     let frame = 0;
@@ -330,6 +356,27 @@ export function HomeClient({
       }
     };
   }, [initialAddress]);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      const rawBill = new URLSearchParams(window.location.search).get("bill");
+
+      if (rawBill !== null) {
+        const error = getMonthlyBillError(rawBill);
+        if (error) {
+          setMonthlyBillInput(rawBill);
+          setMonthlyBillError(error);
+        } else {
+          setMonthlyBillInput(String(initialMonthlyBill));
+          setMonthlyBillError("");
+        }
+      }
+
+      setInitialBillValidationComplete(true);
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [initialAddress, initialMonthlyBill]);
 
   useEffect(() => {
     if (initialInverterType || !solarData?.validSite) {
@@ -378,15 +425,6 @@ export function HomeClient({
     selectedPanel,
     solarData,
   ]);
-
-  useEffect(() => {
-    if (!shareStatus) {
-      return;
-    }
-
-    const timer = window.setTimeout(() => setShareStatus(""), 2000);
-    return () => window.clearTimeout(timer);
-  }, [shareStatus]);
 
   useEffect(() => {
     const sectionIds = [
@@ -494,7 +532,12 @@ export function HomeClient({
   ]);
 
   useEffect(() => {
-    if (!selectedAddress || window.location.pathname !== "/estimate") {
+    if (
+      !selectedAddress ||
+      window.location.pathname !== "/estimate" ||
+      !initialBillValidationComplete ||
+      monthlyBillError
+    ) {
       return;
     }
 
@@ -512,12 +555,12 @@ export function HomeClient({
     const currentHref = `${window.location.pathname}${window.location.search}`;
 
     if (currentHref !== estimateHref) {
-      // Keep the shareable state refresh-safe without adding a history entry
+      // Keep the internal estimate state refresh-safe without adding a history entry
       // for every bill, panel, or equipment adjustment.
       window.history.replaceState(window.history.state, "", estimateHref);
     }
     const bridge = (window as Window & { ReactNativeWebView?: { postMessage: (message: string) => void } }).ReactNativeWebView;
-    bridge?.postMessage(JSON.stringify({ type: "estimate-share", url: estimateHref }));
+    bridge?.postMessage(JSON.stringify({ type: "estimate-navigation", url: estimateHref }));
   }, [
     activePanelCount,
     addBattery,
@@ -528,6 +571,8 @@ export function HomeClient({
     selectedInverterType,
     selectedLocation,
     selectedPanelId,
+    initialBillValidationComplete,
+    monthlyBillError,
   ]);
 
   const restoreProgress = () => {
@@ -593,9 +638,62 @@ export function HomeClient({
   };
 
   const handleNewAddress = () => {
-    setShareStatus("");
     setReportTab("overview");
     router.push(nativeApp ? "/estimate?app=ios" : "/");
+  };
+
+  const openScenarioShare = () => {
+    setReportTab("overview");
+    trackEvent("scenario_share_opened", { surface: "overview" });
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        document
+          .getElementById("scenario-share")
+          ?.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+    });
+  };
+
+  const handleAddressSelect = (property: {
+    address: string;
+    lat?: number;
+    lng?: number;
+  }) => {
+    const displayAddress = formatDisplayAddress(property.address);
+    if (!displayAddress) {
+      return false;
+    }
+
+    if (monthlyBillError) {
+      window.requestAnimationFrame(() => {
+        const billInput = document.getElementById("monthly-bill-input");
+        billInput?.focus();
+        billInput?.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+      return false;
+    }
+
+    trackEvent("address_selected");
+    router.push(
+      getEstimateHref({
+        address: displayAddress,
+        addBattery,
+        batteryOption,
+        inverterType: selectedInverterType,
+        location:
+          Number.isFinite(property.lat) && Number.isFinite(property.lng)
+            ? {
+                lat: Number(property.lat),
+                lng: Number(property.lng),
+              }
+            : null,
+        monthlyBill,
+        nativeApp,
+        panelCount: 0,
+        selectedPanelId,
+      })
+    );
+    return true;
   };
 
   const applyMonthlyBill = (nextValue: number) => {
@@ -608,26 +706,23 @@ export function HomeClient({
   const updateMonthlyBill = (rawValue: string) => {
     setMonthlyBillInput(rawValue);
 
-    if (!rawValue.trim()) {
-      setMonthlyBillError("Enter your average monthly bill to personalize the estimate.");
+    const error = getMonthlyBillError(rawValue);
+    if (error) {
+      setMonthlyBillError(error);
       return;
     }
 
-    const parsed = Number(rawValue);
-    if (!Number.isInteger(parsed) || parsed < 1 || parsed > MAX_MONTHLY_BILL) {
-      setMonthlyBillError(
-        `Enter a whole-dollar bill from $1 to $${MAX_MONTHLY_BILL.toLocaleString()}.`
-      );
-      return;
-    }
-
-    applyMonthlyBill(parsed);
+    applyMonthlyBill(Number(rawValue));
   };
 
-  const showAnalysis = Boolean(selectedAddress);
+  const showAnalysis = Boolean(
+    selectedAddress &&
+      initialBillValidationComplete &&
+      (!monthlyBillError || hasValidAnalysis)
+  );
   const reportCtaHref = hasValidAnalysis
     ? "#report-dashboard"
-    : selectedAddress
+    : selectedAddress && showAnalysis
       ? "#solar-workspace"
       : "#address-estimate";
   return (
@@ -658,12 +753,6 @@ export function HomeClient({
           onRestore={restoreProgress}
         />
       ) : null}
-      {!nativeApp && shareStatus ? (
-        <div className="fixed right-5 top-20 z-[60] hidden rounded-full border border-emerald-200/20 bg-emerald-400/18 px-4 py-2 text-sm font-semibold text-emerald-50 shadow-[0_18px_45px_rgba(6,95,70,0.28)] backdrop-blur-xl md:block">
-          {shareStatus}
-        </div>
-      ) : null}
-
       {!nativeApp || !showAnalysis ? (
       <section
         className={`relative z-10 mx-auto flex w-full max-w-7xl flex-col px-5 pt-5 sm:px-7 md:px-10 lg:px-12 ${
@@ -692,6 +781,9 @@ export function HomeClient({
             <a className="transition hover:text-white" href="#faq">
               FAQ
             </a>
+            <Link className="transition hover:text-white" href="/solar-guide">
+              Solar guide
+            </Link>
             <a
               className="transition hover:text-white"
               href={hasValidAnalysis ? "#solar-workspace" : "#address-estimate"}
@@ -715,6 +807,9 @@ export function HomeClient({
                 <a className="flex min-h-11 items-center rounded-[0.8rem] px-3 py-2 hover:bg-white/[0.06]" href="#faq">
                   FAQ
                 </a>
+                <Link className="flex min-h-11 items-center rounded-[0.8rem] px-3 py-2 hover:bg-white/[0.06]" href="/solar-guide">
+                  Solar guide
+                </Link>
                 <a
                   className="flex min-h-11 items-center rounded-[0.8rem] px-3 py-2 hover:bg-white/[0.06]"
                   href={hasValidAnalysis ? "#solar-workspace" : "#address-estimate"}
@@ -783,7 +878,7 @@ export function HomeClient({
               <>
             <div className="liquid-glass mx-auto inline-flex items-center gap-3 rounded-full px-4 py-2 text-sm font-medium text-white/78">
               <span className="h-2 w-2 rounded-full bg-cyan-300 shadow-[0_0_20px_rgba(103,232,249,0.85)]" />
-              Arizona · real satellite roof scan
+              Free Arizona solar calculator
             </div>
 
             <h1
@@ -797,15 +892,16 @@ export function HomeClient({
             </h1>
 
             <p className="mx-auto mt-4 max-w-2xl text-[0.95rem] leading-6 text-white/68 sm:mt-5 sm:text-lg sm:leading-7">
-              Enter your address and watch your real Arizona roof render in 3D
-              &mdash; panels placed, sunlight mapped, and your savings estimated.
-              Free, about 60 seconds, no sales call.
+              Enter your Arizona address to explore a preliminary panel layout,
+              sunlight, and estimated savings. 3D roof detail depends on available
+              data. Free to use, with installer contact only if you request it.
             </p>
               </>
             )}
 
             {!hasValidAnalysis ? (
               <>
+            {!heroCompact && !nativeApp ? <SampleSolarReport /> : null}
             <div
               id="address-estimate"
               className={`liquid-glass liquid-glass-unclipped rounded-[1.75rem] p-4 shadow-[0_24px_80px_rgba(0,0,0,0.34)] sm:p-5 ${
@@ -814,32 +910,7 @@ export function HomeClient({
             >
               <AddressSearch
                 selectedAddress={selectedAddress}
-                onSelect={(property) => {
-                  const displayAddress = formatDisplayAddress(property.address);
-                  if (displayAddress) {
-                    trackEvent("address_selected");
-                    router.push(
-                      getEstimateHref({
-                        address: displayAddress,
-                        addBattery,
-                        batteryOption,
-                        inverterType: selectedInverterType,
-                        location:
-                          Number.isFinite(property.lat) &&
-                          Number.isFinite(property.lng)
-                            ? {
-                                lat: Number(property.lat),
-                                lng: Number(property.lng),
-                              }
-                            : null,
-                        monthlyBill,
-                        nativeApp,
-                        panelCount: 0,
-                        selectedPanelId,
-                      })
-                    );
-                  }
-                }}
+                onSelect={handleAddressSelect}
               />
               {totalEstimateCount && totalEstimateCount >= 10 ? (
                 <div className="mt-3 hidden rounded-[1.15rem] border border-emerald-300/12 bg-emerald-300/[0.055] px-4 py-3 text-sm text-emerald-50 sm:block">
@@ -858,6 +929,7 @@ export function HomeClient({
                 <span className="mt-2 flex items-center gap-3">
                   <span className="text-sm font-semibold text-white/70">$</span>
                   <input
+                    id="monthly-bill-input"
                     type="number"
                     min={1}
                     max={MAX_MONTHLY_BILL}
@@ -867,20 +939,24 @@ export function HomeClient({
                     placeholder="200"
                     className="min-h-11 min-w-0 flex-1 bg-transparent text-lg font-semibold text-white outline-none placeholder:text-white/35"
                     inputMode="numeric"
-                    aria-describedby="monthly-bill-help"
+                    aria-describedby={`monthly-bill-help${monthlyBillError ? " monthly-bill-error" : ""}`}
                     aria-invalid={Boolean(monthlyBillError)}
                   />
                 </span>
-                <span
-                  id="monthly-bill-help"
-                  className={`mt-1 block text-xs leading-5 ${
-                    monthlyBillError ? "text-amber-200" : "text-white/58"
-                  }`}
-                >
-                  {monthlyBillError ||
-                    "Enter a whole-dollar average from $1 to $5,000. Used to personalize savings."}
+                <span id="monthly-bill-help" className="mt-1 block text-xs leading-5 text-white/58">
+                  Enter a whole-dollar average from $1 to $5,000. Used to personalize savings.
                 </span>
               </label>
+              {monthlyBillError ? (
+                <div
+                  id="monthly-bill-error"
+                  role="alert"
+                  className="mt-3 rounded-[1.05rem] border border-amber-200/28 bg-amber-200/10 px-4 py-3 text-left text-sm leading-6 text-amber-100"
+                >
+                  <p className="font-semibold text-amber-50">Check your monthly bill before continuing.</p>
+                  <p>{monthlyBillError}</p>
+                </div>
+              ) : null}
               {selectedAddress ? (
                 <>
                   <div className="liquid-glass mt-4 rounded-[1.35rem] px-4 py-3 text-sm text-white/72">
@@ -889,9 +965,9 @@ export function HomeClient({
                       {formatDisplayAddress(selectedAddress)}
                     </span>
                   </div>
-                  {hasValidAnalysis ? null : (
+                  {showAnalysis && !hasValidAnalysis ? (
                     <AnalysisSequence key={selectedAddress} address={selectedAddress} />
-                  )}
+                  ) : null}
                 </>
               ) : null}
             </div>
@@ -913,7 +989,7 @@ export function HomeClient({
             </p>
 
             <div className="mt-5 hidden flex-wrap justify-center gap-2 text-[0.68rem] font-semibold uppercase tracking-[0.28em] text-white/70 sm:flex">
-              {["Free", "~60 seconds", "No sales call", "Arizona only"].map((pill) => (
+              {["Free", "No account needed", "Optional installer contact", "Arizona only"].map((pill) => (
                 <span key={pill} className="liquid-glass rounded-full px-3 py-2">
                   {pill}
                 </span>
@@ -937,6 +1013,18 @@ export function HomeClient({
               : "px-5 pb-8 sm:px-7 md:px-10 lg:px-12"
           }`}
         >
+          {monthlyBillError && hasValidAnalysis ? (
+            <div
+              id="monthly-bill-error"
+              role="alert"
+              className="mb-4 rounded-[1.05rem] border border-amber-200/28 bg-amber-200/10 px-4 py-3 text-left text-sm leading-6 text-amber-100"
+            >
+              <p className="font-semibold text-amber-50">Check your monthly bill before continuing.</p>
+              <p>
+                {monthlyBillError} This model remains based on the last valid bill of {formatMoney(monthlyBill)}.
+              </p>
+            </div>
+          ) : null}
           {nativeApp ? null : (
           <div className="mb-4 flex flex-col justify-between gap-4 rounded-[1.4rem] border border-white/10 bg-slate-950/62 px-4 py-4 shadow-[0_16px_50px_rgba(2,8,20,0.3)] backdrop-blur-xl sm:px-5 sm:flex-row sm:items-end">
             <div>
@@ -962,31 +1050,12 @@ export function HomeClient({
               {hasValidAnalysis ? (
                 <button
                   type="button"
-                  onClick={() => {
-                    if (typeof window === "undefined" || !selectedAddress) {
-                      return;
-                    }
-
-                    const shareUrl = `${window.location.origin}${getEstimateHref({
-                      address: selectedAddress,
-                      addBattery,
-                      batteryOption,
-                      inverterType: selectedInverterType,
-                      location: selectedLocation,
-                      monthlyBill,
-                      nativeApp,
-                      panelCount: activePanelCount,
-                      selectedPanelId,
-                    })}`;
-
-                    void navigator.clipboard
-                      ?.writeText(shareUrl)
-                      .then(() => setShareStatus("Link copied to clipboard!"))
-                      .catch(() => setShareStatus(shareUrl));
-                  }}
+                  onClick={openScenarioShare}
+                  aria-controls="scenario-share"
+                  aria-expanded={reportTab === "overview"}
                   className="inline-flex min-h-11 items-center justify-center rounded-full border border-white/12 bg-white/[0.06] px-5 py-3 text-sm font-semibold text-white transition hover:-translate-y-0.5 hover:bg-white/[0.1]"
                 >
-                  {shareStatus || "Share estimate"}
+                  Share estimate
                 </button>
               ) : null}
               <button
@@ -1077,7 +1146,10 @@ export function HomeClient({
           <ShieldCheck className="h-4 w-4 text-cyan-100" aria-hidden="true" />
           <span>{APP_PRIVACY_COPY}</span>
         </div>
-        <nav aria-label="Legal information" className="flex items-center gap-4 text-xs">
+        <nav aria-label="Legal information" className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-xs">
+          <Link className="inline-flex min-h-11 items-center underline-offset-4 hover:underline" href="/solar-guide">
+            Arizona solar guide
+          </Link>
           <Link className="inline-flex min-h-11 items-center underline-offset-4 hover:underline" href="/privacy">
             Privacy notice
           </Link>
@@ -1158,7 +1230,7 @@ function CinematicVideoBackground() {
       }
     ).connection;
 
-    if (reducedMotion || connection?.saveData) {
+    if (reducedMotion || connection?.saveData || window.matchMedia("(max-width: 767px)").matches) {
       return;
     }
 
@@ -1267,6 +1339,11 @@ function CinematicVideoBackground() {
   const togglePlayback = () => {
     const video = videoRef.current;
     if (!video) return;
+    // Keep mobile bandwidth for the address workflow until playback is requested.
+    if (!videoSourceReady) {
+      setVideoSourceReady(true);
+      return;
+    }
     const paused = !userPausedRef.current;
     userPausedRef.current = paused;
     setUserPaused(paused);
@@ -1308,13 +1385,13 @@ function CinematicVideoBackground() {
         }`}
       />
     </div>
-    {videoSourceReady && !videoFailed ? (
+    {!videoFailed ? (
       <button
         type="button"
         onClick={togglePlayback}
-        className="print-static-ui fixed bottom-[max(0.75rem,env(safe-area-inset-bottom))] right-3 z-40 min-h-11 rounded-full border border-white/20 bg-slate-950/95 px-4 py-2 text-xs font-semibold text-white shadow-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-200"
+        className={`print-static-ui fixed bottom-[max(0.75rem,env(safe-area-inset-bottom))] right-3 z-40 min-h-11 rounded-full border border-white/20 bg-slate-950/95 px-4 py-2 text-xs font-semibold text-white shadow-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-200 ${videoSourceReady ? "" : "md:hidden motion-reduce:hidden"}`}
       >
-        {userPaused ? "Resume background" : "Pause background"}
+        {!videoSourceReady ? "Play background" : userPaused ? "Resume background" : "Pause background"}
       </button>
     ) : null}
     </>
@@ -1453,7 +1530,7 @@ function OptionalTrustSections() {
               Why it works
             </span>
             <h2 className="mt-2 block text-xl font-semibold text-white">
-              Roof, layout, and estimate without the pressure
+              What your Arizona solar estimate includes
             </h2>
           </div>
           <div className="grid gap-3 px-2 pt-2 sm:px-3 lg:grid-cols-3">
@@ -1464,6 +1541,18 @@ function OptionalTrustSections() {
         </div>
 
         <TrustIndicatorRow />
+
+        <div className="mx-2 mt-5 rounded-[1rem] border border-cyan-200/15 bg-slate-950/65 p-4 text-sm leading-6 text-slate-300 sm:mx-3">
+          <p>
+            Solartelligence provides preliminary analysis, not an installation
+            quote or engineering plan. Start with your address and average monthly
+            bill, compare the available panel and financing scenarios, then request
+            an emailed report. Installer follow-up is a separate, optional choice.
+          </p>
+          <Link href="/solar-guide" className="mt-2 inline-flex min-h-11 items-center font-semibold text-cyan-100 underline decoration-cyan-200/40 underline-offset-4 hover:text-white">
+            How to read your roof and savings estimate
+          </Link>
+        </div>
 
         <FaqSection />
       </div>

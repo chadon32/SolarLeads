@@ -29,6 +29,7 @@ import {
   type LeadNotificationSummary,
   type NotificationResult,
 } from "@/lib/notifications";
+import { getReportEmailDeliveryStatus } from "@/lib/report-email-status";
 import { isValidUsPhoneNumber } from "@/lib/phone";
 import {
   normalizeSolarReportSnapshot,
@@ -50,6 +51,7 @@ import {
 } from "@/lib/report-access";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { verifyUtilityBillUploadClaim } from "@/lib/utility-bill-claims";
+import { sendFourfoldConversion } from "@/lib/fourfold-attribution";
 import { BATTERY_OPTIONS } from "@/lib/batteries";
 import {
   INVERTER_OPTIONS,
@@ -87,9 +89,9 @@ type LeadBody = {
   roofAreaSqm?: number;
   usableAreaSqm?: number;
   roofPitchDegrees?: number;
-  reportSnapshot?: SolarReportSnapshot;
+  reportSnapshot?: SolarReportSnapshot | null;
   roofAnalysisProof?: RoofAnalysisProof;
-  signedRoofAnalysis?: RoofAnalysis;
+  signedRoofAnalysis?: RoofAnalysis | null;
   lat?: number;
   lng?: number;
   batteryAdded?: boolean;
@@ -98,7 +100,7 @@ type LeadBody = {
   batteryModel?: string;
   federalTaxCredit?: number;
   netSystemCost?: number;
-  referredBy?: string;
+  referredBy?: string | null;
   selectedInverterType?: string;
   selectedPanelBrand?: string;
   selectedPanelModel?: string;
@@ -106,10 +108,12 @@ type LeadBody = {
   solarTimeline?: string;
   systemCostBeforeIncentives?: number;
   turnstileToken?: string;
+  utm_id?: string;
   website?: string;
 };
 
 const finiteNumber = z.number().finite();
+const maxLeadPayloadBytes = 4 * 1024 * 1024;
 const leadBodySchema = z.object({
   address: z.string().trim().min(8).max(220),
   annualEnergyKwh: finiteNumber.optional(),
@@ -140,27 +144,28 @@ const leadBodySchema = z.object({
   phone: z.string().trim().max(32).optional(),
   preferredContactMethod: z.string().trim().max(40).optional(),
   quoteRequested: z.boolean().optional(),
-  referredBy: z.string().trim().max(64).optional(),
-  reportSnapshot: z.unknown().optional(),
+  referredBy: z.string().trim().max(64).nullish(),
+  reportSnapshot: z.unknown().nullish(),
   roofAnalysisProof: z
     .object({
       exp: finiteNumber,
       token: z.string().regex(/^[a-f0-9]{64}$/i),
     })
-    .optional(),
+    .nullish(),
   roofAreaSqm: finiteNumber.optional(),
   roofPitchDegrees: finiteNumber.optional(),
   selectedInverterType: z.string().trim().max(40).optional(),
   selectedPanelBrand: z.string().trim().max(100).optional(),
   selectedPanelModel: z.string().trim().max(150).optional(),
   selectedPanelWatts: finiteNumber.optional(),
-  signedRoofAnalysis: z.unknown().optional(),
+  signedRoofAnalysis: z.unknown().nullish(),
   solarSuitabilityScore: finiteNumber.optional(),
   solarTimeline: z.string().trim().max(40).optional(),
   systemCostBeforeIncentives: finiteNumber.optional(),
   systemSizeKw: finiteNumber.optional(),
   turnstileToken: z.string().max(4096).optional(),
   twentyYearSavings: finiteNumber.optional(),
+  utm_id: z.string().trim().max(240).optional(),
   usableAreaSqm: finiteNumber.optional(),
   utilityBillUploadClaim: z.string().max(4096).optional(),
   utilityBillUploaded: z.boolean().optional(),
@@ -178,7 +183,7 @@ export async function POST(request: Request) {
       return maintenance;
     }
 
-    if (isRequestTooLarge(request, 1024 * 1024)) {
+    if (isRequestTooLarge(request, maxLeadPayloadBytes)) {
       logAbuseSignal(request, "lead-payload-too-large", {
         route: "api:leads",
       });
@@ -210,7 +215,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const jsonBody = await readJsonWithLimit(request, 1024 * 1024);
+    const jsonBody = await readJsonWithLimit(request, maxLeadPayloadBytes);
 
     if (!jsonBody.ok && jsonBody.reason === "too_large") {
       logAbuseSignal(request, "lead-payload-too-large", {
@@ -360,9 +365,7 @@ export async function POST(request: Request) {
       reportSnapshot?.metrics.avgPitchDeg
     );
     const trustedSuitabilityScore = toNullableScore(
-      reportSnapshot?.solarReadinessScore ??
-        reportSnapshot?.roofModelConfidence ??
-        reportSnapshot?.roofAnalysis.rooftopConfidenceScore
+      reportSnapshot?.solarReadinessScore
     );
     const leadScore = calculateLeadScore({
       annualSavings: estimatedSavings,
@@ -561,57 +564,34 @@ export async function POST(request: Request) {
       utilityBillUploaded,
     });
 
-    const scoredInsertWithoutNewOptionalFields = Object.fromEntries(
-      Object.entries(scoredInsert).filter(
-        ([key]) =>
-          ![
-            "battery_added",
-            "battery_brand",
-            "battery_cost",
-            "battery_model",
-            "electric_bill_range",
-            "normalized_address",
-            "normalized_email",
-            "normalized_phone",
-            "owns_home",
-            "referral_code",
-            "referred_by",
-            "report_snapshot",
-            "report_pdf_url",
-            "utility_bill_file_path",
-            "automated_contact_consent",
-            "consent_disclosure_text",
-            "consent_disclosure_version",
-            "consent_ip_hash",
-            "consent_source",
-            "consent_user_agent_hash",
-            "installer_contact_consent",
-            "installer_contact_consent_at",
-            "marketing_email_consent",
-            "phone_call_consent",
-            "report_delivery_consent_at",
-            "text_message_consent",
-            "solar_timeline",
-          ].includes(key)
-      )
-    );
     const saveResult = await insertLeadRecord(
       supabase,
-      scoredInsert,
-      scoredInsertWithoutNewOptionalFields,
-      extendedInsert,
-      baseInsert
+      scoredInsert
     );
 
     const { data, error } = saveResult;
-    if (error?.code === "23505") {
+    if (error && "code" in error && error.code === "23505") {
       return NextResponse.json(
         { message: "This request could not be saved. If you previously requested a report, use its original link or contact support. Existing reports have not been changed." },
         { status: 409 }
       );
     }
 
-    if (error) {
+    if (saveResult.integrityColumn) {
+      console.error("[lead-save:schema-incomplete]", {
+        column: saveResult.integrityColumn,
+      });
+      return NextResponse.json(
+        {
+          code: "lead_schema_incomplete",
+          message:
+            "We could not save your report right now. Your estimate is still available. Please try again later or contact support.",
+        },
+        { status: 503 }
+      );
+    }
+
+    if (error || !data) {
       console.error("[lead-save:error]", {
         code: "database_write_failed",
       });
@@ -621,7 +601,28 @@ export async function POST(request: Request) {
       );
     }
 
+    if (saveResult.omittedColumns.length) {
+      console.warn("[lead-save:partial-schema]", {
+        leadId: data.id,
+        omittedColumns: saveResult.omittedColumns,
+      });
+    }
+
     await saveConsentEvent(supabase, data.id, consent);
+
+    // This is a best-effort, disabled-by-default attribution signal. It runs
+    // immediately after the lead is persisted and carries opaque IDs plus a
+    // timestamp; an unavailable provider must never block the report flow.
+    const fourfoldResult = await sendFourfoldConversion({
+      eventId: data.id,
+      timestamp: now,
+      utmId: body.utm_id,
+    });
+    if (fourfoldResult.status === "failed") {
+      console.warn("[fourfold-attribution] delivery failed", {
+        reason: fourfoldResult.reason,
+      });
+    }
 
     const finalizedUtilityBillPath =
       utilityBillUploaded && utilityBillFilePath
@@ -698,9 +699,9 @@ export async function POST(request: Request) {
         address: data.address,
         monthlyBill: data.monthly_bill,
         estimatedSavings: data.estimated_savings,
-        emailDeliveryStatus: notificationResults.homeownerEmail.ok
-          ? "sent"
-          : "delayed",
+        emailDeliveryStatus: getReportEmailDeliveryStatus(
+          notificationResults.homeownerEmail
+        ),
         quoteRequested,
         referralCode,
         reportSummary: {
@@ -712,6 +713,10 @@ export async function POST(request: Request) {
           systemSizeKw: leadNumbers.systemSizeKw,
         },
         reportUrl,
+        persistence: {
+          omittedColumns: saveResult.omittedColumns,
+          status: saveResult.omittedColumns.length ? "partial" : "complete",
+        },
         updatedExisting: false,
         utilityBillUploaded: utilityBillStored,
       },
@@ -984,44 +989,77 @@ function createReferralCode() {
   return randomBytes(5).toString("base64url").slice(0, 8).toUpperCase();
 }
 
+const requiredLeadModelColumns = new Set([
+  "annual_energy_kwh",
+  "annual_savings",
+  "energy_offset_pct",
+  "panel_count",
+  "report_snapshot",
+  "roi_years",
+  "selected_panel_brand",
+  "selected_panel_model",
+  "selected_panel_watts",
+  "system_size_kw",
+]);
+
 async function insertLeadRecord(
   supabase: SupabaseClient,
-  scoredInsert: Record<string, unknown>,
-  scoredInsertWithoutNewOptionalFields: Record<string, unknown>,
-  extendedInsert: Record<string, unknown>,
-  baseInsert: Record<string, unknown>
+  scoredInsert: Record<string, unknown>
 ) {
-  let result = await supabase
-    .from("leads")
-    .insert(scoredInsert)
-    .select("id, name, email, address, monthly_bill, estimated_savings")
-    .single();
+  const payload = { ...scoredInsert };
+  const omittedColumns: string[] = [];
 
-  if (result.error && shouldRetryLegacyInsert(result.error.message)) {
-    result = await supabase
+  for (let attempt = 0; attempt < Object.keys(scoredInsert).length + 1; attempt += 1) {
+    const result = await supabase
       .from("leads")
-      .insert(scoredInsertWithoutNewOptionalFields)
+      .insert(payload)
       .select("id, name, email, address, monthly_bill, estimated_savings")
       .single();
+
+    if (!result.error) {
+      return {
+        ...result,
+        integrityColumn: null,
+        omittedColumns,
+      };
+    }
+
+    if (!shouldRetryLegacyInsert(result.error.message)) {
+      return {
+        ...result,
+        integrityColumn: null,
+        omittedColumns,
+      };
+    }
+
+    const missingColumn = getMissingInsertColumn(result.error.message);
+
+    if (!missingColumn || requiredLeadModelColumns.has(missingColumn)) {
+      return {
+        ...result,
+        integrityColumn: missingColumn,
+        omittedColumns,
+      };
+    }
+
+    if (!Object.prototype.hasOwnProperty.call(payload, missingColumn)) {
+      return {
+        ...result,
+        integrityColumn: null,
+        omittedColumns,
+      };
+    }
+
+    delete payload[missingColumn];
+    omittedColumns.push(missingColumn);
   }
 
-  if (result.error && shouldRetryLegacyInsert(result.error.message)) {
-    result = await supabase
-      .from("leads")
-      .insert(extendedInsert)
-      .select("id, name, email, address, monthly_bill, estimated_savings")
-      .single();
-  }
-
-  if (result.error && shouldRetryLegacyInsert(result.error.message)) {
-    result = await supabase
-      .from("leads")
-      .insert(baseInsert)
-      .select("id, name, email, address, monthly_bill, estimated_savings")
-      .single();
-  }
-
-  return result;
+  return {
+    data: null,
+    error: { message: "Lead insert exceeded schema compatibility retries." },
+    integrityColumn: null,
+    omittedColumns,
+  };
 }
 
 async function saveReportPdfUrl(
@@ -1051,4 +1089,17 @@ function shouldRetryLegacyInsert(message: string) {
     normalized.includes("schema cache") ||
     normalized.includes("could not find")
   );
+}
+
+function getMissingInsertColumn(message: string) {
+  const quotedColumns = [...message.matchAll(/["']([a-z_][a-z0-9_]*)["']/gi)].map(
+    (match) => match[1]
+  );
+  const quotedColumn = quotedColumns.find((column) => column !== "leads");
+
+  if (quotedColumn) {
+    return quotedColumn;
+  }
+
+  return message.match(/column\s+(?:[a-z_][a-z0-9_]*\.)?([a-z_][a-z0-9_]*)/i)?.[1] ?? null;
 }

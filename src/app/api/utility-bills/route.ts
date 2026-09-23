@@ -19,12 +19,19 @@ import {
   createUtilityBillUploadClaim,
   isUtilityBillUploadSecretConfigured,
 } from "@/lib/utility-bill-claims";
+import {
+  UTILITY_BILL_ALLOWED_MIME_TYPES,
+  UTILITY_BILL_FILE_TYPE_MESSAGE,
+  UTILITY_BILL_MAX_FILE_SIZE_BYTES,
+  UTILITY_BILL_MAX_FILE_SIZE_MESSAGE,
+  UTILITY_BILL_MAX_REQUEST_SIZE_BYTES,
+  getUtilityBillMimeType,
+} from "@/lib/utility-bill-upload";
 
 export const runtime = "nodejs";
 
 const bucketName = "utility-bills";
-const allowedMimeTypes = ["application/pdf", "image/jpeg", "image/png"];
-const maxFileSizeBytes = 10 * 1024 * 1024;
+const allowedMimeTypes = [...UTILITY_BILL_ALLOWED_MIME_TYPES];
 
 export async function POST(request: Request) {
   try {
@@ -34,11 +41,11 @@ export async function POST(request: Request) {
       return maintenance;
     }
 
-    if (isRequestTooLarge(request, maxFileSizeBytes + 1024 * 1024)) {
+    if (isRequestTooLarge(request, UTILITY_BILL_MAX_REQUEST_SIZE_BYTES)) {
       logAbuseSignal(request, "utility-bill-payload-too-large", {
         route: "api:utility-bills",
       });
-      return payloadTooLargeResponse("Utility bill uploads must be 10MB or smaller.");
+      return payloadTooLargeResponse(UTILITY_BILL_MAX_FILE_SIZE_MESSAGE);
     }
 
     const rateLimit = await enforceRateLimit({
@@ -121,28 +128,27 @@ export async function POST(request: Request) {
 
     if (!isUploadFile(file)) {
       return NextResponse.json(
-        { message: "Upload a PDF, JPG, or PNG utility bill.", uploaded: false },
+        { message: UTILITY_BILL_FILE_TYPE_MESSAGE, uploaded: false },
         { status: 400 }
       );
     }
 
-    if (!allowedMimeTypes.includes(file.type)) {
+    const mimeType = getUtilityBillMimeType(file.name, file.type);
+
+    if (!mimeType) {
       return NextResponse.json(
-        { message: "Upload a PDF, JPG, or PNG utility bill.", uploaded: false },
+        { message: UTILITY_BILL_FILE_TYPE_MESSAGE, uploaded: false },
         { status: 400 }
       );
     }
 
-    if (file.size > maxFileSizeBytes) {
-      return NextResponse.json(
-        { message: "Utility bill uploads must be 10MB or smaller.", uploaded: false },
-        { status: 400 }
-      );
+    if (file.size > UTILITY_BILL_MAX_FILE_SIZE_BYTES) {
+      return payloadTooLargeResponse(UTILITY_BILL_MAX_FILE_SIZE_MESSAGE);
     }
 
     const fileBuffer = Buffer.from(await file.arrayBuffer());
 
-    if (!hasExpectedFileSignature(fileBuffer, file.type)) {
+    if (!hasExpectedFileSignature(fileBuffer, mimeType)) {
       return NextResponse.json(
         { message: "The uploaded file does not match its PDF, JPG, or PNG type.", uploaded: false },
         { status: 400 }
@@ -161,7 +167,7 @@ export async function POST(request: Request) {
     if (existingBucket.error) {
       const createdBucket = await supabase.storage.createBucket(bucketName, {
         allowedMimeTypes,
-        fileSizeLimit: maxFileSizeBytes,
+        fileSizeLimit: UTILITY_BILL_MAX_FILE_SIZE_BYTES,
         public: false,
       });
 
@@ -173,12 +179,12 @@ export async function POST(request: Request) {
       }
     }
 
-    const extension = getSafeExtension(file.name, file.type);
+    const extension = getSafeExtension(file.name, mimeType);
     const filePath = `pending/${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}${extension}`;
     const upload = await supabase.storage
       .from(bucketName)
       .upload(filePath, fileBuffer, {
-        contentType: file.type,
+        contentType: mimeType,
         upsert: false,
       });
 

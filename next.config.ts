@@ -2,6 +2,7 @@ import type { NextConfig } from "next";
 
 const isDevelopment = process.env.NODE_ENV === "development";
 const isVercelProduction = process.env.VERCEL_ENV === "production";
+const isVercelPreview = Boolean(process.env.VERCEL_ENV && !isVercelProduction);
 const scriptSources = [
   "'self'",
   "'unsafe-inline'",
@@ -47,6 +48,11 @@ const nextConfig: NextConfig = {
   },
   async headers() {
     return [
+      ...["/api/:path*", "/dashboard/:path*", "/estimate", "/report/:path*", "/thank-you"].map((source) => ({
+        source,
+        headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }],
+      })),
+      ...(isVercelPreview ? [{ source: "/:path*", headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }] }] : []),
       {
         source: "/hero-poster.jpg",
         headers: [{ key: "Cache-Control", value: heroAssetCacheControl }],

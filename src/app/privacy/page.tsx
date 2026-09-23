@@ -1,12 +1,13 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { APP_CANONICAL_URL, APP_NAME } from "@/lib/brand";
+import { APP_NAME } from "@/lib/brand";
+import { publicPageMetadata } from "@/lib/seo";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = publicPageMetadata({
   title: "Privacy Notice",
   description: `How ${APP_NAME} uses information submitted for a solar report.`,
-  alternates: { canonical: `${APP_CANONICAL_URL}/privacy` },
-};
+  path: "/privacy",
+});
 
 export default function PrivacyPage() {
   return (

@@ -6,6 +6,21 @@ test.beforeEach(async ({ page }) => {
   await installSafeApiMocks(page);
 });
 
+test("3D rate limits explain the failure and retry recovers", async ({ page }) => {
+  let limited = true;
+  await page.route("**/__e2e__/test-dsm.tif", async (route) => {
+    if (!limited) return route.fallback();
+    await route.fulfill({ status: 429, headers: { "Retry-After": "120" }, body: "{}" });
+  });
+  const home = new HomeEstimatePage(page);
+  await home.openReadyEstimate();
+  await expect(page.getByText(/roof imagery request limit was reached/i)).toBeVisible();
+  await expect(page.getByText(/3D model data is not available for this address/i)).toHaveCount(0);
+  limited = false;
+  await page.getByRole("button", { name: "Retry 3D model" }).click();
+  await expect(page.getByTestId("roof-scene-3d").locator("canvas")).toBeVisible();
+});
+
 test("renders a ready 3D roof analysis with panels and sunlight enabled", async ({
   page,
 }) => {

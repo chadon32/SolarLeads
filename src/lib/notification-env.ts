@@ -37,9 +37,13 @@ export function getNotificationEnvStatus(): NotificationEnvStatus {
 }
 
 export function getResendFromEmail() {
+  const configuredSenders = [
+    process.env.FROM_EMAIL?.trim(),
+    process.env.RESEND_FROM_EMAIL?.trim(),
+  ].filter((sender): sender is string => Boolean(sender));
+
   return (
-    process.env.FROM_EMAIL?.trim() ||
-    process.env.RESEND_FROM_EMAIL?.trim() ||
+    configuredSenders.find((sender) => !isConsumerMailboxSender(sender)) ||
     "reports@solartelligence.com"
   );
 }
@@ -53,6 +57,13 @@ export function isValidSenderEmail(value: string) {
   const email = (match?.[1] ?? value).trim();
 
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function isConsumerMailboxSender(sender: string) {
+  const match = sender.match(/<([^>]+)>/);
+  const email = (match?.[1] ?? sender).trim();
+  const domain = email.split("@").at(-1)?.toLowerCase();
+  return domain === "gmail.com" || domain === "googlemail.com";
 }
 
 function envMissing(name: string) {

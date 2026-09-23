@@ -1,8 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import { Instrument_Serif, Manrope, Space_Grotesk } from "next/font/google";
 import { GoogleAnalytics } from "@/components/google-analytics";
-import { StructuredData } from "@/components/structured-data";
 import { APP_CANONICAL_URL, APP_NAME, APP_TAGLINE } from "@/lib/brand";
+import { isPreviewDeployment } from "@/lib/seo";
 import "./globals.css";
 
 const display = Space_Grotesk({
@@ -22,24 +22,12 @@ const editorial = Instrument_Serif({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL(
-    process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"
-  ),
+  metadataBase: new URL(APP_CANONICAL_URL),
   title: {
     default: `${APP_NAME} | Solar Readiness Reports & Roof Analysis`,
     template: `%s | ${APP_NAME}`,
   },
   description: APP_TAGLINE,
-  alternates: {
-    canonical: APP_CANONICAL_URL,
-  },
-  keywords: [
-    "Arizona solar",
-    "solar estimate",
-    "home solar savings",
-    "address autocomplete",
-    "AI solar report",
-  ],
   authors: [{ name: APP_NAME }],
   creator: APP_NAME,
   publisher: APP_NAME,
@@ -63,10 +51,7 @@ export const metadata: Metadata = {
     description: APP_TAGLINE,
     images: ["/opengraph-image"],
   },
-  robots: {
-    index: true,
-    follow: true,
-  },
+  ...(isPreviewDeployment() ? { robots: { index: false, follow: false } } : {}),
   icons: {
     icon: "/icon.svg",
   },
@@ -105,7 +90,6 @@ export default function RootLayout({
           Skip to main content
         </a>
         <GoogleAnalytics />
-        <StructuredData />
         <div id="main-content" tabIndex={-1}>
           {children}
         </div>

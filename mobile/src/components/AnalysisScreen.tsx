@@ -20,7 +20,7 @@ import {
   ALLOWED_HOSTS,
   APP_URL,
   buildEstimateUrl,
-  buildShareUrl,
+  buildEstimateNavigationUrl,
 } from "../config";
 import {
   createNativeSectionNavigationScript,
@@ -29,7 +29,8 @@ import {
   type AnalysisSection,
   type NativeAnalysisEvent,
 } from "../analysis-bridge";
-import { isEstimateDocument, sanitizeEstimateShareUrl } from "../estimate-navigation";
+import { buildRedactedNativeSharePayload } from "../estimate-sharing";
+import { isEstimateDocument, sanitizeEstimateNavigationUrl } from "../estimate-navigation";
 import { colors } from "../theme";
 
 type AnalysisScreenProps = {
@@ -216,7 +217,7 @@ function shouldOpenOutside(rawUrl: string) {
 }
 
 export function AnalysisScreen({ address, onHome }: AnalysisScreenProps) {
-  const shareUrlRef = useRef(buildShareUrl(address));
+  const navigationUrlRef = useRef(buildEstimateNavigationUrl(address));
   const loadCompletedRef = useRef(false);
   const analysisStateRef = useRef(initialNativeAnalysisState);
   const [estimateDocument, setEstimateDocument] = useState(true);
@@ -299,9 +300,9 @@ export function AnalysisScreen({ address, onHome }: AnalysisScreenProps) {
       };
 
       if (!canStayInApp(event.nativeEvent.url)) return;
-      if (message.type === "estimate-share") {
-        const safeUrl = sanitizeEstimateShareUrl(message.url, APP_URL);
-        if (safeUrl) shareUrlRef.current = safeUrl;
+      if (message.type === "estimate-navigation") {
+        const safeUrl = sanitizeEstimateNavigationUrl(message.url, APP_URL);
+        if (safeUrl) navigationUrlRef.current = safeUrl;
       }
       if (
         message.type === "analysis-status" &&
@@ -339,11 +340,7 @@ export function AnalysisScreen({ address, onHome }: AnalysisScreenProps) {
 
   async function shareEstimate() {
     try {
-      await Share.share({
-        title: "Solartelligence solar estimate",
-        message: `See this customized solar estimate: ${shareUrlRef.current}`,
-        url: shareUrlRef.current,
-      });
+      await Share.share(buildRedactedNativeSharePayload());
     } catch {
       Alert.alert("Unable to share", "Your estimate is still available. Please try again.");
     }
@@ -469,8 +466,8 @@ export function AnalysisScreen({ address, onHome }: AnalysisScreenProps) {
                   updateAnalysisState({ type: "reset" });
                   if (!navigation.loading) finishLoading();
                 }
-                const safeUrl = sanitizeEstimateShareUrl(navigation.url, APP_URL);
-                if (safeUrl) shareUrlRef.current = safeUrl;
+                const safeUrl = sanitizeEstimateNavigationUrl(navigation.url, APP_URL);
+                if (safeUrl) navigationUrlRef.current = safeUrl;
               }}
               onLoadStart={(event) => {
                 if (loadFallbackRef.current) clearTimeout(loadFallbackRef.current);

@@ -17,14 +17,40 @@ export type GeoTiffRaster = {
   width: number;
 };
 
-export async function readGeoTiffRaster(
+export class SolarRasterLoadError extends Error {}
+
+// Share in-flight and decoded rasters across sunlight/3D views. Keep memory bounded.
+const rasterCache = new Map<string, { expires: number; promise: Promise<GeoTiffRaster | null> }>();
+
+export function readGeoTiffRaster(
   url: string,
   fallbackBounds: RoofGeoBounds | null
 ): Promise<GeoTiffRaster | null> {
-  const response = await fetch(url, { cache: "no-store" });
+  const key = JSON.stringify([url, fallbackBounds]);
+  const cached = rasterCache.get(key);
+  if (cached && cached.expires > Date.now()) return cached.promise;
+  const promise = loadGeoTiffRaster(url, fallbackBounds).catch((error) => {
+    if (rasterCache.get(key)?.promise === promise) rasterCache.delete(key);
+    throw error;
+  });
+  rasterCache.delete(key);
+  if (rasterCache.size >= 12) rasterCache.delete(rasterCache.keys().next().value!);
+  rasterCache.set(key, { expires: Date.now() + 300_000, promise });
+  return promise;
+}
+
+async function loadGeoTiffRaster(url: string, fallbackBounds: RoofGeoBounds | null): Promise<GeoTiffRaster> {
+  const response = await fetch(url, { cache: "default", signal: AbortSignal.timeout(20_000) });
 
   if (!response.ok) {
-    return null;
+    if (response.status === 429) {
+      const seconds = Number(response.headers.get("Retry-After"));
+      const wait = Number.isFinite(seconds) && seconds > 0
+        ? ` Try again in about ${Math.ceil(seconds / 60)} minute(s).`
+        : " Please wait before retrying.";
+      throw new SolarRasterLoadError(`The roof imagery request limit was reached.${wait} Your roof estimate is still available.`);
+    }
+    throw new SolarRasterLoadError("Roof elevation data could not be downloaded. Please try again shortly.");
   }
 
   const { fromArrayBuffer } = await import("geotiff");

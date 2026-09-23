@@ -18,6 +18,14 @@ import {
   useState,
 } from "react";
 import type { RoofAnalysis } from "@/lib/roof-analysis";
+import { RedactedScenarioShareCard } from "@/components/redacted-scenario-share-card";
+import { trackEvent } from "@/lib/analytics";
+import {
+  buildRedactedScenarioText,
+  getBroadRoofCategory,
+  getBroadSunCategory,
+  getSystemRange,
+} from "@/lib/scenario-share";
 import {
   buildSolarAdvisorInputFromAnalysis,
   buildSolarAdvisorProfile,
@@ -85,6 +93,8 @@ type MetricSource =
   | "estimated";
 
 const monthlyBillOptions = [100, 150, 200, 250, 300, 350, 400, 450, 500];
+const DEFAULT_LOAN_RATE = 6.49;
+const DEFAULT_LOAN_TERM_YEARS = 20;
 
 function billOptionsIncluding(currentBill: number) {
   return monthlyBillOptions.includes(currentBill)
@@ -137,6 +147,10 @@ export function SolarReportDashboard({
   const selectedInverter = getInverterOption(selectedInverterType);
   const selectedBattery = addBattery ? getBatteryById(batteryOption) : null;
   const activeTab = externalActiveTab ?? internalActiveTab;
+  const [reportFormOpened, setReportFormOpened] = useState(activeTab === "send");
+  if (activeTab === "send" && !reportFormOpened) {
+    setReportFormOpened(true);
+  }
   const values = useMemo(
     () =>
       buildDashboardValues(
@@ -351,6 +365,7 @@ export function SolarReportDashboard({
         >
           {activeTab === "overview" ? (
             <ReportOverviewTab
+              analysis={analysis}
               onSendReport={openSendReport}
               values={values}
             />
@@ -391,9 +406,9 @@ export function SolarReportDashboard({
               values={values}
             />
           ) : null}
-          {activeTab === "send" ? (
-            <SendReportTab sendReportContent={sendReportContent} />
-          ) : null}
+          <div hidden={activeTab !== "send"}>
+            {reportFormOpened ? <SendReportTab sendReportContent={sendReportContent} /> : null}
+          </div>
         </div>
       </section>
     </>
@@ -1169,12 +1184,41 @@ function PanelComparisonTable({
 }
 
 function ReportOverviewTab({
+  analysis,
   onSendReport,
   values,
 }: {
+  analysis: RoofAnalysis;
   onSendReport: () => void;
   values: DashboardValues;
 }) {
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "unavailable">("idle");
+
+  const copyHomeownerSummary = async () => {
+    const summary = buildRedactedScenarioText({
+      label: "Planning baseline",
+      roof: getBroadRoofCategory(analysis.roofShape),
+      sun: getBroadSunCategory(analysis.shadingRisk),
+      system: getSystemRange(values.recommendedKw),
+    });
+
+    if (!navigator.clipboard?.writeText) {
+      setCopyStatus("unavailable");
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(summary);
+      setCopyStatus("copied");
+      trackEvent("scenario_share_copied", {
+        output: "overview_copy",
+        surface: "overview",
+      });
+    } catch {
+      setCopyStatus("unavailable");
+    }
+  };
+
   return (
     <div className="grid gap-4 lg:grid-cols-[1fr_0.75fr]">
       <div className="grid grid-cols-2 gap-2 sm:gap-3">
@@ -1195,13 +1239,13 @@ function ReportOverviewTab({
           icon={Zap}
           source="user-adjusted"
           title={`${values.recommendedKw.toFixed(1)} kW`}
-          body="Estimated panel capacity. One kW equals 1,000 watts of panel power."
+          body="Estimated system power rating. One kW equals 1,000 watts of panel capacity; production also depends on sunlight, roof layout, and equipment."
         />
         <CompactInfo
           icon={TrendingUp}
           source="user-adjusted"
           title={formatMoney(values.annualSavings)}
-          body="Estimated annual savings using the monthly bill input."
+          body="Estimated first-year bill savings using the monthly bill input."
           tone="gold"
         />
       </div>
@@ -1213,7 +1257,12 @@ function ReportOverviewTab({
           {values.advisor.summary}
         </p>
         <div className="mt-4 grid grid-cols-2 gap-2">
-          <MiniReadout label="20-year savings" source="modeled" value={formatMoney(values.twentyYearSavings)} />
+          <MiniReadout
+            label="20-year savings"
+            note="Modeled net comparison of utility and solar costs over 20 years; not annual savings multiplied by 20."
+            source="modeled"
+            value={formatMoney(values.twentyYearSavings)}
+          />
           <MiniReadout label="Estimated annual bill covered" source="modeled" value={`${values.energyOffsetPct}%`} />
         </div>
         <button
@@ -1223,6 +1272,25 @@ function ReportOverviewTab({
         >
           Send My Full Report
         </button>
+        <button
+          type="button"
+          onClick={copyHomeownerSummary}
+          className="mt-2 inline-flex w-full items-center justify-center rounded-full border border-white/12 bg-white/[0.06] px-5 py-3 text-sm font-semibold text-white/82 transition hover:bg-white/[0.1] hover:text-white"
+        >
+          {copyStatus === "copied" ? "Copied homeowner summary" : "Copy homeowner summary"}
+        </button>
+        <p aria-live="polite" className="mt-2 text-center text-xs text-cyan-100/72">
+          {copyStatus === "copied"
+            ? "Summary copied to your clipboard."
+            : copyStatus === "unavailable"
+              ? "Clipboard access is unavailable in this browser."
+              : "Share a short, plain-language snapshot of this estimate."}
+        </p>
+        <RedactedScenarioShareCard
+          roofShape={analysis.roofShape}
+          shadingRisk={analysis.shadingRisk}
+          systemKw={values.recommendedKw}
+        />
       </div>
     </div>
   );
@@ -1360,17 +1428,26 @@ function SavingsTab({
           icon={Zap}
           source="user-adjusted"
           title={`${values.recommendedKw.toFixed(1)} kW`}
-          body="Recommended installation size from the current roof and bill profile."
+          body="System power rating from the current roof and bill profile. One kW equals 1,000 watts of panel capacity."
         />
         <CompactInfo
           icon={TrendingUp}
           source="user-adjusted"
           title={formatMoney(values.annualSavings)}
-          body="Estimated average annual savings."
+          body="Estimated first-year bill savings from the current bill and roof estimate."
           tone="gold"
         />
       </div>
-      <EstimateTable rows={values.savingsRows} />
+      <div className="grid gap-3">
+        <p className="rounded-[1rem] border border-white/10 bg-black/20 p-4 text-sm leading-6 text-white/62">
+          Annual savings is a modeled first-year estimate. 20-year cash savings
+          is a modeled net comparison of utility and solar costs over 20 years;
+          it is not annual savings multiplied by 20. Payback is the estimated
+          time for modeled savings to cover the current net system cost; it is
+          not the loan term.
+        </p>
+        <EstimateTable rows={values.savingsRows} />
+      </div>
     </div>
   );
 }
@@ -1466,8 +1543,8 @@ function FinancingTab({
   values: DashboardValues;
 }) {
   const [downPaymentPct, setDownPaymentPct] = useState(0);
-  const [loanRate, setLoanRate] = useState(6.49);
-  const [loanTermYears, setLoanTermYears] = useState(20);
+  const [loanRate, setLoanRate] = useState(DEFAULT_LOAN_RATE);
+  const [loanTermYears, setLoanTermYears] = useState(DEFAULT_LOAN_TERM_YEARS);
   const [showDetails, setShowDetails] = useState(false);
   const downPaymentAmount = Math.round(
     values.installedCost * (downPaymentPct / 100)
@@ -1482,16 +1559,49 @@ function FinancingTab({
     loanTermYears
   );
   const netMonthly = values.monthlySavings - monthlyLoanPayment;
+  const scheduledLoanPayments = monthlyLoanPayment * loanTermYears * 12;
+  const totalSolarPayments = downPaymentAmount + scheduledLoanPayments;
   const loanCosts = calculateTwentyYearSolarCosts({
     annualSavings: values.annualSavings,
     monthlyBill: values.monthlyBill,
-    totalSolarPayments:
-      downPaymentAmount + monthlyLoanPayment * loanTermYears * 12,
+    totalSolarPayments,
   });
   const selectedNetBenefit = financingMode === "lease"
     ? null
     : financingMode === "loan" ? loanCosts.totalSavings : values.twentyYearSavings;
   const hasNetLoss = selectedNetBenefit !== null && selectedNetBenefit < 0;
+  const currentScenarioValue = financingMode === "loan"
+    ? `${downPaymentPct}% down, ${loanRate.toFixed(1)}% APR, ${loanTermYears}-year term`
+    : financingMode === "buy"
+      ? `Cash purchase, ${formatMoney(values.netCostAfterCredit)} estimated net cost`
+      : "Lease or PPA provider terms required; payments are not modeled";
+  const financingRows = financingMode === "loan"
+    ? [
+        { label: "Down payment", source: "illustrative" as const, value: downPaymentAmount },
+        {
+          label: `Scheduled loan payments (${loanTermYears} years)`,
+          source: "illustrative" as const,
+          value: scheduledLoanPayments,
+        },
+        {
+          label: `20-year cost with solar (includes full ${loanTermYears}-year loan)`,
+          source: "illustrative" as const,
+          value: loanCosts.totalCostWithSolar,
+        },
+        { label: "Total 20-year cost without solar", source: "modeled" as const, value: loanCosts.totalCostWithoutSolar },
+        { label: "Total 20-year savings", source: "illustrative" as const, value: loanCosts.totalSavings },
+      ]
+    : values.financingRows;
+  const financingAssumptions = [
+    { label: "Current scenario", value: currentScenarioValue },
+    ...(financingMode === "loan"
+      ? [{
+          label: "20-year comparison",
+          value: `Includes the full ${loanTermYears}-year loan payment obligation`,
+        }]
+      : []),
+    ...values.financingAssumptions,
+  ];
 
   return (
     <div
@@ -1562,6 +1672,7 @@ function FinancingTab({
                 Term
               </span>
               <select
+                aria-label="Term"
                 value={loanTermYears}
                 onChange={(event) => setLoanTermYears(Number(event.target.value))}
                 className="rounded-full border border-white/12 bg-black/35 px-3 py-2 font-semibold text-white outline-none"
@@ -1600,13 +1711,33 @@ function FinancingTab({
             </div>
           </div>
         ) : null}
+        <div
+          aria-label="Current financing scenario"
+          aria-live="polite"
+          className="mt-4 rounded-[1rem] border border-cyan-200/15 bg-cyan-200/[0.06] p-3"
+        >
+          <p className="text-[0.62rem] font-semibold uppercase tracking-[0.2em] text-cyan-100/80">
+            Current scenario
+          </p>
+          <p className="mt-2 text-sm leading-6 text-white/78">
+            {formatMoney(values.monthlyBill)}/mo bill, {values.panelCount} panels ({values.recommendedKw.toFixed(1)} kW), {values.selectedPanel.brand} {values.selectedPanel.model}
+          </p>
+          <p className="mt-1 text-sm font-semibold leading-6 text-white">
+            {financingMode === "loan" ? "Loan: " : ""}{currentScenarioValue}
+          </p>
+        </div>
         <div className="mt-4 grid gap-2">
           {financingMode === "buy" ? (
             <>
               <MiniReadout label="System cost" source="illustrative" value={formatMoney(values.installedCost)} />
               <MiniReadout label="Modeled federal credit" source="illustrative" value={formatMoney(values.taxCredit)} />
               <MiniReadout label="Estimated net cost" source="illustrative" value={formatMoney(values.netCostAfterCredit)} />
-              <MiniReadout label="Modeled payback" source="modeled" value={`${values.paybackYears.toFixed(1)} years`} />
+              <MiniReadout
+                label="Modeled payback"
+                note="Estimated time for modeled savings to cover the current net system cost; it is not the loan term."
+                source="modeled"
+                value={formatPaybackYears(values.paybackYears)}
+              />
             </>
           ) : null}
           {financingMode === "lease" ? (
@@ -1636,9 +1767,13 @@ function FinancingTab({
           />
           <MiniReadout
             label={hasNetLoss ? "20-year net loss" : "20-year net savings"}
-            note={hasNetLoss
-              ? "This option costs more than utility-only power under the current assumptions. Consider a smaller system or different financing."
-              : undefined}
+            note={
+              financingMode === "loan"
+                ? `20-year comparison includes the full ${loanTermYears}-year loan payment obligation.`
+                : hasNetLoss
+                  ? "This option costs more than utility-only power under the current assumptions. Consider a smaller system or different financing."
+                  : undefined
+            }
             source="illustrative"
             value={
               selectedNetBenefit === null
@@ -1671,9 +1806,9 @@ function FinancingTab({
                 price, escalator, term, buyout schedule, and production guarantee.
               </p>
             ) : (
-              <EstimateTable rows={values.financingRows} />
+              <EstimateTable rows={financingRows} />
             )}
-            <AssumptionTable rows={values.financingAssumptions} />
+            <AssumptionTable rows={financingAssumptions} />
           </div>
         ) : null}
       </div>
@@ -1708,6 +1843,7 @@ function SliderField({
         </span>
       </div>
       <input
+        aria-label={label}
         type="range"
         min={min}
         max={max}
@@ -2173,22 +2309,20 @@ function buildDashboardValues(
   const treesEquivalent = roundTo(carbonMetricTons * 16.7, 1);
   const federalCreditRate = getFederalResidentialSolarCreditRate();
   const utilityEscalationRate = 0.03;
-  const defaultLoanRate = 6.49;
-  const defaultLoanTermYears = 20;
   const batteryCost = selectedBattery?.cost ?? 0;
   const upfrontAfterIncentives =
     financingMode === "buy" ? netCostAfterCredit : 0;
   const baselineLoanPayment = calculateMonthlyLoanPayment(
     installedCost,
-    defaultLoanRate,
-    defaultLoanTermYears
+    DEFAULT_LOAN_RATE,
+    DEFAULT_LOAN_TERM_YEARS
   );
   const totalPayments =
     financingMode === "buy"
       ? upfrontAfterIncentives
       : financingMode === "lease"
         ? 0
-        : baselineLoanPayment * defaultLoanTermYears * 12;
+        : baselineLoanPayment * DEFAULT_LOAN_TERM_YEARS * 12;
   const financingCosts = calculateTwentyYearSolarCosts({
     annualSavings,
     monthlyBill,
@@ -2225,7 +2359,6 @@ function buildDashboardValues(
             ? `${Math.round(federalCreditRate * 100)}% (eligibility not guaranteed)`
             : "0% for new 2026 expenditures under current IRS guidance",
       },
-      { label: "Baseline loan scenario", value: `${defaultLoanRate.toFixed(2)}% APR / ${defaultLoanTermYears} years, before fees` },
       { label: "Remaining utility charges", value: "Not fully modeled; fixed and demand charges may remain" },
       { label: "Production degradation", value: "Not modeled; installer production warranty required" },
       { label: "Export compensation", value: "Not modeled; verify the applicable utility tariff" },
@@ -2272,6 +2405,12 @@ function formatMoney(value: number) {
     currency: "USD",
     maximumFractionDigits: 0,
   }).format(value);
+}
+
+function formatPaybackYears(value: number) {
+  return Number.isFinite(value) && value > 0
+    ? `${value.toFixed(1)} years`
+    : "Not available";
 }
 
 function formatNumber(value: number) {

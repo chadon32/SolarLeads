@@ -1,5 +1,35 @@
-.claude
+# Vercel metadata and local environment files
+.vercel
+.env
+.env.*
+
+# Local caches, logs, builds, and test evidence
+.next
+out
+coverage
+.codex-artifacts
+.codex-screenshots
+.codex-home-verification.png
+.superpowers
 .dev-logs
+playwright-report
+qa-evidence
+output
+test-results
+tmp
+*.tsbuildinfo
+*.log
+
+# Non-runtime media and generated campaign output
+videos
+marketing-ad
+/Drone_shot_over_solar_neighborhood_202605281518.mp4
+/SOLAR_APP_QA_REPORT.md
+/TEST_EXECUTION.md
+/qa-issues.json
+
+# Local/mobile-only source trees and authored review material
+.claude
 docs
 ios
 marketing-assets
