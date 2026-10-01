@@ -77,3 +77,42 @@ test("Solar API analysis rejects malformed panel centers and caps configurations
     )
   );
 });
+
+test("Solar API analyses never invent obstruction outlines, even on shaded roofs", () => {
+  const lat = 33.415;
+  const lng = -111.831;
+  const box = {
+    ne: { latitude: lat + 0.00008, longitude: lng + 0.00008 },
+    sw: { latitude: lat - 0.00008, longitude: lng - 0.00008 },
+  };
+  const insights: SolarBuildingInsights = {
+    boundingBox: box,
+    imageryQuality: "HIGH",
+    solarPotential: {
+      maxArrayAreaMeters2: 80,
+      maxArrayPanelsCount: 6,
+      // Below 1,500 hours the roof is classed as high shading risk.
+      maxSunshineHoursPerYear: 1_400,
+      panelCapacityWatts: 400,
+      panelHeightMeters: 1.88,
+      panelWidthMeters: 1.05,
+      wholeRoofStats: { areaMeters2: 120 },
+      roofSegmentStats: [
+        { azimuthDegrees: 180, boundingBox: box, pitchDegrees: 18, stats: { areaMeters2: 70, sunshineQuantiles: [700, 900, 1_100, 1_300, 1_400] } },
+        { azimuthDegrees: 0, boundingBox: box, pitchDegrees: 18, stats: { areaMeters2: 50, sunshineQuantiles: [400, 500, 600, 700, 800] } },
+      ],
+      solarPanels: Array.from({ length: 6 }, (_, index) => ({
+        center: { latitude: lat + (index % 3) * 0.00001, longitude: lng + Math.floor(index / 3) * 0.00001 },
+        orientation: "PORTRAIT" as const,
+        segmentIndex: 0,
+        yearlyEnergyDcKwh: 600,
+      })),
+      solarPanelConfigs: [{ panelsCount: 6, yearlyEnergyDcKwh: 3_600 }],
+    },
+  };
+
+  const analysis = buildSolarRoofAnalysis({ address: "6420 E Nance St, Mesa, AZ 85215", insights, lat, lng });
+
+  assert.equal(analysis.shadingRisk, "high");
+  assert.deepEqual(analysis.obstructionOutlines, []);
+});

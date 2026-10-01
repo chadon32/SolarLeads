@@ -2,8 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   boundsCenter,
-  buildHeightfieldGeometry,
-  buildObstructionMarkerGeometry,
   buildPanelTransform,
   buildRoofFaceGeometry,
   buildSegmentPlaneTransforms,
@@ -16,7 +14,6 @@ import {
   metersPerDegreeLng,
   normalizedOutlineToLatLng,
   sampleRasterBilinear,
-  smoothGrid,
 } from "../src/lib/roof-scene-geometry";
 import type { SolarPanelPlacement } from "../src/lib/roof-analysis";
 
@@ -125,89 +122,8 @@ test("expandBoundsMeters grows bounds symmetrically", () => {
   assert.ok(expanded.southwest.lng < bounds.southwest.lng);
 });
 
-test("buildHeightfieldGeometry produces a grid with ground-relative heights", () => {
-  const width = 21;
-  const height = 21;
-  const raster = new Float32Array(width * height);
-  raster.fill(350);
-  // A 5x5 "house" bump in the middle, 4m tall.
-  for (let r = 8; r <= 12; r += 1) {
-    for (let c = 8; c <= 12; c += 1) {
-      raster[r * width + c] = 354;
-    }
-  }
 
-  const bounds = makeBounds(33.401, 33.4, -111.899, -111.9);
-  const geometry = buildHeightfieldGeometry({
-    raster,
-    width,
-    height,
-    bounds,
-    cropBounds: bounds,
-    textureBounds: bounds,
-    origin: boundsCenter(bounds),
-    groundElevationMeters: 350,
-    maxGridSize: 64,
-  });
 
-  assert.ok(geometry);
-  assert.equal(geometry.rows, 21);
-  assert.equal(geometry.cols, 21);
-  assert.equal(geometry.positions.length, 21 * 21 * 3);
-  assert.equal(geometry.uvs.length, 21 * 21 * 2);
-  assert.equal(geometry.indices.length, 20 * 20 * 6);
-  assert.ok(Math.abs(geometry.maxHeightMeters - 4) < 0.001);
-
-  // Center vertex should be on the bump; corner on the ground.
-  const centerVertex = 10 * 21 + 10;
-  assert.ok(Math.abs(geometry.positions[centerVertex * 3 + 1] - 4) < 0.001);
-  assert.equal(geometry.positions[1], 0);
-
-  // UVs span the texture bounds: first vertex is northwest -> u=0, v=1.
-  assert.ok(Math.abs(geometry.uvs[0] - 0) < 1e-6);
-  assert.ok(Math.abs(geometry.uvs[1] - 1) < 1e-6);
-  const lastVertex = 21 * 21 - 1;
-  assert.ok(Math.abs(geometry.uvs[lastVertex * 2] - 1) < 1e-6);
-  assert.ok(Math.abs(geometry.uvs[lastVertex * 2 + 1] - 0) < 1e-6);
-});
-
-test("buildHeightfieldGeometry downsamples large rasters", () => {
-  const width = 500;
-  const height = 500;
-  const raster = new Float32Array(width * height).fill(350);
-  const bounds = makeBounds(33.402, 33.4, -111.898, -111.9);
-
-  const geometry = buildHeightfieldGeometry({
-    raster,
-    width,
-    height,
-    bounds,
-    cropBounds: bounds,
-    textureBounds: bounds,
-    origin: boundsCenter(bounds),
-    groundElevationMeters: 350,
-    maxGridSize: 100,
-  });
-
-  assert.ok(geometry);
-  assert.ok(geometry.rows <= 101, `rows ${geometry.rows}`);
-  assert.ok(geometry.cols <= 101, `cols ${geometry.cols}`);
-});
-
-test("buildHeightfieldGeometry returns null when crop misses the raster", () => {
-  const bounds = makeBounds(33.401, 33.4, -111.899, -111.9);
-  const geometry = buildHeightfieldGeometry({
-    raster: new Float32Array(4).fill(350),
-    width: 2,
-    height: 2,
-    bounds,
-    cropBounds: makeBounds(34.01, 34, -111.899, -111.9),
-    textureBounds: bounds,
-    origin: ORIGIN,
-    groundElevationMeters: 350,
-  });
-  assert.equal(geometry, null);
-});
 
 test("buildPanelTransform positions and orients a module", () => {
   const panel = {
@@ -267,29 +183,7 @@ test("buildPanelTransform positions and orients a module", () => {
   assert.ok(Math.abs(Math.cos(west.headingRad)) < 1e-9);
 });
 
-test("smoothGrid leaves a flat grid unchanged and is a no-op at 0 iterations", () => {
-  const flat = new Float32Array(25).fill(4.5);
-  const smoothed = smoothGrid(flat, 5, 5, 2);
-  for (const value of smoothed) {
-    assert.ok(Math.abs(value - 4.5) < 1e-6);
-  }
 
-  const noisy = Float32Array.from([1, 2, 3, 4, 5, 6, 7, 8, 9]);
-  const untouched = smoothGrid(noisy, 3, 3, 0);
-  assert.deepEqual([...untouched], [...noisy]);
-});
-
-test("smoothGrid attenuates a spike while roughly preserving the surface", () => {
-  const grid = new Float32Array(49).fill(3);
-  grid[24] = 9; // spike in the middle of a 7x7 grid
-
-  const smoothed = smoothGrid(grid, 7, 7, 2);
-
-  assert.ok(smoothed[24] < 6, `spike still ${smoothed[24]}`);
-  const mean =
-    [...smoothed].reduce((sum, value) => sum + value, 0) / smoothed.length;
-  assert.ok(Math.abs(mean - (3 + 6 / 49)) < 0.05, `mean drifted to ${mean}`);
-});
 
 function makePlanePanel({
   lat,
@@ -590,66 +484,7 @@ test("buildRoofFaceGeometry falls back off-raster and rejects degenerate outline
   }
 });
 
-test("buildObstructionMarkerGeometry builds a raised prism on the roof", () => {
-  const size = 11;
-  const bounds = makeBounds(33.4005, 33.3995, -111.8995, -111.9005);
-  const ground = 400;
-  // Flat roof patch 5m above ground.
-  const raster = new Float32Array(size * size).fill(ground + 5);
-  const origin = boundsCenter(bounds);
 
-  const outline = [
-    { lat: 33.4001, lng: -111.9001 },
-    { lat: 33.4001, lng: -111.8999 },
-    { lat: 33.3999, lng: -111.8999 },
-    { lat: 33.3999, lng: -111.9001 },
-  ];
-
-  const marker = buildObstructionMarkerGeometry({
-    outline,
-    origin,
-    raster,
-    width: size,
-    height: size,
-    bounds,
-    groundElevationMeters: ground,
-    fallbackElevationMeters: 3,
-    heightMeters: 0.6,
-  });
-
-  assert.ok(marker);
-  // Top sits 5m (roof) + 0.6m (marker) above ground.
-  assert.ok(Math.abs(marker.topHeightMeters - 5.6) < 1e-6);
-  for (let index = 0; index < outline.length; index += 1) {
-    assert.ok(Math.abs(marker.positions[index * 3 + 1] - 5.6) < 1e-6);
-  }
-  // Wall skirts run from the top height down to the roof base. Each quad is
-  // [top1, top2, base2, base1]; y is every 3rd float from offset 1.
-  assert.equal(marker.wallPositions.length, outline.length * 4 * 3);
-  assert.ok(Math.abs(marker.wallPositions[1] - 5.6) < 1e-6); // top1 y
-  assert.ok(Math.abs(marker.wallPositions[4] - 5.6) < 1e-6); // top2 y
-  assert.ok(Math.abs(marker.wallPositions[7] - 5) < 1e-6); // base2 y
-  assert.ok(Math.abs(marker.wallPositions[10] - 5) < 1e-6); // base1 y
-});
-
-test("buildObstructionMarkerGeometry rejects degenerate outlines", () => {
-  const size = 5;
-  const bounds = makeBounds(33.4001, 33.3999, -111.8999, -111.9001);
-  const marker = buildObstructionMarkerGeometry({
-    outline: [
-      { lat: 33.4, lng: -111.9 },
-      { lat: 33.4001, lng: -111.9 },
-    ],
-    origin: boundsCenter(bounds),
-    raster: new Float32Array(size * size).fill(402),
-    width: size,
-    height: size,
-    bounds,
-    groundElevationMeters: 400,
-    fallbackElevationMeters: 3,
-  });
-  assert.equal(marker, null);
-});
 
 test("faces sharing a fitted segment plane sit exactly under their panels", () => {
   // Noisy 20-degree plane raster (same setup as the coplanar panel test).

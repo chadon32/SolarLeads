@@ -23,11 +23,7 @@ import {
 } from "@/lib/solar-advisor";
 import { trackEvent } from "@/lib/analytics";
 import { insetPolygon, type RoofGeoBounds, type RoofAnalysis } from "@/lib/roof-analysis";
-import {
-  getGeoTiffBounds,
-  readGeoTiffRaster,
-  type RasterData,
-} from "@/lib/geotiff-utils";
+import { readGeoTiffRaster, type RasterData } from "@/lib/geotiff-utils";
 import type { RoofAnalysisProof } from "@/lib/roof-analysis-proof";
 import { buildActiveSolarEstimate } from "@/lib/active-solar-estimate";
 import { STANDARD_PANEL_WATTS } from "@/lib/solar-assumptions";
@@ -52,6 +48,8 @@ import {
   type LatLngPoint,
 } from "@/lib/panel-geometry";
 import { selectCohesiveSolarPanels } from "@/lib/panel-layout";
+import { colorRoofFlux, isValidFlux } from "@/lib/sunlight-heatmap";
+import { SunlightLegend } from "@/components/sunlight-legend";
 
 type ResolvedProperty = {
   address: string;
@@ -751,6 +749,7 @@ export function SolarAnalysis({
                   selectedPanelCount={metrics.selectedPanelCount}
                   selectedPanel={selectedPanel}
                   onSelectedPanelIdChange={onSelectedPanelIdChange}
+                  onViewModeChange={selectViewMode}
                 />
               </div>
               <div className="mt-3">
@@ -834,6 +833,7 @@ export function SolarAnalysis({
                     selectedPanelCount={metrics.selectedPanelCount}
                     selectedPanel={selectedPanel}
                     onSelectedPanelIdChange={onSelectedPanelIdChange}
+                    onViewModeChange={selectViewMode}
                   />
                 </div>
               </div>
@@ -1026,7 +1026,7 @@ function ModuleDesignPanel({
     Math.round(((selectedPanelCount * active.watts) / 1000) * 10) / 10;
 
   return (
-    <div className="pointer-events-auto absolute bottom-3 right-3 z-20 hidden max-h-[calc(100%-1.5rem)] w-60 max-w-[calc(100%-1.5rem)] overflow-y-auto rounded-2xl border border-white/10 bg-slate-950/80 p-4 text-white shadow-[0_18px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl sm:block">
+    <div data-viewer-overlay="" className="pointer-events-auto absolute bottom-3 right-3 z-20 hidden max-h-[calc(100%-1.5rem)] w-60 max-w-[calc(100%-1.5rem)] overflow-y-auto rounded-2xl border border-white/10 bg-slate-950/80 p-4 text-white shadow-[0_18px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl sm:block">
       <label className="block text-[0.6rem] font-medium uppercase tracking-[0.14em] text-white/55">
         Module
         <select
@@ -1097,6 +1097,7 @@ function ViewportCanvas({
   selectedPanelCount,
   selectedPanel,
   onSelectedPanelIdChange,
+  onViewModeChange,
 }: {
   annualFluxUrl: string | null;
   dsmUrl: string | null;
@@ -1112,6 +1113,7 @@ function ViewportCanvas({
   selectedPanelCount: number;
   selectedPanel?: SolarPanel | null;
   onSelectedPanelIdChange?: (panelId: string) => void;
+  onViewModeChange?: (next: ViewMode) => void;
 }) {
   const mapElementRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<GoogleMapInstance | null>(null);
@@ -1140,6 +1142,20 @@ function ViewportCanvas({
     [cameraTarget]
   );
   const center = cameraTarget.center ?? property;
+  // Which sunlight layer the 2D map actually drew, so the legend describes it.
+  const [mapSunlightSource, setMapSunlightSource] = useState<"flux" | "estimated" | null>(null);
+
+  // Warm the 3D chunk (three + react-three-fiber, ~1 MB minified) while the
+  // visitor reads the analysis, so the first 3D open does not wait on it.
+  useEffect(() => {
+    const warm = () => void import("@/components/roof-scene-3d");
+    if (typeof window.requestIdleCallback === "function") {
+      const id = window.requestIdleCallback(warm, { timeout: 4_000 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const id = window.setTimeout(warm, 2_500);
+    return () => window.clearTimeout(id);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -1296,13 +1312,6 @@ function ViewportCanvas({
         if (setbackOverlay) {
           nextOverlays.push(setbackOverlay);
         }
-        nextOverlays.push(
-          ...createObstructionOverlays({
-            googleApi,
-            map: mapRef.current,
-            roofData,
-          })
-        );
       }
 
       if (layerVisibility.sunlight) {
@@ -1314,6 +1323,7 @@ function ViewportCanvas({
             clipPolygons: getRoofHeatmapClipPolygons(roofData),
             solarMaskUrl,
             fallbackBounds: roofData.roofBounds,
+            bestCaseFlux: roofData.annualSunlightHours,
             opacity: 0.6,
           });
 
@@ -1338,6 +1348,9 @@ function ViewportCanvas({
             })
           );
         }
+        setMapSunlightSource(addedFluxOverlay ? "flux" : "estimated");
+      } else {
+        setMapSunlightSource(null);
       }
 
       // Keep the 2D satellite view focused on roof geometry and sunlight.
@@ -1434,6 +1447,8 @@ function ViewportCanvas({
             roofData={roofData}
             selectedPanelCount={layerVisibility.panels ? selectedPanelCount : 0}
             showSunlight={layerVisibility.sunlight}
+            moduleFace={selectedPanel?.face}
+            onRequestMapView={onViewModeChange ? () => onViewModeChange("irradiance") : undefined}
           />
         ) : null}
         {is3dView && onSelectedPanelIdChange ? (
@@ -1466,9 +1481,9 @@ function ViewportCanvas({
               hideRoofPlanes={is3dView}
             />
             {!is3dView ? (
-              <MapEvidenceOverlay layerVisibility={layerVisibility} />
+              <MapEvidenceOverlay layerVisibility={layerVisibility} sunlightSource={mapSunlightSource} />
             ) : (
-              <div className="pointer-events-none absolute left-2 top-2 z-10 flex max-w-[calc(100%-11rem)] flex-wrap items-center gap-1.5 sm:left-3 sm:top-3">
+              <div data-viewer-overlay="" className="pointer-events-none absolute left-2 top-2 z-10 flex max-w-[calc(100%-11rem)] flex-wrap items-center gap-1.5 sm:left-3 sm:top-3">
                 <span className="rounded-full border border-white/10 bg-slate-950/58 px-2.5 py-1.5 text-[0.66rem] font-semibold uppercase tracking-[0.12em] text-cyan-100/95 backdrop-blur-[2px]">
                   3D roof model · Solar API elevation scan
                 </span>
@@ -1490,6 +1505,7 @@ function ViewportCanvas({
           systemKw={systemKw}
           showPanels={is3dView}
           hideRoofPlanes={is3dView}
+          sunlightSource={is3dView ? (annualFluxUrl ? "flux" : null) : mapSunlightSource}
         />
       ) : null}
     </div>
@@ -1575,7 +1591,7 @@ function LayerControl({
   ];
 
   return (
-    <div className="pointer-events-auto absolute right-2 top-2 z-20 w-[9.75rem] max-w-[calc(100%-1rem)] rounded-[0.9rem] border border-white/20 bg-slate-950/68 p-2 shadow-[0_10px_24px_rgba(2,8,20,0.24)] backdrop-blur-md sm:right-3 sm:top-3 sm:w-auto">
+    <div data-viewer-overlay="" className="pointer-events-auto absolute right-2 top-2 z-20 w-[9.75rem] max-w-[calc(100%-1rem)] rounded-[0.9rem] border border-white/20 bg-slate-950/68 p-2 shadow-[0_10px_24px_rgba(2,8,20,0.24)] backdrop-blur-md sm:right-3 sm:top-3 sm:w-auto">
       <p className="px-1 text-[0.62rem] font-bold uppercase tracking-[0.18em] text-cyan-100/86">
         Layers
       </p>
@@ -1623,6 +1639,7 @@ function MobileMapControls({
   systemKw,
   showPanels = false,
   hideRoofPlanes = false,
+  sunlightSource,
 }: {
   layerVisibility: LayerVisibility;
   onLayerVisibilityChange: (next: LayerVisibility) => void;
@@ -1632,6 +1649,7 @@ function MobileMapControls({
   systemKw: number;
   showPanels?: boolean;
   hideRoofPlanes?: boolean;
+  sunlightSource: "flux" | "estimated" | null;
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const panelSummary =
@@ -1748,8 +1766,12 @@ function MobileMapControls({
                 label={canRenderPanels ? "Panels (Google Solar API)" : "Capacity only"}
               />
             ) : null}
-            {layerVisibility.sunlight ? (
-              <MobileLegendItem swatch="bg-emerald-400/80" label="Sunlight quality" />
+            {layerVisibility.sunlight && sunlightSource === "flux" ? (
+              <span className="block w-full">
+                <SunlightLegend />
+              </span>
+            ) : layerVisibility.sunlight && sunlightSource === "estimated" ? (
+              <MobileLegendItem swatch="bg-emerald-400/80" label="Sunlight quality (estimated)" />
             ) : null}
           </div>
         </div>
@@ -1769,8 +1791,11 @@ function MobileLegendItem({ swatch, label }: { swatch: string; label: string }) 
 
 function MapEvidenceOverlay({
   layerVisibility,
+  sunlightSource,
 }: {
   layerVisibility: LayerVisibility;
+  /** Which sunlight layer the map drew: the annual-flux heatmap or the estimated fallback. */
+  sunlightSource: "flux" | "estimated" | null;
 }) {
   return (
     <>
@@ -1796,10 +1821,13 @@ function MapEvidenceOverlay({
             <>
               <LegendItem swatch="border border-cyan-500 bg-cyan-300/30" label="Roof plane - usable solar area" />
               <LegendItem swatch="border border-amber-500/70 bg-amber-300/15" label="Planning reserve - installer verifies" />
-              <LegendItem swatch="bg-slate-700/70" label="Unavailable - shaded or obstructed" />
             </>
           ) : null}
-          {layerVisibility.sunlight ? (
+          {layerVisibility.sunlight && sunlightSource === "flux" ? (
+            <div className="pt-0.5">
+              <SunlightLegend tone="light" />
+            </div>
+          ) : layerVisibility.sunlight && sunlightSource === "estimated" ? (
             <>
               <LegendItem swatch="bg-emerald-400/80" label="Green - strong sunlight" />
               <LegendItem swatch="bg-amber-300/85" label="Yellow - moderate sunlight" />
@@ -2153,37 +2181,6 @@ function createSetbackOverlay({
     strokeOpacity: 0.32,
     strokeWeight: 0.8,
   });
-}
-
-function createObstructionOverlays({
-  googleApi,
-  map,
-  roofData,
-}: {
-  googleApi: GoogleMapsApi;
-  map: GoogleMapInstance;
-  roofData: RoofAnalysis;
-}) {
-  return roofData.obstructionOutlines
-    .map((outline) => {
-      const path = outlineToLatLngPath(googleApi, outline, roofData.roofBounds);
-
-      if (path.length < 3) {
-        return null;
-      }
-
-      return new googleApi.maps.Polygon({
-        clickable: false,
-        fillColor: "#94a3b8",
-        fillOpacity: 0.18,
-        map,
-        paths: path,
-        strokeColor: "#cbd5e1",
-        strokeOpacity: 0.5,
-        strokeWeight: 1,
-      });
-    })
-    .filter((overlay): overlay is GoogleMapOverlayInstance => Boolean(overlay));
 }
 
 function createEstimatedSunlightQualityOverlays({
@@ -3045,6 +3042,7 @@ async function createAnnualFluxMapOverlay({
   clipPolygons,
   solarMaskUrl,
   fallbackBounds,
+  bestCaseFlux,
   opacity,
 }: {
   googleApi: GoogleMapsApi;
@@ -3052,6 +3050,8 @@ async function createAnnualFluxMapOverlay({
   clipPolygons: LatLngPoint[][];
   solarMaskUrl: string | null;
   fallbackBounds: RoofGeoBounds | null;
+  /** Solar API maxSunshineHoursPerYear — the absolute top of the colour scale. */
+  bestCaseFlux: number;
   opacity: number;
 }) {
   if (!annualFluxUrl) {
@@ -3063,6 +3063,7 @@ async function createAnnualFluxMapOverlay({
     clipPolygons,
     solarMaskUrl,
     fallbackBounds,
+    bestCaseFlux,
   });
 
   if (!heatmap) {
@@ -3119,57 +3120,41 @@ async function buildAnnualFluxCanvas({
   clipPolygons,
   solarMaskUrl,
   fallbackBounds,
+  bestCaseFlux,
 }: {
   annualFluxUrl: string;
   clipPolygons: LatLngPoint[][];
   solarMaskUrl: string | null;
   fallbackBounds: RoofGeoBounds | null;
+  bestCaseFlux: number;
 }) {
-  const [fluxResponse, maskResponse] = await Promise.all([
-    fetch(annualFluxUrl, { cache: "no-store" }),
-    solarMaskUrl
-      ? fetch(solarMaskUrl, { cache: "no-store" }).catch(() => null)
-      : Promise.resolve(null),
+  // Shared raster cache with the roof-plane overlay and the 3D view: one
+  // download per layer per estimate.
+  const [flux, mask] = await Promise.all([
+    readGeoTiffRaster(annualFluxUrl, fallbackBounds).catch(() => null),
+    solarMaskUrl ? readGeoTiffRaster(solarMaskUrl, fallbackBounds).catch(() => null) : Promise.resolve(null),
   ]);
 
-  if (!fluxResponse.ok) {
+  if (!flux || !flux.width || !flux.height) {
     return null;
   }
 
-  const fluxBuffer = await fluxResponse.arrayBuffer();
-  const { fromArrayBuffer } = await import("geotiff");
-  const fluxTiff = await fromArrayBuffer(fluxBuffer);
-  const fluxImage = await fluxTiff.getImage();
-  const width = fluxImage.getWidth();
-  const height = fluxImage.getHeight();
-  const fluxRaster = (await fluxImage.readRasters({
-    interleave: true,
-  })) as RasterData;
-  let maskRaster: RasterData | null = null;
-
-  if (maskResponse?.ok) {
-    const maskTiff = await fromArrayBuffer(await maskResponse.arrayBuffer());
-    const maskImage = await maskTiff.getImage();
-    maskRaster = (await maskImage.readRasters({
-      interleave: true,
-    })) as RasterData;
-  }
-
-  const validValues = Array.from(fluxRaster).filter(
-    (value, index) =>
-      Number.isFinite(value) &&
-      value > -9990 &&
-      (!maskRaster || Number(maskRaster[index] ?? 0) > 0)
-  ) as number[];
-
-  if (!validValues.length) {
-    return null;
-  }
-
-  validValues.sort((left, right) => left - right);
-  const low = percentile(validValues, 0.08);
-  const high = percentile(validValues, 0.92);
-  const range = Math.max(high - low, 1);
+  const { width, height } = flux;
+  const maskOnGrid = mask && mask.width === width && mask.height === height ? mask : null;
+  const isRoofPixel = (index: number) =>
+    (!maskOnGrid || Number(maskOnGrid.raster[index] ?? 0) > 0) &&
+    isPointInsideAnyPolygon(rasterIndexToLatLng(index, width, height, flux.bounds), clipPolygons);
+  // Absolute scale (share of this roof's best-case sun), coloured from
+  // interior pixels (~0.5 m in) so blended eave pixels do not read as shade.
+  const pixelMeters = ((flux.bounds.northeast.lat - flux.bounds.southwest.lat) * 111_320) / height;
+  const pixels = colorRoofFlux({
+    flux: flux.raster,
+    width,
+    height,
+    isRoofPixel,
+    bestCaseFlux: bestCaseFlux > 0 ? bestCaseFlux : highFluxValue(flux.raster),
+    interiorRadiusPx: pixelMeters > 0 ? Math.max(1, Math.round(0.5 / pixelMeters)) : 1,
+  });
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
@@ -3180,39 +3165,19 @@ async function buildAnnualFluxCanvas({
   }
 
   const imageData = context.createImageData(width, height);
-  const pixels = imageData.data;
-  const heatmapBounds = getGeoTiffBounds(fluxImage, fallbackBounds);
-
-  for (let index = 0; index < fluxRaster.length; index += 1) {
-    const value = fluxRaster[index];
-    const offset = index * 4;
-    const maskValue = maskRaster ? Number(maskRaster[index] ?? 0) : 1;
-    const point = rasterIndexToLatLng(index, width, height, heatmapBounds);
-
-    if (
-      !Number.isFinite(value) ||
-      value <= -9990 ||
-      maskValue <= 0 ||
-      !isPointInsideAnyPolygon(point, clipPolygons)
-    ) {
-      pixels[offset + 3] = 0;
-      continue;
-    }
-
-    const normalized = clamp01((value - low) / range);
-    const { r, g, b } = fluxColor(normalized);
-    pixels[offset] = r;
-    pixels[offset + 1] = g;
-    pixels[offset + 2] = b;
-    pixels[offset + 3] = 255;
-  }
-
+  imageData.data.set(pixels);
   context.putImageData(imageData, 0, 0);
 
   return {
     canvas,
-    bounds: heatmapBounds,
+    bounds: flux.bounds,
   };
+}
+
+/** 98th-percentile flux, when the analysis carries no best-case figure. */
+function highFluxValue(raster: RasterData) {
+  const values = Array.from(raster).filter((value) => isValidFlux(value)).sort((left, right) => left - right);
+  return values.length ? values[Math.floor(values.length * 0.98)] : 0;
 }
 
 function rasterIndexToLatLng(
@@ -3912,45 +3877,6 @@ function RoofStatsPanel({
       </div>
     </div>
   );
-}
-
-function fluxColor(value: number) {
-  const shade = { r: 30, g: 64, b: 175 };
-  const warm = { r: 251, g: 191, b: 36 };
-  const sunny = { r: 249, g: 115, b: 22 };
-
-  if (value <= 0.5) {
-    return blendColor(shade, warm, value / 0.5);
-  }
-
-  return blendColor(warm, sunny, (value - 0.5) / 0.5);
-}
-
-function blendColor(
-  left: { r: number; g: number; b: number },
-  right: { r: number; g: number; b: number },
-  amount: number
-) {
-  const t = clamp01(amount);
-
-  return {
-    r: Math.round(left.r + (right.r - left.r) * t),
-    g: Math.round(left.g + (right.g - left.g) * t),
-    b: Math.round(left.b + (right.b - left.b) * t),
-  };
-}
-
-function percentile(values: number[], ratio: number) {
-  if (!values.length) {
-    return 0;
-  }
-
-  const index = Math.min(
-    values.length - 1,
-    Math.max(0, Math.round((values.length - 1) * clamp01(ratio)))
-  );
-
-  return values[index] ?? 0;
 }
 
 function clamp01(value: number) {

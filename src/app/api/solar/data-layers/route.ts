@@ -60,7 +60,9 @@ export async function GET(request: Request) {
       );
     }
 
-    const dataLayers = await fetchSolarDataLayers(lat, lng);
+    // 0.25 m rasters: the 3D roof rebuild and the sunlight heatmap resolve
+    // eaves and ridges to a quarter metre (server analysis stays at 0.5 m).
+    const dataLayers = await fetchSolarDataLayers(lat, lng, undefined, { pixelSizeMeters: 0.25 });
     const proxyUrl = (sourceUrl?: string) =>
       sourceUrl
         ? `/api/solar/geotiff?url=${encodeURIComponent(sourceUrl)}`

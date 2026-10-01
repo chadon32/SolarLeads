@@ -147,7 +147,8 @@ export function buildFallbackRoofAnalysis(params: {
     roofOutline,
     10 - Math.min(usablePctRoof / 25, 3)
   );
-  const obstructionOutlines = buildDefaultObstructionOutlines("low");
+  // The illustrative model has no measured rooftop features to show.
+  const obstructionOutlines: RoofPoint[][] = [];
 
   const garageArea = roundTo(Math.max(usableAreaM2 * 0.28, 10), 1);
   const primaryArea = roundTo(Math.max(usableAreaM2 * 0.52, 18), 1);
@@ -389,12 +390,8 @@ export function normalizeRoofAnalysis(
       ? fallback.usableOutline
       : insetPolygon(roofOutline, 10 - Math.min(usablePctRoof / 25, 3))
   );
-  const obstructionOutlines = normalizeObstructionOutlines(
-    input.obstructionOutlines,
-    fallback.obstructionOutlines.length
-      ? fallback.obstructionOutlines
-      : buildDefaultObstructionOutlines(shadingRiskOrFallback(input.shadingRisk, fallback.shadingRisk))
-  );
+  // Only measured outlines survive; placeholders read as detected obstructions.
+  const obstructionOutlines = normalizeObstructionOutlines(input.obstructionOutlines);
 
   const roofSegments = normalizeRoofSegments(
     input.roofSegments,
@@ -843,57 +840,6 @@ function getDefaultSegmentOutlines(shape: RoofShape): Record<RoofPlaneLabel, Roo
   };
 }
 
-export function buildDefaultObstructionOutlines(risk: ShadingRisk) {
-  if (risk === "low") {
-    return [
-      [
-        { x: 24, y: 24 },
-        { x: 27, y: 24 },
-        { x: 27, y: 28 },
-        { x: 24, y: 28 },
-      ],
-    ];
-  }
-
-  if (risk === "medium") {
-    return [
-      [
-        { x: 23, y: 23 },
-        { x: 27, y: 23 },
-        { x: 27, y: 28 },
-        { x: 23, y: 28 },
-      ],
-      [
-        { x: 72, y: 29 },
-        { x: 76, y: 29 },
-        { x: 76, y: 34 },
-        { x: 72, y: 34 },
-      ],
-    ];
-  }
-
-  return [
-    [
-      { x: 23, y: 23 },
-      { x: 27, y: 23 },
-      { x: 27, y: 28 },
-      { x: 23, y: 28 },
-    ],
-    [
-      { x: 72, y: 28 },
-      { x: 76, y: 28 },
-      { x: 76, y: 33 },
-      { x: 72, y: 33 },
-    ],
-    [
-      { x: 61, y: 68 },
-      { x: 66, y: 68 },
-      { x: 66, y: 73 },
-      { x: 61, y: 73 },
-    ],
-  ];
-}
-
 function normalizeOutline(value: unknown, fallback: RoofPoint[]) {
   if (!Array.isArray(value) || value.length < 3) {
     return fallback;
@@ -906,16 +852,14 @@ function normalizeOutline(value: unknown, fallback: RoofPoint[]) {
   return points.length >= 3 ? points : fallback;
 }
 
-function normalizeObstructionOutlines(value: unknown, fallback: RoofPoint[][]) {
-  if (!Array.isArray(value) || !value.length) {
-    return fallback;
+function normalizeObstructionOutlines(value: unknown): RoofPoint[][] {
+  if (!Array.isArray(value)) {
+    return [];
   }
 
-  const outlines = value
+  return value
     .map((outline) => normalizeOutline(outline, []))
     .filter((outline): outline is RoofPoint[] => outline.length >= 3);
-
-  return outlines.length ? outlines : fallback;
 }
 
 function normalizePoint(value: unknown): RoofPoint | null {

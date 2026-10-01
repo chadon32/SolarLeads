@@ -288,10 +288,20 @@ export async function fetchSolarBuildingInsights(
   return payload;
 }
 
+/** Resolutions the Solar API serves for data layers (metres per pixel). */
+export type SolarLayerPixelSize = 0.1 | 0.25 | 0.5 | 1;
+
 export async function fetchSolarDataLayers(
   lat: number,
   lng: number,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  {
+    /**
+     * Server-side analysis only samples heights, so 0.5 m keeps it light; the
+     * browser's 3D model and heatmap ask for 0.25 m.
+     */
+    pixelSizeMeters = 0.5,
+  }: { pixelSizeMeters?: SolarLayerPixelSize } = {}
 ): Promise<SolarDataLayers> {
   const solarKey = GOOGLE_SOLAR_KEY;
 
@@ -306,7 +316,7 @@ export async function fetchSolarDataLayers(
   url.searchParams.set("view", "FULL_LAYERS");
   url.searchParams.set("requiredQuality", "HIGH");
   url.searchParams.set("exactQualityRequired", "true");
-  url.searchParams.set("pixelSizeMeters", "0.5");
+  url.searchParams.set("pixelSizeMeters", String(pixelSizeMeters));
   url.searchParams.set("key", solarKey);
 
   const response = await fetch(url, {
@@ -554,7 +564,9 @@ export function buildSolarRoofAnalysis(params: {
   const widthM = roundTo(rawWidthM > 0 ? rawWidthM : inferredFootprint.widthM, 1);
   const depthM = roundTo(rawDepthM > 0 ? rawDepthM : inferredFootprint.depthM, 1);
   const shadingRisk = classifyShadingRisk(solarPotential, keptRoofSegments);
-  const obstructionOutlines = buildObstructionOutlines(keptRoofSegments, roofBox, shadingRisk);
+  // Building insights carry no obstruction geometry; the 3D view detects
+  // rooftop features from the elevation scan itself.
+  const obstructionOutlines: RoofPoint[][] = [];
   // Keep full Google placements for the map slider; default economics use a
   // practical bill-offset size rather than max theoretical packing.
   // Placements are snapped onto per-plane rack grids so the rendered array
@@ -1101,35 +1113,6 @@ function buildSegmentOutlineFromPanels({
   }
 
   return insetPolygon(convexHull(points), -1.8);
-}
-
-function buildObstructionOutlines(
-  segments: RoofSegmentStats[],
-  roofBox: LatLngBox,
-  shadingRisk: ShadingRisk
-) {
-  if (shadingRisk === "low") {
-    return [];
-  }
-
-  const sunshineScores = segments
-    .map((segment) => ({
-      segment,
-      score: medianSunshine(segment.stats?.sunshineQuantiles ?? []),
-    }))
-    .filter((entry) => Number.isFinite(entry.score))
-    .sort((left, right) => left.score - right.score);
-
-  const worst = sunshineScores.slice(0, shadingRisk === "high" ? 2 : 1);
-
-  return worst
-    .filter((entry, index, array) => array.indexOf(entry) === index)
-    .map(({ segment }) =>
-      segment.boundingBox
-        ? insetPolygon(boxToOutline(segment.boundingBox, roofBox), 28)
-        : []
-    )
-    .filter((outline) => outline.length >= 3);
 }
 
 function buildFallbackSegmentOutline(index: number): RoofPoint[] {
