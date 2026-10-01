@@ -25,7 +25,8 @@ jobs:
       - run: npm test
       - run: npm run build
         env:
-          NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: ""
+          # Browser tests stub Google Maps; this is an inert fixture value.
+          NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: "e2e-mocked-google-maps"
           NEXT_PUBLIC_TURNSTILE_SITE_KEY: ""
       # The production build is reused by the browser tests below.
       - uses: actions/upload-artifact@v4
@@ -54,6 +55,10 @@ jobs:
       # The 3D screenshot baselines are Windows/Chromium captures; the rest of
       # that spec (face counts, overlap, mobile gate) still runs here.
       - run: npx playwright test --grep-invert "rebuilds as one building|absolute-scale legend"
+        env:
+          # Test-only fixtures for the isolated Playwright server.
+          DASHBOARD_ACCESS_TOKEN: "e2e-dashboard-token-fixture"
+          REPORT_SIGNING_SECRET: "e2e-report-signing-fixture"
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
