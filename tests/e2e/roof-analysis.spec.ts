@@ -35,10 +35,32 @@ test("renders a ready 3D roof analysis with panels and sunlight enabled", async 
   ).toBeChecked();
   await expect(page.getByText(/19 panel layout/i).first()).toBeVisible();
   await expect(page.getByText(/7\.6 kW/i).first()).toBeVisible();
-  await expect(
-    page.getByText(/current roof model supports 19 accepted panel locations/i).first()
-  ).toBeVisible();
+  // The advisor reports the accepted placements; its wording follows the readiness tier.
+  await expect(page.getByText(/19 accepted panel locations/i).first()).toBeVisible();
   await expect(page.getByText(/installer verification/i).first()).toBeVisible();
+});
+
+test("every solar readiness score on the estimate agrees, including after layout changes", async ({ page }) => {
+  const home = new HomeEstimatePage(page);
+  await home.openReadyEstimate();
+  // Each "Solar readiness" label sits in a card with its NN/100 value.
+  const readinessScores = () =>
+    page.getByText("Solar readiness", { exact: true }).evaluateAll((labels) =>
+      labels.map((label) => {
+        let card = label.parentElement;
+        while (card && !/\d+\/100/.test(card.textContent ?? "")) card = card.parentElement;
+        return card?.textContent?.match(/(\d+)\/100/)?.[1] ?? "missing";
+      })
+    );
+  const initial = await readinessScores();
+  expect(initial.length, "header and report both show a readiness score").toBeGreaterThanOrEqual(2);
+  expect(new Set(initial).size, `scores on screen: ${initial.join(", ")}`).toBe(1);
+
+  await page.getByRole("tablist", { name: "Solar report detail sections" }).getByRole("tab", { name: "Panels", exact: true }).click();
+  await page.locator('input[type="range"]').first().fill("6");
+  await expect(page.getByText(/^Solar panels: 6 of \d+$/)).toBeVisible();
+  await expect.poll(async () => new Set(await readinessScores()).size).toBe(1);
+  expect((await readinessScores())[0], "fewer panels lower the readiness score").not.toBe(initial[0]);
 });
 
 test("roof analysis view tabs expose complete tab semantics", async ({ page }) => {

@@ -28,6 +28,7 @@ export const SYSTEM_RANGE_OPTIONS = [
   "5–6 kW",
   "7–8 kW",
   "9–10 kW",
+  "11+ kW",
 ] as const;
 
 export type ScenarioLabel = (typeof SCENARIO_LABEL_OPTIONS)[number];
@@ -72,7 +73,10 @@ export function getSystemRange(systemKw: number): SystemRange {
   if (systemKw <= 8) {
     return "7–8 kW";
   }
-  return "9–10 kW";
+  if (systemKw <= 10) {
+    return "9–10 kW";
+  }
+  return "11+ kW";
 }
 
 function oneOf<T extends readonly string[]>(value: string, options: T): T[number] {

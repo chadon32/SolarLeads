@@ -55,7 +55,7 @@ import {
 } from "@/lib/roof-analysis";
 import type { RoofAnalysisProof } from "@/lib/roof-analysis-proof";
 import { buildSolarReportSnapshot } from "@/lib/report-snapshot";
-import { buildActiveSolarEstimate } from "@/lib/active-solar-estimate";
+import { buildActiveSolarEstimate, getActiveEstimateMetrics } from "@/lib/active-solar-estimate";
 import {
   getInverterOption,
   getPanelById,
@@ -566,18 +566,7 @@ export function LeadCaptureForm({
           selectedPanelCount: activePanelCount,
         })
       : null;
-    const metrics = activeEstimate
-      ? {
-          ...activeEstimate.baseMetrics,
-          annualKwh: activeEstimate.annualKwh,
-          annualSavings: activeEstimate.annualSavings,
-          coveragePct: activeEstimate.energyOffsetPct,
-          monthlySavings: activeEstimate.monthlySavings,
-          panelCount: activeEstimate.panelCount,
-          paybackYears: activeEstimate.paybackYears,
-          systemKw: activeEstimate.systemKw,
-        }
-      : null;
+    const metrics = activeEstimate ? getActiveEstimateMetrics(activeEstimate) : null;
     const totalSystemCost = activeEstimate?.installedCost ?? 0;
     const totalFederalTaxCredit = activeEstimate?.taxCredit ?? 0;
     const totalNetSystemCost = activeEstimate?.netCostAfterCredit ?? 0;

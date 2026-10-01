@@ -1,10 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildActiveSolarEstimate } from "../src/lib/active-solar-estimate";
+import { buildActiveSolarEstimate, getActiveEstimateMetrics } from "../src/lib/active-solar-estimate";
 import { calculateFederalResidentialSolarCredit } from "../src/lib/financial-model";
 import { buildFallbackRoofAnalysis } from "../src/lib/roof-analysis";
 import { calculateEnergyOffsetPct } from "../src/lib/solar-metrics";
 import { getPanelById } from "../src/lib/solarPanels";
+import { buildSolarReportSnapshot } from "../src/lib/report-snapshot";
+import {
+  buildSolarAdvisorInputFromAnalysis,
+  buildSolarAdvisorProfile,
+  calculateSolarReadinessScore,
+} from "../src/lib/solar-advisor";
 
 function buildEstimateFixture() {
   const analysis = buildFallbackRoofAnalysis({
@@ -82,4 +88,37 @@ test("active estimate applies equipment cost once and clamps impossible panel co
     calculateFederalResidentialSolarCredit(withoutBattery.installedCost)
   );
   assert.ok(withBattery.paybackYears > withoutBattery.paybackYears);
+});
+
+test("the header, dashboard and saved report read one readiness score for a layout", () => {
+  const analysis = { ...buildEstimateFixture(), rooftopConfidenceScore: 100 };
+  for (const [selectedPanelCount, monthlyBill] of [[4, 250], [10, 120], [7, 400]]) {
+    const estimate = buildActiveSolarEstimate({
+      analysis,
+      monthlyBill,
+      selectedPanel: getPanelById("rec-alpha-pure-rx"),
+      selectedPanelCount,
+    });
+    const metrics = getActiveEstimateMetrics(estimate);
+    assert.equal(metrics.panelCount, estimate.panelCount);
+    assert.equal(metrics.coveragePct, estimate.energyOffsetPct);
+    assert.equal(metrics.systemKw, estimate.systemKw);
+    assert.equal(metrics.annualSavings, estimate.annualSavings);
+
+    const header = calculateSolarReadinessScore(metrics);
+    const dashboard = buildSolarAdvisorProfile(
+      buildSolarAdvisorInputFromAnalysis(analysis, metrics, monthlyBill)
+    ).suitability.score;
+    const saved = buildSolarReportSnapshot({
+      activePanelCount: selectedPanelCount,
+      address: "6420 E Nance St, Mesa, AZ 85215",
+      analysis,
+      metrics,
+      monthlyBill,
+    }).solarReadinessScore;
+
+    assert.equal(dashboard, header);
+    assert.equal(saved, header);
+    assert.notEqual(header, analysis.rooftopConfidenceScore, "readiness is not roof-model confidence");
+  }
 });

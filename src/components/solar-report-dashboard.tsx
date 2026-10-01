@@ -35,7 +35,7 @@ import {
   ARIZONA_AVG_RATE_PER_KWH,
 } from "@/lib/solar-metrics";
 import { ARIZONA_INSTALLED_COST_MARKET } from "@/lib/solar-assumptions";
-import { buildActiveSolarEstimate } from "@/lib/active-solar-estimate";
+import { buildActiveSolarEstimate, getActiveEstimateMetrics } from "@/lib/active-solar-estimate";
 import {
   BATTERY_OPTIONS,
   getBatteryById,
@@ -242,7 +242,7 @@ export function SolarReportDashboard({
             Final panel placement, incentives, pricing, and savings require installer confirmation.
           </p>
           <div className="mt-4 grid grid-cols-2 gap-2">
-            <MiniReadout label="Solar readiness" source="solar-api" value={`${values.advisor.suitability.score}/100`} />
+            <MiniReadout label="Solar readiness" source="modeled" value={`${values.advisor.suitability.score}/100`} />
             <MiniReadout label="Panels" source="solar-api" value={`${values.panelCount}`} />
             <MiniReadout label="Annual savings" source="user-adjusted" value={formatMoney(values.annualSavings)} />
             <MiniReadout label="System size" source="user-adjusted" value={`${values.recommendedKw.toFixed(1)} kW`} />
@@ -1955,8 +1955,8 @@ function SuitabilityExplanationCard({
         <p className="text-[0.62rem] font-semibold uppercase tracking-[0.24em] text-white/70">
           {advisor.suitability.headline}
         </p>
-        <span className="rounded-full border border-cyan-200/18 bg-cyan-200/10 px-2.5 py-1 text-[0.58rem] font-semibold uppercase tracking-[0.16em] text-cyan-100">
-          {advisor.candidateLabel} candidate
+        <span className="shrink-0 rounded-full border border-cyan-200/18 bg-cyan-200/10 px-2.5 py-1 text-[0.58rem] font-semibold uppercase tracking-[0.16em] text-cyan-100">
+          {advisor.candidateLabel}
         </span>
       </div>
       <div className="mt-3 grid gap-2">
@@ -2268,16 +2268,7 @@ function buildDashboardValues(
     taxCredit,
     twentyYearCashCosts,
   } = activeEstimate;
-  const panelAdjustedMetrics = {
-    ...baseMetrics,
-    annualKwh,
-    annualSavings,
-    coveragePct: energyOffsetPct,
-    monthlySavings,
-    panelCount,
-    paybackYears,
-    systemKw,
-  };
+  const panelAdjustedMetrics = getActiveEstimateMetrics(activeEstimate);
   const advisor = buildSolarAdvisorProfile(
     buildSolarAdvisorInputFromAnalysis(
       {

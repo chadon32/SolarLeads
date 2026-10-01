@@ -27,6 +27,7 @@ import { getPublicSiteUrl } from "@/lib/public-site-url";
 import {
   buildSolarAdvisorProfile,
   calculateSolarReadinessScore,
+  getSolarReadinessLabel,
   type SolarAdvisorProfile,
 } from "@/lib/solar-advisor";
 import {
@@ -655,7 +656,7 @@ function buildProposalData(
     roofPitchDeg: nonNegativeNumber(snapshotMetrics?.avgPitchDeg ?? lead.roof_pitch_deg),
     sunlightHours,
     suitabilityScore,
-    suitabilityLabel: getHomeownerSuitabilityLabel(suitabilityScore),
+    suitabilityLabel: getSolarReadinessLabel(suitabilityScore),
     installedCost,
     costWithoutSolar20Yr,
     costWithSolar20Yr,
@@ -2717,12 +2718,6 @@ function getPdfConfidenceLabel(score: number): ProposalData["confidence"] {
   return "Limited";
 }
 
-function getHomeownerSuitabilityLabel(score: number) {
-  if (score >= 85) return "Strong Candidate";
-  if (score >= 65) return "Good Candidate";
-  if (score >= 45) return "Preliminary Estimate";
-  return "Installer Verification Required";
-}
 
 function buildPanelSizeLabel(watts?: number) {
   return watts && watts > 0 ? `${Math.round(watts)}W module` : "Not saved";

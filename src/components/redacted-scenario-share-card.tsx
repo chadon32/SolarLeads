@@ -118,7 +118,7 @@ export function RedactedScenarioShareCard({
       <div className="mt-4 rounded-[0.95rem] border border-white/12 bg-slate-950/68 p-4" aria-live="polite">
         <div className="flex items-center justify-between gap-3">
           <p className="text-[0.62rem] font-semibold uppercase tracking-[0.2em] text-cyan-100/75">Preview</p>
-          <p className="text-xs text-white/45">Reviewed {SCENARIO_SHARE_ASSUMPTION_DATE}</p>
+          <p className="text-xs text-white/60">Reviewed {SCENARIO_SHARE_ASSUMPTION_DATE}</p>
         </div>
         <pre className="mt-3 whitespace-pre-wrap font-[inherit] text-sm leading-6 text-white/82">{shareText}</pre>
       </div>

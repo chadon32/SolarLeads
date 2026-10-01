@@ -29,7 +29,8 @@ import {
 } from "@/lib/batteries";
 import type { RoofAnalysis } from "@/lib/roof-analysis";
 import type { RoofAnalysisProof } from "@/lib/roof-analysis-proof";
-import { buildActiveSolarEstimate } from "@/lib/active-solar-estimate";
+import { buildActiveSolarEstimate, getActiveEstimateMetrics } from "@/lib/active-solar-estimate";
+import { calculateSolarReadinessScore } from "@/lib/solar-advisor";
 import {
   DEFAULT_SOLAR_PANEL_ID,
   getInverterOption,
@@ -485,7 +486,8 @@ export function HomeClient({
     return {
       annualSavings: estimate.annualSavings,
       panelCount: estimate.panelCount,
-      score: solarData.rooftopConfidenceScore,
+      // The same readiness score as the dashboard, saved report and PDF (not roof-model confidence).
+      score: calculateSolarReadinessScore(getActiveEstimateMetrics(estimate)),
       systemKw: estimate.systemKw,
     };
   }, [

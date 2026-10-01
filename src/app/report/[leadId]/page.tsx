@@ -16,6 +16,7 @@ import {
   type SolarReportSnapshot,
 } from "@/lib/report-snapshot";
 import { buildSavedReportSummary, formatSavedReportValue } from "@/lib/report-summary";
+import { getSolarReadinessLabel } from "@/lib/solar-advisor";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
 
 type ReportViewerPageProps = {
@@ -360,13 +361,6 @@ function shouldRetryLegacySelect(message: string) {
     message.includes("schema cache") ||
     message.includes("Could not find")
   );
-}
-
-function getSolarReadinessLabel(score: number) {
-  if (score >= 85) return "Strong Candidate";
-  if (score >= 65) return "Good Candidate";
-  if (score >= 45) return "Preliminary Candidate";
-  return "Installer Verification Required";
 }
 
 function ReportShell({ children }: { children: React.ReactNode }) {

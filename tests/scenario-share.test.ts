@@ -30,4 +30,7 @@ test("broad share categories are derived without exposing property detail", () =
   assert.equal(getBroadSunCategory("high"), "Lower sun exposure");
   assert.equal(getSystemRange(5.4), "5–6 kW");
   assert.equal(getSystemRange(8.8), "9–10 kW");
+  assert.equal(getSystemRange(10), "9–10 kW");
+  assert.equal(getSystemRange(10.4), "11+ kW");
+  assert.equal(getSystemRange(24), "11+ kW");
 });
