@@ -5,7 +5,7 @@ react-three-fiber 9.7 / drei 10.7 / three r184). There are no model files: every
 generated at runtime from Google Solar API data (segment planes, panel slots, and the DSM,
 annual-flux and rooftop-mask GeoTIFFs). glTF/Draco/KTX2/Blender work does not apply.
 
-Reviewed against live data for 1084 W Fever Tree Ave, Queen Creek (headless Chromium,
+Reviewed against live data for one San Tan Valley home, address withheld (headless Chromium,
 SwiftShader), with every proposed fix prototyped on the same data before implementation.
 
 ## Review findings
@@ -77,11 +77,11 @@ Surroundings (new): trees and neighbouring roofs come from the DSM only. Canopy 
 
 - **Overlay-aware framing never ran.** `useOverlaySafeInsets` read a ref in a mount-only effect, but the viewer region only mounts after the model loads, so insets stayed zero and every capture was framed on the full canvas. It now takes the element from a callback ref. With framing live, three follow-on fixes: the fit uses the free area's own field of view (`getRoofCameraPose(…, heightFraction)`); it fits the bounding-box corners instead of a bounding sphere (the sphere left a low house using about 47 % of the view, the box fit at least 70 %); and `planCameraUpdate` keeps layout changes from resetting a visitor's own view. Unit tests in `tests/roof-viewer.test.ts`.
 - **Overlapping panels.** The face card ran into the Layers panel, and the longer obstruction hint pushed the toolbar card under the Module panel. The card now sits at the top of the free area and the hint wraps. The e2e spec asserts that no two viewer panels overlap, on desktop and on a touch phone.
-- **Shadow pass every frame.** The shadow map was re-rendered on every orbit frame although the light and roof are static (53 draw calls and about 236k triangles per frame on Fever Tree). It now renders on request (`use-refresh-shadows.ts`). This was verified by instrumenting WebGL: no off-screen pass during orbit, and exactly one after toggling modules or trees. The screenshot baselines cannot catch a stale shadow map (a mutation that disabled the refresh still passed them), so the instrumented check is what proves it.
+- **Shadow pass every frame.** The shadow map was re-rendered on every orbit frame although the light and roof are static (53 draw calls and about 236k triangles per frame on that home). It now renders on request (`use-refresh-shadows.ts`). This was verified by instrumenting WebGL: no off-screen pass during orbit, and exactly one after toggling modules or trees. The screenshot baselines cannot catch a stale shadow map (a mutation that disabled the refresh still passed them), so the instrumented check is what proves it.
 
 ### Measurements
 
-1084 W Fever Tree Ave, live Solar API data at 0.25 m, headless Chromium with SwiftShader, 1440 × 900. "Before" figures are from the review above.
+The same San Tan Valley home, live Solar API data at 0.25 m, headless Chromium with SwiftShader, 1440 × 900. "Before" figures are from the review above.
 
 | | Before | After |
 | --- | --- | --- |

@@ -91,10 +91,10 @@ test("address suggestions are limited to Arizona", async (t) => {
       googleRequest = JSON.parse(String(init?.body));
       return Response.json({
         suggestions: [
-          suggestion("1084 W Fever Tree Ave, San Tan Valley, AZ, USA"),
-          suggestion("1084 Fever Tree Ln, Henderson, NV, USA"),
-          suggestion("1084 W Main St, Mesa, Arizona, USA"),
-          suggestion("1084 Tree Rd, Gallup, NM, USA"),
+          suggestion("1234 Test Solar Way, Mesa, AZ, USA"),
+          suggestion("1234 Test Solar Ln, Henderson, NV, USA"),
+          suggestion("1234 W Main St, Mesa, Arizona, USA"),
+          suggestion("1234 Tree Rd, Gallup, NM, USA"),
         ],
       });
     }
@@ -105,14 +105,14 @@ test("address suggestions are limited to Arizona", async (t) => {
   const response = await POST(new Request("http://localhost/api/places/autocomplete", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ input: "1084 Fever Tree" }),
+    body: JSON.stringify({ input: "1234 Test Solar" }),
   }));
 
   assert.equal(response.status, 200, await response.clone().text());
   const { predictions } = (await response.json()) as { predictions: Array<{ description: string }> };
   assert.deepEqual(
     predictions.map((prediction) => prediction.description),
-    ["1084 W Fever Tree Ave, San Tan Valley, AZ, USA", "1084 W Main St, Mesa, Arizona, USA"]
+    ["1234 Test Solar Way, Mesa, AZ, USA", "1234 W Main St, Mesa, Arizona, USA"]
   );
   // Google is asked for Arizona only, so out-of-state homes rarely reach the filter.
   assert.ok(googleRequest, "Google Places was called");
@@ -123,16 +123,16 @@ test("address suggestions are limited to Arizona", async (t) => {
 
 test("the state check reads Google's and the app's address formats", async () => {
   const { addressStateCode, isArizonaHome } = await import("../src/lib/arizona-address");
-  assert.equal(addressStateCode("1084 W Fever Tree Ave, San Tan Valley, AZ 85140"), "AZ");
-  assert.equal(addressStateCode("1084 W Fever Tree Ave, San Tan Valley, AZ, USA"), "AZ");
+  assert.equal(addressStateCode("1234 Test Solar Way, Mesa, AZ 85201"), "AZ");
+  assert.equal(addressStateCode("1234 Test Solar Way, Mesa, AZ, USA"), "AZ");
   assert.equal(addressStateCode("12 Main St, Mesa, Arizona, USA"), "AZ");
   assert.equal(addressStateCode("12 Water St, Henderson, NV 89015"), "NV");
   assert.equal(addressStateCode("12 Main St"), null);
 
   // Henderson, NV sits inside Arizona's rough bounding box; the address decides.
   assert.equal(isArizonaHome({ address: "12 Water St, Henderson, NV 89015", lat: 36.03, lng: -114.98 }), false);
-  assert.equal(isArizonaHome({ address: "1084 W Fever Tree Ave, San Tan Valley, AZ 85140", lat: 33.19, lng: -111.56 }), true);
+  assert.equal(isArizonaHome({ address: "1234 Test Solar Way, Mesa, AZ 85201", lat: 33.415, lng: -111.83 }), true);
   // An Arizona-looking address with coordinates elsewhere is refused.
-  assert.equal(isArizonaHome({ address: "1084 W Fever Tree Ave, San Tan Valley, AZ 85140", lat: 40.7, lng: -74 }), false);
+  assert.equal(isArizonaHome({ address: "1234 Test Solar Way, Mesa, AZ 85201", lat: 40.7, lng: -74 }), false);
   assert.equal(isArizonaHome({ address: "12 Main St" }), false);
 });
