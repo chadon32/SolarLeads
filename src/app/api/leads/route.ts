@@ -50,6 +50,7 @@ import {
   buildReportViewerUrl,
 } from "@/lib/report-access";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { isArizonaHome } from "@/lib/arizona-address";
 import { verifyUtilityBillUploadClaim } from "@/lib/utility-bill-claims";
 import { sendFourfoldConversion } from "@/lib/fourfold-attribution";
 import { BATTERY_OPTIONS } from "@/lib/batteries";
@@ -327,6 +328,19 @@ export async function POST(request: Request) {
         panelWatts: selectedPanel.watts,
       }
     );
+    // Arizona homes only: the signed roof location and the address text must both agree.
+    if (
+      !isArizonaHome({
+        address,
+        lat: reportSnapshot.home?.lat,
+        lng: reportSnapshot.home?.lng,
+      })
+    ) {
+      return NextResponse.json(
+        { message: "Solartelligence currently supports residential properties in Arizona only." },
+        { status: 400 }
+      );
+    }
     const leadNumbers = deriveLeadSubmissionNumbers(
       {
         ...body,

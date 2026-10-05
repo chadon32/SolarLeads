@@ -7,6 +7,7 @@ import {
   readJsonWithLimit,
   rateLimitResponse,
 } from "@/lib/abuse-protection";
+import { addressStateCode } from "@/lib/arizona-address";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { z } from "zod";
 
@@ -97,6 +98,14 @@ export async function POST(request: Request) {
           input,
           includedRegionCodes: ["us"],
           includedPrimaryTypes: ["street_address", "premise"],
+          // Arizona only. The box also touches neighbouring states, so
+          // suggestions are filtered by state below as well.
+          locationRestriction: {
+            rectangle: {
+              low: { latitude: 31.2, longitude: -115 },
+              high: { latitude: 37.1, longitude: -108.9 },
+            },
+          },
         }),
         signal: AbortSignal.timeout(8_000),
       }
@@ -115,6 +124,7 @@ export async function POST(request: Request) {
     const predictions = ((data.suggestions ?? []) as PlaceSuggestion[])
       .map((suggestion) => suggestion.placePrediction)
       .filter((prediction) => prediction?.placeId && prediction?.text?.text)
+      .filter((prediction) => addressStateCode(prediction?.text?.text) === "AZ")
       .slice(0, 5)
       .map((prediction) => ({
         description: prediction?.text?.text ?? "",

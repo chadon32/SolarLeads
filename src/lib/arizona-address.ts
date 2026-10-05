@@ -44,3 +44,49 @@ export function looksLikeArizonaAddress(value?: string | null) {
 
   return /(?:\bArizona\b|\bAZ\s+\d{5}(?:-\d{4})?\b)/i.test(address);
 }
+
+/**
+ * Two-letter state named at the end of an address ("…, Mesa, AZ 85201",
+ * "…, Henderson, NV, USA"), "AZ" when it spells out Arizona, otherwise null.
+ */
+export function addressStateCode(value?: string | null) {
+  const address = value?.trim() ?? "";
+  const match = address.match(
+    /,\s*([A-Za-z]{2})(?:\s+\d{5}(?:-\d{4})?)?\s*(?:,\s*(?:USA|US|United States))?\s*$/
+  );
+
+  if (match) {
+    return match[1].toUpperCase();
+  }
+
+  return /\bArizona\b/i.test(address) ? "AZ" : null;
+}
+
+/**
+ * An Arizona home: coordinates (when known) inside Arizona's bounds, and the
+ * address does not name another state. The bounds alone also cover border
+ * towns in Nevada, Utah, New Mexico and California, hence the state check.
+ */
+export function isArizonaHome({
+  address,
+  lat,
+  lng,
+}: {
+  address?: string | null;
+  lat?: unknown;
+  lng?: unknown;
+}) {
+  const hasCoordinates = lat !== null && lat !== undefined && lng !== null && lng !== undefined;
+
+  if (hasCoordinates && !isArizonaCoordinate(lat, lng)) {
+    return false;
+  }
+
+  const state = addressStateCode(address);
+
+  if (state) {
+    return state === "AZ";
+  }
+
+  return hasCoordinates || looksLikeArizonaAddress(address);
+}
