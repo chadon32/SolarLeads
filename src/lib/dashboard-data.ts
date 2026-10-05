@@ -1,5 +1,30 @@
 export type DashboardRecordDataQuality = "complete" | "partial" | "legacy";
 
+// Pull only summary fields, not the saved roof geometry or satellite image data.
+export const DASHBOARD_SNAPSHOT_SELECT = [
+  "snapshot_version:report_snapshot->version",
+  "snapshot_created_at:report_snapshot->>createdAt",
+  "snapshot_bill:report_snapshot->monthlyBill",
+  "snapshot_metrics:report_snapshot->metrics",
+  "snapshot_carbon:report_snapshot->roofAnalysis->carbonOffsetFactorKgPerMwh",
+].join(",");
+
+export function inferLegacyLeadStatus(followUps: Array<{ status?: string }>) {
+  return followUps.some((followUp) => followUp.status === "sent")
+    ? "contacted"
+    : "new";
+}
+
+export function escapeDashboardCsvCell(
+  value: string | number | boolean | null | undefined,
+) {
+  const text = value == null ? "" : String(value);
+  // User-entered names and phone numbers must not execute as spreadsheet formulas.
+  const safe = /^[\s]*[=+@-]|^[\t\r\n]/.test(text) ? `'${text}` : text;
+  const escaped = safe.replace(/"/g, '""');
+  return /[",\r\n]/.test(safe) ? `"${escaped}"` : escaped;
+}
+
 export type DashboardSnapshotSummary = {
   version: number;
   createdAt: string;
@@ -16,7 +41,9 @@ export type DashboardSnapshotSummary = {
   };
 };
 
-export function readDashboardSnapshot(value: unknown): DashboardSnapshotSummary | null {
+export function readDashboardSnapshot(
+  value: unknown,
+): DashboardSnapshotSummary | null {
   if (!isRecord(value)) {
     return null;
   }
@@ -39,7 +66,7 @@ export function readDashboardSnapshot(value: unknown): DashboardSnapshotSummary 
     version,
     createdAt,
     carbonOffsetFactorKgPerMwh: positiveNumberOrNull(
-      roofAnalysis?.carbonOffsetFactorKgPerMwh
+      roofAnalysis?.carbonOffsetFactorKgPerMwh,
     ),
     monthlyBill: positiveNumberOrNull(value.monthlyBill),
     metrics: {
@@ -62,7 +89,8 @@ export function getDashboardDataQuality({
   modelValues: Array<number | null | undefined>;
 }): DashboardRecordDataQuality {
   const capturedValues = modelValues.filter(
-    (value): value is number => value !== null && value !== undefined && Number.isFinite(value)
+    (value): value is number =>
+      value !== null && value !== undefined && Number.isFinite(value),
   );
 
   if (hasSnapshot && capturedValues.length === modelValues.length) {
@@ -74,15 +102,19 @@ export function getDashboardDataQuality({
 
 export function selectVisibleLead<T extends { id: string }>(
   filteredLeads: T[],
-  selectedLeadId: string
+  selectedLeadId: string,
 ) {
-  return filteredLeads.find((lead) => lead.id === selectedLeadId) ?? filteredLeads[0] ?? null;
+  return (
+    filteredLeads.find((lead) => lead.id === selectedLeadId) ??
+    filteredLeads[0] ??
+    null
+  );
 }
 
 export function compareNullableNumbers(
   left: number | null,
   right: number | null,
-  direction: "asc" | "desc"
+  direction: "asc" | "desc",
 ) {
   if (left === null && right === null) {
     return 0;
@@ -101,19 +133,23 @@ export function compareNullableNumbers(
 
 export function averageKnown(values: Array<number | null | undefined>) {
   const knownValues = values.filter(
-    (value): value is number => value !== null && value !== undefined && Number.isFinite(value)
+    (value): value is number =>
+      value !== null && value !== undefined && Number.isFinite(value),
   );
 
   if (!knownValues.length) {
     return null;
   }
 
-  return knownValues.reduce((sum, value) => sum + value, 0) / knownValues.length;
+  return (
+    knownValues.reduce((sum, value) => sum + value, 0) / knownValues.length
+  );
 }
 
 export function sumKnown(values: Array<number | null | undefined>) {
   const knownValues = values.filter(
-    (value): value is number => value !== null && value !== undefined && Number.isFinite(value)
+    (value): value is number =>
+      value !== null && value !== undefined && Number.isFinite(value),
   );
 
   if (!knownValues.length) {

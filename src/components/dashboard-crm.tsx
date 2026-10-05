@@ -1,8 +1,29 @@
 "use client";
 
-import Link from "next/link";
-import { startTransition, useDeferredValue, useEffect, useMemo, useState } from "react";
-import { ArrowDownToLine, Download, Search, Send, SlidersHorizontal, Trash2, UserRound } from "lucide-react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import {
+  Download,
+  Search,
+  Send,
+  SlidersHorizontal,
+  Trash2,
+  UserRound,
+} from "lucide-react";
+import {
+  DashboardAnalyticsView,
+  DashboardFollowUps,
+  DashboardMetrics,
+  DashboardOverview,
+  DashboardPipelineBoard,
+  DashboardWorkspace,
+} from "@/components/dashboard-workspace";
+import {
+  buildDashboardAnalytics,
+  normalizeDashboardView,
+  scopeDashboardLeads,
+  type DashboardPeriod,
+  type DashboardView,
+} from "@/lib/dashboard-analytics";
 import { formatDisplayAddress } from "@/lib/address-format";
 import { trackEvent } from "@/lib/analytics";
 import { formatName } from "@/lib/name-format";
@@ -12,14 +33,12 @@ import {
 } from "@/lib/lead-scoring";
 import {
   compareNullableNumbers,
+  escapeDashboardCsvCell,
   selectVisibleLead,
   type DashboardRecordDataQuality,
 } from "@/lib/dashboard-data";
 import { getShortPanelBrand } from "@/lib/solarPanels";
-import {
-  LEAD_STATUS_OPTIONS,
-  type LeadStatus,
-} from "@/lib/lead-status";
+import { LEAD_STATUS_OPTIONS, type LeadStatus } from "@/lib/lead-status";
 
 export type DashboardLeadStatus = LeadStatus;
 
@@ -88,6 +107,7 @@ export type DashboardCrmFollowUp = {
 type DashboardCrmProps = {
   leads: DashboardCrmLead[];
   followUps: DashboardCrmFollowUp[];
+  initialView?: DashboardView;
   stats: {
     totalLeads: number;
     averageSavings: number | null;
@@ -98,6 +118,8 @@ type DashboardCrmProps = {
     conversionRate: number | null;
     totalPipelineValue: number | null;
     lastUpdatedAt: string | null;
+    loadedAt: string;
+    totalFollowUps?: number | null;
   };
 };
 
@@ -135,7 +157,7 @@ function getEstimateReportPath(address: string) {
 }
 
 function getDashboardAuthHeaders(
-  headers: Record<string, string> = {}
+  headers: Record<string, string> = {},
 ): Record<string, string> {
   return headers;
 }
@@ -152,24 +174,54 @@ function getUtilityBillDownloadPath(leadId: string, format?: "json") {
   return `/api/utility-bills/download?${params.toString()}`;
 }
 
-export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
+export function DashboardCrm({
+  leads,
+  followUps,
+  stats,
+  initialView = "overview",
+}: DashboardCrmProps) {
   const [leadItems, setLeadItems] = useState(leads);
   const [followUpItems, setFollowUpItems] = useState(followUps);
   const [selectedLeadId, setSelectedLeadId] = useState(leads[0]?.id ?? "");
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<DashboardLeadStatus | "all">("all");
-  const [sortBy, setSortBy] = useState<SortValue>("newest");
-  const [pdfUnavailableIds] = useState<Set<string>>(
-    () => new Set()
+  const [statusFilter, setStatusFilter] = useState<DashboardLeadStatus | "all">(
+    "all",
   );
-  const [utilityBillUnavailableIds] = useState<
-    Set<string>
-  >(() => new Set());
+  const [sortBy, setSortBy] = useState<SortValue>("newest");
+  const [pdfUnavailableIds] = useState<Set<string>>(() => new Set());
+  const [utilityBillUnavailableIds] = useState<Set<string>>(() => new Set());
   const [updatingIds, setUpdatingIds] = useState<Set<string>>(() => new Set());
   const [deletingIds, setDeletingIds] = useState<Set<string>>(() => new Set());
   const [actionError, setActionError] = useState("");
   const [actionSuccess, setActionSuccess] = useState("");
+  const [activeView, setActiveView] = useState<DashboardView>(initialView);
+  const [period, setPeriod] = useState<DashboardPeriod>("30");
+  const [includeTests, setIncludeTests] = useState(false);
+  const [pipelineView, setPipelineView] = useState<"board" | "list">("list");
+  const [listPage, setListPage] = useState(1);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [onlyStale, setOnlyStale] = useState(false);
+  const asOf = stats.loadedAt;
   const deferredSearch = useDeferredValue(search);
+
+  useEffect(() => {
+    const restoreView = () =>
+      setActiveView(
+        normalizeDashboardView(
+          new URLSearchParams(window.location.search).get("view"),
+        ),
+      );
+    window.addEventListener("popstate", restoreView);
+    return () => window.removeEventListener("popstate", restoreView);
+  }, []);
+
+  const navigateView = (view: DashboardView) => {
+    if (view === activeView) return;
+    const url = new URL(window.location.href);
+    url.searchParams.set("view", view);
+    window.history.pushState(null, "", `${url.pathname}${url.search}`);
+    setActiveView(view);
+  };
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -181,16 +233,40 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
   }, [leads]);
 
   useEffect(() => {
-    const frame = window.requestAnimationFrame(() => setFollowUpItems(followUps));
+    const frame = window.requestAnimationFrame(() =>
+      setFollowUpItems(followUps),
+    );
 
     return () => window.cancelAnimationFrame(frame);
   }, [followUps]);
 
+  const scopedLeads = useMemo(
+    () => scopeDashboardLeads(leadItems, period, includeTests, asOf),
+    [leadItems, period, includeTests, asOf],
+  );
+  const analytics = useMemo(
+    () => buildDashboardAnalytics(scopedLeads, asOf, period),
+    [scopedLeads, asOf, period],
+  );
+  const scopedLeadIds = new Set(scopedLeads.map((lead) => lead.id));
+  const scopedFollowUps = followUpItems.filter((item) =>
+    scopedLeadIds.has(item.leadId),
+  );
+  const failedFollowUpCount =
+    stats.queuedFollowUps === null
+      ? null
+      : scopedFollowUps.filter(
+          (item) => item.status === "failed" || item.status === "needs_review",
+        ).length;
+
   const filteredLeads = useMemo(() => {
     const normalizedQuery = deferredSearch.trim().toLowerCase();
 
-    const nextLeads = leadItems
+    const nextLeads = scopedLeads
       .filter((lead) => {
+        if (onlyStale && !analytics.stale.some((item) => item.id === lead.id)) {
+          return false;
+        }
         if (statusFilter !== "all" && lead.status !== statusFilter) {
           return false;
         }
@@ -199,31 +275,103 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
           return true;
         }
 
-        return [lead.name, lead.email, lead.address]
+        return [lead.name, lead.email, lead.phone, lead.address]
           .join(" ")
           .toLowerCase()
           .includes(normalizedQuery);
       })
       .sort((a, b) => {
         if (sortBy === "savings-desc") {
-          return compareNullableNumbers(a.annualSavings, b.annualSavings, "desc");
+          return compareNullableNumbers(
+            a.annualSavings,
+            b.annualSavings,
+            "desc",
+          );
         }
 
         if (sortBy === "savings-asc") {
-          return compareNullableNumbers(a.annualSavings, b.annualSavings, "asc");
+          return compareNullableNumbers(
+            a.annualSavings,
+            b.annualSavings,
+            "asc",
+          );
         }
 
-        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        return (
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
       });
 
     return nextLeads;
-  }, [deferredSearch, leadItems, sortBy, statusFilter]);
+  }, [
+    deferredSearch,
+    scopedLeads,
+    sortBy,
+    statusFilter,
+    onlyStale,
+    analytics.stale,
+  ]);
 
   const selectedLead = selectVisibleLead(filteredLeads, selectedLeadId);
 
   const followUpsForSelected = selectedLead
     ? followUpItems.filter((followUp) => followUp.leadId === selectedLead.id)
     : [];
+  const pageCount = Math.max(1, Math.ceil(filteredLeads.length / 25));
+  const currentPage = Math.min(listPage, pageCount);
+  const tableLeads = filteredLeads.slice(
+    (currentPage - 1) * 25,
+    currentPage * 25,
+  );
+
+  const openLead = (id: string) => {
+    setOnlyStale(false);
+    setSearch("");
+    setStatusFilter("all");
+    setSelectedLeadId(id);
+    navigateView("pipeline");
+    showSelectedLead();
+  };
+  const showSelectedLead = () => {
+    window.requestAnimationFrame(() => {
+      const detail = document.getElementById("crm-selected-lead");
+      detail?.scrollIntoView({ block: "start" });
+      detail?.focus({ preventScroll: true });
+    });
+  };
+  const selectLead = (id: string) => {
+    setSelectedLeadId(id);
+    showSelectedLead();
+  };
+  const openStage = (status: DashboardLeadStatus) => {
+    setOnlyStale(false);
+    setSearch("");
+    setStatusFilter(status);
+    setListPage(1);
+    navigateView("pipeline");
+  };
+  const openStale = () => {
+    setSearch("");
+    setStatusFilter("all");
+    setOnlyStale(true);
+    setListPage(1);
+    navigateView("pipeline");
+  };
+
+  const signOut = async () => {
+    try {
+      const response = await fetch("/api/dashboard/session", {
+        method: "DELETE",
+        credentials: "same-origin",
+      });
+      if (!response.ok) throw new Error("Could not sign out. Try again.");
+      window.location.reload();
+    } catch (error) {
+      setActionError(
+        error instanceof Error ? error.message : "Could not sign out.",
+      );
+    }
+  };
 
   const handlePdfDownload = async (lead: DashboardCrmLead) => {
     if (pdfUnavailableIds.has(lead.id)) {
@@ -264,7 +412,9 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
       });
     } catch (error) {
       setActionError(
-        error instanceof Error ? error.message : "The PDF could not be downloaded."
+        error instanceof Error
+          ? error.message
+          : "The PDF could not be downloaded.",
       );
     }
   };
@@ -283,7 +433,7 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
           cache: "no-store",
           credentials: "same-origin",
           headers: getDashboardAuthHeaders(),
-        }
+        },
       );
       const payload: { url?: string } = await response.json().catch(() => ({}));
 
@@ -294,18 +444,25 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
       window.open(
         getUtilityBillDownloadPath(lead.id),
         "_blank",
-        "noopener,noreferrer"
+        "noopener,noreferrer",
       );
     } catch (error) {
       setActionError(
         error instanceof Error
           ? error.message
-          : "The utility bill could not be opened."
+          : "The utility bill could not be opened.",
       );
     }
   };
 
   const handleSendFollowUpNow = async (followUp: DashboardCrmFollowUp) => {
+    if (
+      followUp.status === "processing" ||
+      leadItems.find((lead) => lead.id === followUp.leadId)?.status ===
+        "test-lead"
+    ) {
+      return;
+    }
     const previousFollowUp = followUp;
     setActionError("");
 
@@ -319,8 +476,8 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
               processedAt: item.processedAt,
               status: "processing",
             }
-          : item
-      )
+          : item,
+      ),
     );
 
     try {
@@ -352,26 +509,29 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
             ? {
                 ...item,
                 attempts: payload.followUp?.attempts ?? item.attempts,
-                deliveryMessage: payload.followUp?.deliveryMessage ?? item.deliveryMessage,
+                deliveryMessage:
+                  payload.followUp?.deliveryMessage ?? item.deliveryMessage,
                 processedAt: payload.followUp?.processedAt ?? item.processedAt,
                 status: payload.followUp?.status ?? item.status,
               }
-            : item
-        )
+            : item,
+        ),
       );
     } catch (error) {
       setFollowUpItems((current) =>
-        current.map((item) => (item.id === followUp.id ? previousFollowUp : item))
+        current.map((item) =>
+          item.id === followUp.id ? previousFollowUp : item,
+        ),
       );
       setActionError(
-        error instanceof Error ? error.message : "Unable to send follow-up."
+        error instanceof Error ? error.message : "Unable to send follow-up.",
       );
     }
   };
 
   const handleStatusChange = async (
     lead: DashboardCrmLead,
-    nextStatus: DashboardLeadStatus
+    nextStatus: DashboardLeadStatus,
   ) => {
     if (deletingIds.has(lead.id)) {
       return;
@@ -384,8 +544,8 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
     setUpdatingIds((current) => new Set(current).add(lead.id));
     setLeadItems((current) =>
       current.map((item) =>
-        item.id === lead.id ? { ...item, status: nextStatus } : item
-      )
+        item.id === lead.id ? { ...item, status: nextStatus } : item,
+      ),
     );
 
     try {
@@ -407,11 +567,11 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
     } catch (error) {
       setLeadItems((current) =>
         current.map((item) =>
-          item.id === lead.id ? { ...item, status: previousStatus } : item
-        )
+          item.id === lead.id ? { ...item, status: previousStatus } : item,
+        ),
       );
       setActionError(
-        error instanceof Error ? error.message : "Unable to update status."
+        error instanceof Error ? error.message : "Unable to update status.",
       );
     } finally {
       setUpdatingIds((current) => {
@@ -427,7 +587,7 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
       updatingIds.has(lead.id) ||
       deletingIds.has(lead.id) ||
       !window.confirm(
-        `Permanently delete ${formatName(lead.name) || "this lead"}? This removes the lead, related follow-ups and consent history, and any uploaded utility bill. This cannot be undone.`
+        `Permanently delete ${formatName(lead.name) || "this lead"}? This removes the lead, related follow-ups and consent history, and any uploaded utility bill. This cannot be undone.`,
       )
     ) {
       return;
@@ -438,11 +598,16 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
     setDeletingIds((current) => new Set(current).add(lead.id));
 
     try {
-      const response = await fetch(`/api/leads/${encodeURIComponent(lead.id)}`, {
-        credentials: "same-origin",
-        method: "DELETE",
-      });
-      const payload: { message?: string } = await response.json().catch(() => ({}));
+      const response = await fetch(
+        `/api/leads/${encodeURIComponent(lead.id)}`,
+        {
+          credentials: "same-origin",
+          method: "DELETE",
+        },
+      );
+      const payload: { message?: string } = await response
+        .json()
+        .catch(() => ({}));
 
       if (!response.ok) {
         throw new Error(payload.message ?? "Unable to delete this lead.");
@@ -452,15 +617,15 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
         filteredLeads.find((item) => item.id !== lead.id)?.id ?? "";
       setLeadItems((current) => current.filter((item) => item.id !== lead.id));
       setFollowUpItems((current) =>
-        current.filter((item) => item.leadId !== lead.id)
+        current.filter((item) => item.leadId !== lead.id),
       );
       setSelectedLeadId((current) =>
-        current === lead.id ? nextVisibleLeadId : current
+        current === lead.id ? nextVisibleLeadId : current,
       );
       setActionSuccess("Lead and its related data were deleted.");
     } catch (error) {
       setActionError(
-        error instanceof Error ? error.message : "Unable to delete this lead."
+        error instanceof Error ? error.message : "Unable to delete this lead.",
       );
     } finally {
       setDeletingIds((current) => {
@@ -502,43 +667,61 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
         "status",
         "created_at",
       ],
-      ...leadItems.map((lead) => [
-        lead.name,
-        lead.email,
-        lead.phone,
-        formatDisplayAddress(lead.address),
-        lead.monthlyBill === null ? "" : String(Math.round(lead.monthlyBill)),
-        lead.annualSavings === null ? "" : String(Math.round(lead.annualSavings)),
-        lead.leadScore === null ? "" : String(lead.leadScore),
-        lead.leadScoreLabel ?? "",
-        lead.estimatedRoiYears === null ? "" : String(lead.estimatedRoiYears),
-        lead.co2OffsetLbs === null ? "" : String(Math.round(lead.co2OffsetLbs)),
-        lead.energyOffsetPct === null ? "" : String(Math.round(lead.energyOffsetPct)),
-        lead.selectedPanelBrand ?? "",
-        lead.selectedPanelModel ?? "",
-        lead.selectedPanelWatts === null ? "" : String(lead.selectedPanelWatts),
-        lead.utilityBillUploaded ? "Yes" : "No",
-        lead.batteryAdded ? "Yes" : "No",
-        lead.batteryBrand ?? "",
-        lead.batteryModel ?? "",
-        lead.batteryCost === null ? "" : String(Math.round(lead.batteryCost)),
-        lead.referralCode ?? "",
-        lead.referredBy ?? "",
-        lead.systemCostBeforeIncentives === null
-          ? ""
-          : String(Math.round(lead.systemCostBeforeIncentives)),
-        lead.federalTaxCredit === null ? "" : String(Math.round(lead.federalTaxCredit)),
-        lead.netSystemCost === null ? "" : String(Math.round(lead.netSystemCost)),
-        lead.selectedInverterType ?? "",
-        getStatusLabel(lead.status),
-        lead.createdAt,
-      ]),
+      ...(activeView === "pipeline" ? filteredLeads : scopedLeads).map(
+        (lead) => [
+          lead.name,
+          lead.email,
+          lead.phone,
+          formatDisplayAddress(lead.address),
+          lead.monthlyBill === null ? "" : String(Math.round(lead.monthlyBill)),
+          lead.annualSavings === null
+            ? ""
+            : String(Math.round(lead.annualSavings)),
+          lead.leadScore === null ? "" : String(lead.leadScore),
+          lead.leadScoreLabel ?? "",
+          lead.estimatedRoiYears === null ? "" : String(lead.estimatedRoiYears),
+          lead.co2OffsetLbs === null
+            ? ""
+            : String(Math.round(lead.co2OffsetLbs)),
+          lead.energyOffsetPct === null
+            ? ""
+            : String(Math.round(lead.energyOffsetPct)),
+          lead.selectedPanelBrand ?? "",
+          lead.selectedPanelModel ?? "",
+          lead.selectedPanelWatts === null
+            ? ""
+            : String(lead.selectedPanelWatts),
+          lead.utilityBillUploaded ? "Yes" : "No",
+          lead.batteryAdded ? "Yes" : "No",
+          lead.batteryBrand ?? "",
+          lead.batteryModel ?? "",
+          lead.batteryCost === null ? "" : String(Math.round(lead.batteryCost)),
+          lead.referralCode ?? "",
+          lead.referredBy ?? "",
+          lead.systemCostBeforeIncentives === null
+            ? ""
+            : String(Math.round(lead.systemCostBeforeIncentives)),
+          lead.federalTaxCredit === null
+            ? ""
+            : String(Math.round(lead.federalTaxCredit)),
+          lead.netSystemCost === null
+            ? ""
+            : String(Math.round(lead.netSystemCost)),
+          lead.selectedInverterType ?? "",
+          getStatusLabel(lead.status),
+          lead.createdAt,
+        ],
+      ),
     ];
-    const csv = rows.map((row) => row.map(escapeCsvCell).join(",")).join("\n");
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const csv = rows
+      .map((row) => row.map(escapeDashboardCsvCell).join(","))
+      .join("\n");
+    const url = URL.createObjectURL(
+      new Blob([csv], { type: "text/csv;charset=utf-8" }),
+    );
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = "leads.csv";
+    anchor.download = `solartelligence-leads-${period === "all" ? "all-loaded" : `${period}-days`}.csv`;
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();
@@ -546,213 +729,272 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
   };
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(25,72,108,0.28),_transparent_36%),linear-gradient(180deg,#05070d_0%,#07111d_68%,#06070b_100%)] px-4 py-6 text-slate-100 sm:px-6 lg:px-8 xl:px-10">
-      <div className="mx-auto max-w-[96rem] space-y-6">
-        <header className="flex flex-col justify-between gap-5 rounded-[1.7rem] border border-white/10 bg-white/[0.045] px-6 py-5 shadow-[0_18px_70px_rgba(2,8,20,0.32)] backdrop-blur-xl lg:flex-row lg:items-center">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.34em] text-cyan-300">
-              Homeowner dashboard
-            </p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-tight text-white lg:text-[2.15rem]">
-              Solar lead pipeline
-            </h1>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">
-              Manage leads, download reports, and move each homeowner through the pipeline.
-            </p>
-            <p className="mt-2 text-xs leading-5 text-slate-500">
-              {stats.lastUpdatedAt
-                ? `Lead records last updated ${formatDateTime(stats.lastUpdatedAt)}. Unknown values were not captured.`
-                : "Record freshness is unavailable. Unknown values were not captured."}
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={exportCsv}
-              className={secondaryButtonClass}
-            >
-              <ArrowDownToLine className="h-4 w-4" aria-hidden="true" />
-              Export CSV
-            </button>
-            <Link
-              href="/"
-              className={primaryButtonClass}
-            >
-              Back to site
-            </Link>
-          </div>
-        </header>
+    <DashboardWorkspace
+      view={activeView}
+      onNavigate={navigateView}
+      period={period}
+      onPeriodChange={(value) => {
+        setPeriod(value);
+        setListPage(1);
+      }}
+      includeTests={includeTests}
+      onIncludeTestsChange={(value) => {
+        setIncludeTests(value);
+        setListPage(1);
+      }}
+      onExport={exportCsv}
+      onRefresh={() => {
+        setIsRefreshing(true);
+        window.location.reload();
+      }}
+      onSignOut={() => void signOut()}
+      isRefreshing={isRefreshing}
+      loadedCount={leadItems.length}
+      totalCount={Math.max(
+        leadItems.length,
+        stats.totalLeads - (leads.length - leadItems.length),
+      )}
+      asOf={asOf}
+    >
+      {actionError ? (
+        <p
+          role="alert"
+          aria-live="polite"
+          className="rounded-[1rem] border border-rose-300/20 bg-rose-300/10 px-4 py-3 text-sm text-rose-100"
+        >
+          {actionError}
+        </p>
+      ) : null}
+      {actionSuccess ? (
+        <p
+          role="status"
+          aria-live="polite"
+          className="rounded-[1rem] border border-emerald-300/20 bg-emerald-300/10 px-4 py-3 text-sm text-emerald-100"
+        >
+          {actionSuccess}
+        </p>
+      ) : null}
 
-        {actionError ? (
-          <p
-            role="alert"
-            aria-live="polite"
-            className="rounded-[1rem] border border-rose-300/20 bg-rose-300/10 px-4 py-3 text-sm text-rose-100"
-          >
-            {actionError}
-          </p>
-        ) : null}
-        {actionSuccess ? (
-          <p
-            role="status"
-            aria-live="polite"
-            className="rounded-[1rem] border border-emerald-300/20 bg-emerald-300/10 px-4 py-3 text-sm text-emerald-100"
-          >
-            {actionSuccess}
-          </p>
-        ) : null}
-
-        <section className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-7">
-          <KpiCard label="Total Leads" value={formatNumber(stats.totalLeads)} />
-          <KpiCard label="Avg Savings (known)" value={formatMoneyMaybe(stats.averageSavings)} />
-          <KpiCard
-            label="Avg Lead Score (stored)"
-            value={stats.averageLeadScore === null ? "Unknown" : `${formatNumber(stats.averageLeadScore)}/100`}
-          />
-          <KpiCard label="Avg Payback (known)" value={formatYearsMaybe(stats.averagePayback)} />
-          <KpiCard label="Queued Follow-ups" value={formatNumberMaybe(stats.queuedFollowUps)} />
-          <KpiCard label="PDFs Generated" value={formatNumberMaybe(stats.pdfsGenerated)} />
-          <KpiCard label="Captured Pipeline Value" value={formatMoneyMaybe(stats.totalPipelineValue)} />
-        </section>
-
-        <section className="grid gap-5 xl:grid-cols-[minmax(0,1.45fr)_minmax(26rem,0.95fr)] 2xl:grid-cols-[minmax(0,1.55fr)_minmax(31rem,0.95fr)]">
-          <div className="rounded-[1.7rem] border border-white/10 bg-white/[0.04] p-5 shadow-[0_18px_70px_rgba(2,8,20,0.32)] backdrop-blur-xl">
-            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-              <label className="flex min-h-12 flex-1 items-center gap-3 rounded-full border border-white/10 bg-slate-950/55 px-4 text-sm text-slate-300">
-                <Search className="h-4 w-4 text-cyan-200" aria-hidden="true" />
-                <input
-                  value={search}
-                  onChange={(event) =>
-                    startTransition(() => setSearch(event.target.value))
-                  }
-                  placeholder="Search name, email, or address"
-                  className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-slate-500"
-                />
-              </label>
-              <div className="flex flex-wrap gap-2">
-                <Select
-                  label="Status"
-                  value={statusFilter}
-                  onChange={(value) =>
-                    setStatusFilter(value as DashboardLeadStatus | "all")
-                  }
-                  options={[
-                    { label: "All stages", value: "all" },
-                    ...statusColumns.map((column) => ({
-                      label: column.label,
-                      value: column.id,
-                    })),
-                  ]}
-                />
-                <Select
-                  label="Sort"
-                  value={sortBy}
-                  onChange={(value) => setSortBy(value as SortValue)}
-                  options={sortOptions}
-                />
+      {activeView === "overview" ? (
+        <DashboardOverview
+          analytics={analytics}
+          leads={scopedLeads}
+          failedCount={failedFollowUpCount}
+          onNavigate={navigateView}
+          onSelect={openLead}
+          onStage={openStage}
+          onStale={openStale}
+        />
+      ) : null}
+      {activeView === "analytics" ? (
+        <DashboardAnalyticsView analytics={analytics} />
+      ) : null}
+      {activeView === "follow-ups" ? (
+        <DashboardFollowUps
+          leads={scopedLeads}
+          followUps={scopedFollowUps}
+          available={stats.queuedFollowUps !== null}
+          totalCount={stats.totalFollowUps ?? null}
+          onSelect={openLead}
+          onSend={(followUp) => void handleSendFollowUpNow(followUp)}
+        />
+      ) : null}
+      {activeView === "pipeline" ? (
+        <div className="crm-view-content">
+          <DashboardMetrics analytics={analytics} />
+          <section className="crm-pipeline-grid">
+            <div className="min-w-0">
+              <div className="crm-pipeline-controls">
+                <button
+                  className="crm-button crm-button-secondary"
+                  aria-pressed={onlyStale}
+                  onClick={() => {
+                    setOnlyStale(!onlyStale);
+                    setListPage(1);
+                  }}
+                >
+                  {onlyStale
+                    ? "Showing untouched 7+ days"
+                    : "Untouched 7+ days"}
+                </button>
+                <label className="crm-search">
+                  <Search
+                    className="h-4 w-4 text-cyan-200"
+                    aria-hidden="true"
+                  />
+                  <input
+                    aria-label="Search leads"
+                    value={search}
+                    onChange={(event) => {
+                      setSearch(event.target.value);
+                      setListPage(1);
+                    }}
+                    placeholder="Search name, email, phone, or address"
+                  />
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  <Select
+                    label="Status"
+                    value={statusFilter}
+                    onChange={(value) => {
+                      setStatusFilter(value as DashboardLeadStatus | "all");
+                      setListPage(1);
+                    }}
+                    options={[
+                      { label: "All stages", value: "all" },
+                      ...statusColumns.map((column) => ({
+                        label: column.label,
+                        value: column.id,
+                      })),
+                    ]}
+                  />
+                  <Select
+                    label="Sort"
+                    value={sortBy}
+                    onChange={(value) => {
+                      setSortBy(value as SortValue);
+                      setListPage(1);
+                    }}
+                    options={sortOptions}
+                  />
+                </div>
+                <div
+                  className="crm-view-toggle"
+                  role="group"
+                  aria-label="Pipeline layout"
+                >
+                  <button
+                    aria-pressed={pipelineView === "list"}
+                    onClick={() => setPipelineView("list")}
+                  >
+                    List
+                  </button>
+                  <button
+                    aria-pressed={pipelineView === "board"}
+                    onClick={() => setPipelineView("board")}
+                  >
+                    Board
+                  </button>
+                </div>
+                {selectedLead ? (
+                  <button
+                    className="crm-button crm-button-secondary"
+                    onClick={showSelectedLead}
+                  >
+                    View selected lead
+                  </button>
+                ) : null}
               </div>
-            </div>
-            <p className="mt-4 rounded-[1rem] border border-white/8 bg-slate-950/34 px-4 py-3 text-xs leading-5 text-slate-400">
-              {LEAD_SCORE_EXPLANATION}
-            </p>
+              <p className="mb-4 text-xs leading-5 text-slate-400">
+                {LEAD_SCORE_EXPLANATION}
+              </p>
 
-            {filteredLeads.length ? (
-              <div className="mt-4 grid gap-4">
-                <StageSummary leads={filteredLeads} />
-                <LeadTable
-                  leads={filteredLeads}
-                  onDownloadPdf={handlePdfDownload}
-                  onDeleteLead={(lead) => void handleDeleteLead(lead)}
-                  onSelectLead={setSelectedLeadId}
-                  onStatusChange={(lead, nextStatus) =>
-                    void handleStatusChange(lead, nextStatus)
-                  }
-                  pdfUnavailableIds={pdfUnavailableIds}
-                  selectedLeadId={selectedLead?.id ?? ""}
-                  deletingIds={deletingIds}
-                  updatingIds={updatingIds}
+              {filteredLeads.length ? (
+                <div className="mt-4 grid gap-4">
+                  {pipelineView === "board" ? (
+                    <DashboardPipelineBoard
+                      leads={filteredLeads}
+                      selectedId={selectedLead?.id ?? ""}
+                      updatingIds={new Set([...updatingIds, ...deletingIds])}
+                      includeTests={includeTests}
+                      onSelect={selectLead}
+                      onStatusChange={(lead, status) =>
+                        void handleStatusChange(lead, status)
+                      }
+                    />
+                  ) : (
+                    <>
+                      <div
+                        className="crm-lead-list overflow-x-auto"
+                        tabIndex={0}
+                        aria-label="Lead list"
+                      >
+                        <LeadTable
+                          leads={tableLeads}
+                          onDownloadPdf={handlePdfDownload}
+                          onDeleteLead={(lead) => void handleDeleteLead(lead)}
+                          onSelectLead={selectLead}
+                          onStatusChange={(lead, nextStatus) =>
+                            void handleStatusChange(lead, nextStatus)
+                          }
+                          pdfUnavailableIds={pdfUnavailableIds}
+                          selectedLeadId={selectedLead?.id ?? ""}
+                          deletingIds={deletingIds}
+                          updatingIds={updatingIds}
+                        />
+                      </div>
+                      <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-slate-300">
+                        <span>
+                          {filteredLeads.length} matching leads / Page{" "}
+                          {currentPage} of {pageCount}
+                        </span>
+                        <div className="flex gap-2">
+                          <button
+                            className="crm-button crm-button-secondary"
+                            disabled={currentPage === 1}
+                            onClick={() => setListPage(currentPage - 1)}
+                          >
+                            Previous
+                          </button>
+                          <button
+                            className="crm-button crm-button-secondary"
+                            disabled={currentPage === pageCount}
+                            onClick={() => setListPage(currentPage + 1)}
+                          >
+                            Next
+                          </button>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+              ) : (
+                <EmptyState
+                  title="No leads match this view"
+                  description="Try clearing the search or switching the stage filter."
                 />
-              </div>
-            ) : (
-              <EmptyState
-                title="No leads match this view"
-                description="Try clearing the search or switching the stage filter."
-              />
-            )}
-          </div>
-
-          <aside className="space-y-4 xl:sticky xl:top-6 xl:self-start">
-            {selectedLead ? (
-              <LeadDetailPanel
-                followUps={followUpsForSelected}
-                lead={selectedLead}
-                onDownloadPdf={() => handlePdfDownload(selectedLead)}
-                onDeleteLead={() => void handleDeleteLead(selectedLead)}
-                onStatusChange={(nextStatus) =>
-                  void handleStatusChange(selectedLead, nextStatus)
-                }
-                isUpdating={updatingIds.has(selectedLead.id)}
-                onViewUtilityBill={() => void handleUtilityBillView(selectedLead)}
-                onSendFollowUpNow={(followUp) => void handleSendFollowUpNow(followUp)}
-                pdfUnavailable={pdfUnavailableIds.has(selectedLead.id)}
-                isDeleting={deletingIds.has(selectedLead.id)}
-                utilityBillUnavailable={utilityBillUnavailableIds.has(selectedLead.id)}
-              />
-            ) : (
-              <EmptyState
-                title="Select a lead"
-                description="Lead details, PDF status, and follow-up actions will appear here."
-              />
-            )}
-          </aside>
-        </section>
-      </div>
-    </main>
-  );
-}
-
-function KpiCard({ label, value }: { label: string; value: string }) {
-  return (
-    <article className="flex min-h-[7.2rem] flex-col justify-between rounded-[1.15rem] border border-white/10 bg-white/[0.045] p-4 shadow-[0_14px_45px_rgba(2,8,20,0.22)] backdrop-blur-xl">
-      <p className="text-[0.66rem] font-semibold uppercase tracking-[0.16em] text-slate-400">
-        {label}
-      </p>
-      <p className="mt-3 text-2xl font-semibold tracking-tight text-white">{value}</p>
-    </article>
-  );
-}
-
-function StageSummary({ leads }: { leads: DashboardCrmLead[] }) {
-  return (
-    <div className="grid gap-3 md:grid-cols-3">
-      {statusColumns.map((column) => {
-        const count = leads.filter((lead) => lead.status === column.id).length;
-
-        return (
-          <div
-            key={column.id}
-            className="rounded-[1rem] border border-white/8 bg-slate-950/42 px-3 py-3.5"
-          >
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-[0.58rem] font-semibold uppercase tracking-[0.18em] text-slate-400">
-                {column.label}
-              </span>
-              <span className="rounded-full bg-white/[0.08] px-2 py-0.5 text-xs font-semibold text-white">
-                {count}
-              </span>
+              )}
             </div>
-            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/[0.06]">
-              <div
-                className="h-full rounded-full bg-cyan-300/70"
-                style={{
-                  width: `${leads.length ? Math.max(8, (count / leads.length) * 100) : 0}%`,
-                }}
-              />
-            </div>
-          </div>
-        );
-      })}
-    </div>
+
+            <aside
+              className="crm-lead-detail"
+              id="crm-selected-lead"
+              tabIndex={-1}
+              aria-label="Selected lead details"
+            >
+              {selectedLead ? (
+                <LeadDetailPanel
+                  followUps={followUpsForSelected}
+                  lead={selectedLead}
+                  onDownloadPdf={() => handlePdfDownload(selectedLead)}
+                  onDeleteLead={() => void handleDeleteLead(selectedLead)}
+                  onStatusChange={(nextStatus) =>
+                    void handleStatusChange(selectedLead, nextStatus)
+                  }
+                  isUpdating={updatingIds.has(selectedLead.id)}
+                  onViewUtilityBill={() =>
+                    void handleUtilityBillView(selectedLead)
+                  }
+                  onSendFollowUpNow={(followUp) =>
+                    void handleSendFollowUpNow(followUp)
+                  }
+                  pdfUnavailable={pdfUnavailableIds.has(selectedLead.id)}
+                  isDeleting={deletingIds.has(selectedLead.id)}
+                  utilityBillUnavailable={utilityBillUnavailableIds.has(
+                    selectedLead.id,
+                  )}
+                />
+              ) : (
+                <EmptyState
+                  title="Select a lead"
+                  description="Lead details, PDF status, and follow-up actions will appear here."
+                />
+              )}
+            </aside>
+          </section>
+        </div>
+      ) : null}
+    </DashboardWorkspace>
   );
 }
 
@@ -771,10 +1013,7 @@ function LeadTable({
   onDownloadPdf: (lead: DashboardCrmLead) => void;
   onDeleteLead: (lead: DashboardCrmLead) => void;
   onSelectLead: (leadId: string) => void;
-  onStatusChange: (
-    lead: DashboardCrmLead,
-    status: DashboardLeadStatus
-  ) => void;
+  onStatusChange: (lead: DashboardCrmLead, status: DashboardLeadStatus) => void;
   pdfUnavailableIds: Set<string>;
   selectedLeadId: string;
   deletingIds: Set<string>;
@@ -826,18 +1065,26 @@ function LeadTable({
                     </span>
                     {lead.utilityBillUploaded ? (
                       <span className="mt-2 inline-flex rounded-full border border-emerald-300/20 bg-emerald-300/10 px-2 py-0.5 text-[0.58rem] font-bold uppercase tracking-[0.12em] text-emerald-100">
-                        Bill verified
+                        Bill uploaded
                       </span>
                     ) : null}
                   </span>
                 </div>
               </button>
 
-              <TableMetric label="Savings" value={formatMoneyMaybe(lead.annualSavings)} />
+              <TableMetric
+                label="Savings"
+                value={formatMoneyMaybe(lead.annualSavings)}
+              />
               <div className="flex min-w-0 items-center gap-3 justify-self-start">
-                <LeadScoreBadge label={lead.leadScoreLabel} score={lead.leadScore} />
+                <LeadScoreBadge
+                  label={lead.leadScoreLabel}
+                  score={lead.leadScore}
+                />
                 <span className="text-sm font-semibold text-white lg:hidden">
-                  {lead.leadScore}/100
+                  {lead.leadScore === null
+                    ? "Not captured"
+                    : `${lead.leadScore}/100`}
                 </span>
               </div>
               <div className="lg:pl-2">
@@ -847,6 +1094,7 @@ function LeadTable({
                 />
               </div>
               <StatusSelect
+                ariaLabel={`Status for ${formatName(lead.name) || "homeowner"}`}
                 disabled={updatingIds.has(lead.id) || deletingIds.has(lead.id)}
                 value={lead.status}
                 onChange={(nextStatus) => onStatusChange(lead, nextStatus)}
@@ -860,7 +1108,7 @@ function LeadTable({
                   <button
                     type="button"
                     onClick={() => onDownloadPdf(lead)}
-                  className="inline-flex min-h-10 items-center gap-1.5 rounded-full bg-white px-3.5 py-2 text-xs font-semibold text-slate-950 transition hover:bg-cyan-100"
+                    className="inline-flex min-h-10 items-center gap-1.5 rounded-full bg-white px-3.5 py-2 text-xs font-semibold text-slate-950 transition hover:bg-cyan-100"
                   >
                     <Download className="h-3.5 w-3.5" aria-hidden="true" />
                     PDF
@@ -885,7 +1133,9 @@ function LeadTable({
                 <button
                   type="button"
                   aria-label={`Delete ${formatName(lead.name) || "this lead"}`}
-                  disabled={deletingIds.has(lead.id) || updatingIds.has(lead.id)}
+                  disabled={
+                    deletingIds.has(lead.id) || updatingIds.has(lead.id)
+                  }
                   onClick={() => onDeleteLead(lead)}
                   className="inline-flex min-h-10 items-center gap-1.5 rounded-full border border-rose-300/25 bg-rose-300/10 px-3.5 py-2 text-xs font-semibold text-rose-100 transition hover:bg-rose-300/18 disabled:cursor-wait disabled:opacity-60"
                 >
@@ -938,7 +1188,11 @@ function LeadPipelineCard({
           : "border-white/8 bg-white/[0.04] hover:border-white/18 hover:bg-white/[0.06]"
       }`}
     >
-      <button type="button" onClick={onSelect} className="block w-full text-left">
+      <button
+        type="button"
+        onClick={onSelect}
+        className="block w-full text-left"
+      >
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <h3 className="truncate text-sm font-semibold text-white">
@@ -954,12 +1208,20 @@ function LeadPipelineCard({
           <LeadScoreBadge label={lead.leadScoreLabel} score={lead.leadScore} />
         </div>
         <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-3">
-          <MiniMetric label="Savings" value={formatMoneyMaybe(lead.annualSavings)} />
+          <MiniMetric
+            label="Savings"
+            value={formatMoneyMaybe(lead.annualSavings)}
+          />
           <MiniMetric
             label="Lead score"
-            value={lead.leadScore === null ? "Unknown" : `${lead.leadScore}/100`}
+            value={
+              lead.leadScore === null ? "Unknown" : `${lead.leadScore}/100`
+            }
           />
-          <MiniMetric label="Payback" value={formatYearsMaybe(lead.estimatedRoiYears)} />
+          <MiniMetric
+            label="Payback"
+            value={formatYearsMaybe(lead.estimatedRoiYears)}
+          />
         </div>
       </button>
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-white/8 pt-3">
@@ -969,7 +1231,9 @@ function LeadPipelineCard({
           onChange={onStatusChange}
         />
         {pdfUnavailable ? (
-          <span className="text-xs font-semibold text-slate-500">PDF unavailable</span>
+          <span className="text-xs font-semibold text-slate-500">
+            PDF unavailable
+          </span>
         ) : (
           <button
             type="button"
@@ -1088,16 +1352,29 @@ function LeadDetailPanel({
       <div className="mt-5 grid gap-3 text-sm md:grid-cols-2">
         <DetailRow label="Email" value={lead.email} />
         <DetailRow label="Phone" value={lead.phone} />
-        <DetailRow label="Monthly bill" value={formatMoneyMaybe(lead.monthlyBill)} />
+        <DetailRow
+          label="Monthly bill"
+          value={formatMoneyMaybe(lead.monthlyBill)}
+        />
         <DetailRow
           label="Utility bill"
-          value={lead.utilityBillUploaded ? "Uploaded for review" : "Not uploaded"}
+          value={
+            lead.utilityBillUploaded ? "Uploaded for review" : "Not uploaded"
+          }
         />
-        <DetailRow label="Annual savings" value={formatMoneyMaybe(lead.annualSavings)} />
-        <DetailRow label="System size" value={formatKwMaybe(lead.systemSizeKw)} />
+        <DetailRow
+          label="Annual savings"
+          value={formatMoneyMaybe(lead.annualSavings)}
+        />
+        <DetailRow
+          label="System size"
+          value={formatKwMaybe(lead.systemSizeKw)}
+        />
         <DetailRow
           label="Panel count"
-          value={lead.panelCount === null ? "Unknown" : `${lead.panelCount} panels`}
+          value={
+            lead.panelCount === null ? "Unknown" : `${lead.panelCount} panels`
+          }
         />
         <DetailRow
           label="Selected panel"
@@ -1131,19 +1408,11 @@ function LeadDetailPanel({
           label="Referral code"
           value={lead.referralCode ?? "Not captured"}
         />
-        <DetailRow
-          label="Referred by"
-          value={lead.referredBy ?? "Direct"}
-        />
-        <DetailRow
-          label="Referrals made"
-          value={`${lead.referralsMade}`}
-        />
+        <DetailRow label="Referred by" value={lead.referredBy ?? "Direct"} />
+        <DetailRow label="Referrals made" value={`${lead.referralsMade}`} />
         <DetailRow
           label="Gross system cost"
-          value={
-            formatMoneyMaybe(lead.systemCostBeforeIncentives)
-          }
+          value={formatMoneyMaybe(lead.systemCostBeforeIncentives)}
         />
         <DetailRow
           label="Federal credit"
@@ -1153,9 +1422,18 @@ function LeadDetailPanel({
           label="Net system cost"
           value={formatMoneyMaybe(lead.netSystemCost)}
         />
-        <DetailRow label="Estimated Payback" value={formatYearsMaybe(lead.estimatedRoiYears)} />
-        <DetailRow label="Energy offset" value={formatPctMaybe(lead.energyOffsetPct)} />
-        <DetailRow label="CO2 offset" value={formatLbsMaybe(lead.co2OffsetLbs)} />
+        <DetailRow
+          label="Estimated Payback"
+          value={formatYearsMaybe(lead.estimatedRoiYears)}
+        />
+        <DetailRow
+          label="Energy offset"
+          value={formatPctMaybe(lead.energyOffsetPct)}
+        />
+        <DetailRow
+          label="CO2 offset"
+          value={formatLbsMaybe(lead.co2OffsetLbs)}
+        />
       </div>
 
       <div className="mt-6 grid gap-2 sm:grid-cols-2">
@@ -1218,7 +1496,10 @@ function LeadDetailPanel({
           <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-300">
             Lead nurture
           </p>
-          <SlidersHorizontal className="h-4 w-4 text-slate-500" aria-hidden="true" />
+          <SlidersHorizontal
+            className="h-4 w-4 text-slate-500"
+            aria-hidden="true"
+          />
         </div>
         {followUps.length ? (
           <div className="mt-3 grid gap-2">
@@ -1226,7 +1507,9 @@ function LeadDetailPanel({
               const needsReview =
                 followUp.status === "failed" ||
                 followUp.status === "needs_review" ||
-                /not found|could not be verified/i.test(followUp.deliveryMessage ?? "");
+                /not found|could not be verified/i.test(
+                  followUp.deliveryMessage ?? "",
+                );
 
               return (
                 <div
@@ -1238,12 +1521,16 @@ function LeadDetailPanel({
                   }`}
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className="font-semibold text-white">{followUp.title}</span>
+                    <span className="font-semibold text-white">
+                      {followUp.title}
+                    </span>
                     <div className="flex shrink-0 items-center gap-1.5">
                       <span className="rounded-full bg-white/[0.08] px-2 py-0.5 text-[0.58rem] uppercase tracking-[0.14em] text-slate-400">
                         {formatFollowUpStatus(followUp.status)}
                       </span>
-                      {followUp.status === "queued" || followUp.status === "scheduled" ? (
+                      {lead.status !== "test-lead" &&
+                      (followUp.status === "queued" ||
+                        followUp.status === "scheduled") ? (
                         <button
                           type="button"
                           onClick={() => onSendFollowUpNow(followUp)}
@@ -1255,7 +1542,9 @@ function LeadDetailPanel({
                       ) : null}
                     </div>
                   </div>
-                  <p className="mt-1 line-clamp-2 text-slate-500">{followUp.message}</p>
+                  <p className="mt-1 line-clamp-2 text-slate-500">
+                    {followUp.message}
+                  </p>
                   {followUp.deliveryMessage ? (
                     <p
                       className={`mt-1 text-[0.65rem] ${
@@ -1322,7 +1611,9 @@ function StageEmptyState() {
       <div className="mx-auto grid h-9 w-9 place-items-center rounded-full border border-white/10 bg-white/[0.04] text-slate-500">
         <UserRound className="h-4 w-4" aria-hidden="true" />
       </div>
-      <p className="mt-3 text-xs font-semibold text-slate-400">No leads in this stage.</p>
+      <p className="mt-3 text-xs font-semibold text-slate-400">
+        No leads in this stage.
+      </p>
       <p className="mt-1 text-[0.68rem] leading-4 text-slate-600">
         Drag a lead here or use the dropdown.
       </p>
@@ -1367,7 +1658,9 @@ function StatusBadge({ status }: { status: DashboardLeadStatus }) {
             : "bg-white/[0.08] text-slate-200";
 
   return (
-    <span className={`shrink-0 rounded-full px-2.5 py-1 text-[0.58rem] font-bold uppercase tracking-[0.14em] ${color}`}>
+    <span
+      className={`shrink-0 rounded-full px-2.5 py-1 text-[0.58rem] font-bold uppercase tracking-[0.14em] ${color}`}
+    >
       {getStatusLabel(status)}
     </span>
   );
@@ -1392,12 +1685,12 @@ function LeadScoreBadge({
     label === "Premium Lead"
       ? "border-fuchsia-300/30 bg-fuchsia-300/18 text-fuchsia-50"
       : label === "Hot Lead"
-      ? "border-rose-300/25 bg-rose-300/16 text-rose-50"
-      : label === "Qualified Lead"
-        ? "border-emerald-300/25 bg-emerald-300/16 text-emerald-50"
-      : label === "Warm Lead"
-        ? "border-amber-300/25 bg-amber-300/16 text-amber-50"
-        : "border-slate-300/18 bg-white/[0.08] text-slate-200";
+        ? "border-rose-300/25 bg-rose-300/16 text-rose-50"
+        : label === "Qualified Lead"
+          ? "border-emerald-300/25 bg-emerald-300/16 text-emerald-50"
+          : label === "Warm Lead"
+            ? "border-amber-300/25 bg-amber-300/16 text-amber-50"
+            : "border-slate-300/18 bg-white/[0.08] text-slate-200";
 
   return (
     <span
@@ -1412,7 +1705,7 @@ function LeadScoreBadge({
 function BillVerifiedBadge() {
   return (
     <span className="shrink-0 rounded-full border border-emerald-300/20 bg-emerald-300/10 px-2.5 py-1 text-[0.58rem] font-bold uppercase tracking-[0.14em] text-emerald-100">
-      Bill verified
+      Bill uploaded
     </span>
   );
 }
@@ -1421,13 +1714,16 @@ function StatusSelect({
   disabled,
   onChange,
   value,
+  ariaLabel = "Lead status",
 }: {
   disabled?: boolean;
   onChange: (status: DashboardLeadStatus) => void;
   value: DashboardLeadStatus;
+  ariaLabel?: string;
 }) {
   return (
     <select
+      aria-label={ariaLabel}
       disabled={disabled}
       value={value}
       onChange={(event) => onChange(event.target.value as DashboardLeadStatus)}
@@ -1493,10 +1789,6 @@ function formatNumber(value: number) {
   }).format(Number.isFinite(value) ? value : 0);
 }
 
-function formatNumberMaybe(value: number | null) {
-  return value === null ? "Unknown" : formatNumber(value);
-}
-
 function formatDecimal(value: number) {
   return new Intl.NumberFormat("en-US", {
     maximumFractionDigits: 1,
@@ -1530,6 +1822,7 @@ function formatDateTime(value: string) {
   return new Intl.DateTimeFormat("en-US", {
     dateStyle: "medium",
     timeStyle: "short",
+    timeZone: "America/Phoenix",
   }).format(date);
 }
 
@@ -1598,11 +1891,4 @@ function buildPdfFilename(lead: DashboardCrmLead) {
   const date = new Date().toISOString().slice(0, 10);
 
   return `solar-report-${safeName}-${date}.pdf`;
-}
-
-function escapeCsvCell(value: string | number | boolean | null | undefined) {
-  const normalized = value == null ? "" : String(value);
-  const needsEscaping = /[",\n]/.test(normalized);
-  const escaped = normalized.replace(/"/g, '""');
-  return needsEscaping ? `"${escaped}"` : escaped;
 }

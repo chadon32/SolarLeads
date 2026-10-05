@@ -4,7 +4,10 @@ import {
   averageKnown,
   boundedNumberOrNull,
   compareNullableNumbers,
+  DASHBOARD_SNAPSHOT_SELECT,
+  escapeDashboardCsvCell,
   finiteNumberOrNull,
+  inferLegacyLeadStatus,
   nonNegativeNumberOrNull,
   positiveIntegerOrNull,
   readDashboardSnapshot,
@@ -36,6 +39,30 @@ test("dashboard numeric helpers keep missing values unknown while preserving zer
   assert.equal(sumKnown([null, undefined]), null);
 });
 
+test("queued legacy outreach is not evidence that a lead was contacted", () => {
+  assert.equal(
+    inferLegacyLeadStatus([{ status: "queued" }, { status: "scheduled" }]),
+    "new",
+  );
+  assert.equal(inferLegacyLeadStatus([{ status: "failed" }]), "new");
+  assert.equal(inferLegacyLeadStatus([{ status: "sent" }]), "contacted");
+});
+
+test("dashboard exports quote CSV characters and neutralize spreadsheet formulas", () => {
+  assert.equal(escapeDashboardCsvCell('Mesa, "AZ"'), '"Mesa, ""AZ"""');
+  assert.equal(escapeDashboardCsvCell("=HYPERLINK(1)"), "'=HYPERLINK(1)");
+  assert.equal(escapeDashboardCsvCell("  +123"), "'  +123");
+  assert.equal(escapeDashboardCsvCell("\rmalicious"), '"\'\rmalicious"');
+  assert.equal(escapeDashboardCsvCell(null), "");
+  assert.equal(escapeDashboardCsvCell(200), "200");
+  assert.ok(
+    DASHBOARD_SNAPSHOT_SELECT.includes(
+      "snapshot_metrics:report_snapshot->metrics",
+    ),
+  );
+  assert.ok(!DASHBOARD_SNAPSHOT_SELECT.split(",").includes("report_snapshot"));
+});
+
 test("dashboard snapshot fallback preserves captured metrics and saved zero coverage", () => {
   const snapshot = readDashboardSnapshot({
     version: 1,
@@ -65,7 +92,12 @@ test("dashboard snapshot fallback preserves captured metrics and saved zero cove
     version: 1,
     createdAt: "2026-09-21T12:00:00.000Z",
     monthlyBill: null,
-    metrics: { coveragePct: null, annualSavings: 0, monthlySavings: 0, annualKwh: 0 },
+    metrics: {
+      coveragePct: null,
+      annualSavings: 0,
+      monthlySavings: 0,
+      annualKwh: 0,
+    },
   });
   assert.ok(legacySnapshot);
   assert.equal(legacySnapshot.monthlyBill, null);
@@ -87,11 +119,15 @@ test("dashboard savings sorting keeps unknown values last in both directions", (
   const values = [null, 100, 0, 40];
 
   assert.deepEqual(
-    [...values].sort((left, right) => compareNullableNumbers(left, right, "asc")),
-    [0, 40, 100, null]
+    [...values].sort((left, right) =>
+      compareNullableNumbers(left, right, "asc"),
+    ),
+    [0, 40, 100, null],
   );
   assert.deepEqual(
-    [...values].sort((left, right) => compareNullableNumbers(left, right, "desc")),
-    [100, 40, 0, null]
+    [...values].sort((left, right) =>
+      compareNullableNumbers(left, right, "desc"),
+    ),
+    [100, 40, 0, null],
   );
 });

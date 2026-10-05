@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import "@/components/dashboard-workspace.css";
 import { cookies } from "next/headers";
 import {
   DashboardCrm,
@@ -14,9 +15,11 @@ import {
 } from "@/lib/lead-scoring";
 import {
   averageKnown,
+  DASHBOARD_SNAPSHOT_SELECT,
   boundedNumberOrNull,
   finiteNumberOrNull,
   getDashboardDataQuality,
+  inferLegacyLeadStatus,
   nonNegativeNumberOrNull,
   positiveIntegerOrNull,
   positiveNumberOrNull,
@@ -31,13 +34,16 @@ import {
 import { formatName } from "@/lib/name-format";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
 import { buildReportPdfPath } from "@/lib/report-access";
+import {
+  DASHBOARD_RECORD_LIMIT,
+  normalizeDashboardView,
+} from "@/lib/dashboard-analytics";
 
 export const metadata: Metadata = {
   title: {
     absolute: `Lead Dashboard | ${APP_NAME}`,
   },
-  description:
-    "Manage solar leads, download reports, and track your pipeline.",
+  description: "Manage solar leads, download reports, and track your pipeline.",
   openGraph: {
     title: `Lead Dashboard | ${APP_NAME}`,
     description:
@@ -94,17 +100,29 @@ type DashboardLead = {
   created_at: string;
   updated_at?: string | null;
   report_snapshot?: unknown;
+  snapshot_version?: unknown;
+  snapshot_created_at?: unknown;
+  snapshot_bill?: unknown;
+  snapshot_metrics?: unknown;
+  snapshot_carbon?: unknown;
 };
 
 type LeadsQueryResult = {
   data: DashboardLead[] | null;
   error: { message: string } | null;
+  count?: number | null;
 };
 
-export default async function DashboardPage() {
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ view?: string | string[] }>;
+}) {
+  const params = await searchParams;
+  const initialView = normalizeDashboardView(params.view);
   const cookieStore = await cookies();
   const sessionAuth = verifyDashboardSessionCookie(
-    cookieStore.get(DASHBOARD_SESSION_COOKIE)?.value
+    cookieStore.get(DASHBOARD_SESSION_COOKIE)?.value,
   );
   const accessToken = getDashboardAccessToken();
 
@@ -128,45 +146,54 @@ export default async function DashboardPage() {
   const baseLeadSelect =
     "id, name, email, phone, address, monthly_bill, estimated_savings, created_at";
 
-  let leadsResult = await supabase
+  let leadsResult = (await supabase
     .from("leads")
-    .select(scoredLeadSelect)
+    .select(
+      scoredLeadSelect.replace("report_snapshot", DASHBOARD_SNAPSHOT_SELECT),
+      { count: "exact" },
+    )
     .order("created_at", { ascending: false })
-    .limit(10) as unknown as LeadsQueryResult;
-
-  if (leadsResult.error && isMissingColumn(leadsResult.error.message, "utility_bill_file_path")) {
-    leadsResult = await supabase
-      .from("leads")
-      .select(scoredLeadSelectWithoutUtilityBillPath)
-      .order("created_at", { ascending: false })
-      .limit(10) as unknown as LeadsQueryResult;
-  }
-
-  if (leadsResult.error && shouldRetryLegacySelect(leadsResult.error.message)) {
-    leadsResult = await supabase
-      .from("leads")
-      .select(scoredLeadSelectWithoutNewOptional)
-      .order("created_at", { ascending: false })
-      .limit(10) as unknown as LeadsQueryResult;
-  }
-
-  if (leadsResult.error && shouldRetryLegacySelect(leadsResult.error.message)) {
-    leadsResult = await supabase
-      .from("leads")
-      .select(extendedLeadSelect)
-      .order("created_at", { ascending: false })
-      .limit(10) as unknown as LeadsQueryResult;
-  }
+    .limit(DASHBOARD_RECORD_LIMIT)) as unknown as LeadsQueryResult;
 
   if (
     leadsResult.error &&
-    shouldRetryLegacySelect(leadsResult.error.message)
+    isMissingColumn(leadsResult.error.message, "utility_bill_file_path")
   ) {
-    leadsResult = await supabase
+    leadsResult = (await supabase
       .from("leads")
-      .select(baseLeadSelect)
+      .select(
+        scoredLeadSelectWithoutUtilityBillPath.replace(
+          "report_snapshot",
+          DASHBOARD_SNAPSHOT_SELECT,
+        ),
+        { count: "exact" },
+      )
       .order("created_at", { ascending: false })
-      .limit(10) as unknown as LeadsQueryResult;
+      .limit(DASHBOARD_RECORD_LIMIT)) as unknown as LeadsQueryResult;
+  }
+
+  if (leadsResult.error && shouldRetryLegacySelect(leadsResult.error.message)) {
+    leadsResult = (await supabase
+      .from("leads")
+      .select(scoredLeadSelectWithoutNewOptional, { count: "exact" })
+      .order("created_at", { ascending: false })
+      .limit(DASHBOARD_RECORD_LIMIT)) as unknown as LeadsQueryResult;
+  }
+
+  if (leadsResult.error && shouldRetryLegacySelect(leadsResult.error.message)) {
+    leadsResult = (await supabase
+      .from("leads")
+      .select(extendedLeadSelect, { count: "exact" })
+      .order("created_at", { ascending: false })
+      .limit(DASHBOARD_RECORD_LIMIT)) as unknown as LeadsQueryResult;
+  }
+
+  if (leadsResult.error && shouldRetryLegacySelect(leadsResult.error.message)) {
+    leadsResult = (await supabase
+      .from("leads")
+      .select(baseLeadSelect, { count: "exact" })
+      .order("created_at", { ascending: false })
+      .limit(DASHBOARD_RECORD_LIMIT)) as unknown as LeadsQueryResult;
   }
 
   const { data: leads, error: leadsError } = leadsResult;
@@ -197,17 +224,22 @@ export default async function DashboardPage() {
     );
   }
 
-  const { data: followUps, error: followUpsError } = await supabase
+  const {
+    data: followUps,
+    error: followUpsError,
+    count: followUpCount,
+  } = await supabase
     .from("lead_followups")
     .select(
-      "id, lead_id, step_order, channel, title, body, scheduled_for, status, attempts, processed_at, delivery_message"
+      "id, lead_id, step_order, channel, title, body, scheduled_for, status, attempts, processed_at, delivery_message",
+      { count: "exact" },
     )
     .order("scheduled_for", { ascending: false })
-    .limit(30);
+    .limit(DASHBOARD_RECORD_LIMIT);
 
   const leadList = leads ?? [];
-  const followUpList = followUpsError ? [] : followUps ?? [];
-  const totalLeads = leadList.length;
+  const followUpList = followUpsError ? [] : (followUps ?? []);
+  const totalLeads = leadsResult.count ?? leadList.length;
   const queuedFollowUps = followUpsError
     ? null
     : followUpList.filter((item) => item.status === "queued").length;
@@ -220,7 +252,15 @@ export default async function DashboardPage() {
   });
 
   const crmLeads: DashboardCrmLead[] = leadList.map((lead) => {
-    const snapshot = readDashboardSnapshot(lead.report_snapshot);
+    const snapshot = readDashboardSnapshot(
+      lead.report_snapshot ?? {
+        version: lead.snapshot_version,
+        createdAt: lead.snapshot_created_at,
+        monthlyBill: lead.snapshot_bill,
+        metrics: lead.snapshot_metrics,
+        roofAnalysis: { carbonOffsetFactorKgPerMwh: lead.snapshot_carbon },
+      },
+    );
     const monthlyBill =
       positiveNumberOrNull(lead.monthly_bill) ?? snapshot?.monthlyBill ?? null;
     const annualEnergyKwh =
@@ -233,11 +273,17 @@ export default async function DashboardPage() {
       snapshot?.metrics.annualSavings ??
       null;
     const panelCount =
-      positiveIntegerOrNull(lead.panel_count) ?? snapshot?.metrics.panelCount ?? null;
+      positiveIntegerOrNull(lead.panel_count) ??
+      snapshot?.metrics.panelCount ??
+      null;
     const systemSizeKw =
-      positiveNumberOrNull(lead.system_size_kw) ?? snapshot?.metrics.systemKw ?? null;
+      positiveNumberOrNull(lead.system_size_kw) ??
+      snapshot?.metrics.systemKw ??
+      null;
     const estimatedRoiYears =
-      positiveNumberOrNull(lead.roi_years) ?? snapshot?.metrics.paybackYears ?? null;
+      positiveNumberOrNull(lead.roi_years) ??
+      snapshot?.metrics.paybackYears ??
+      null;
     const energyOffsetPct =
       boundedNumberOrNull(lead.energy_offset_pct, 0, 100) ??
       snapshot?.metrics.coveragePct ??
@@ -290,11 +336,7 @@ export default async function DashboardPage() {
       annualSavings,
       co2OffsetLbs:
         annualEnergyKwh !== null && carbonOffsetFactor !== null
-          ? Math.round(
-              (annualEnergyKwh / 1000) *
-                carbonOffsetFactor *
-                2.205
-            )
+          ? Math.round((annualEnergyKwh / 1000) * carbonOffsetFactor * 2.205)
           : null,
       estimatedRoiYears,
       panelCount,
@@ -304,7 +346,7 @@ export default async function DashboardPage() {
       selectedPanelWatts: positiveNumberOrNull(lead.selected_panel_watts),
       energyOffsetPct,
       systemCostBeforeIncentives: positiveNumberOrNull(
-        lead.system_cost_before_incentives
+        lead.system_cost_before_incentives,
       ),
       federalTaxCredit: nonNegativeNumberOrNull(lead.federal_tax_credit),
       netSystemCost: positiveNumberOrNull(lead.net_system_cost),
@@ -321,7 +363,7 @@ export default async function DashboardPage() {
       reportUrl: buildReportPdfPath(lead.id),
       status:
         normalizeLeadStatus(lead.status) ??
-        getLeadStatus(followUpsByLeadId.get(lead.id) ?? []),
+        inferLegacyLeadStatus(followUpsByLeadId.get(lead.id) ?? []),
       pdfStatus: lead.pdf_generated === true ? "ready" : "pending",
       utilityBillUploaded: Boolean(lead.utility_bill_uploaded),
       batteryAdded: Boolean(lead.battery_added),
@@ -331,25 +373,27 @@ export default async function DashboardPage() {
       referralCode: lead.referral_code ?? null,
       referredBy: lead.referred_by ?? null,
       referralsMade: lead.referral_code
-        ? leadList.filter((candidate) => candidate.referred_by === lead.referral_code).length
-      : 0,
+        ? leadList.filter(
+            (candidate) => candidate.referred_by === lead.referral_code,
+          ).length
+        : 0,
     };
   });
   const averageSavingsValue = averageKnown(
-    crmLeads.map((lead) => lead.annualSavings)
+    crmLeads.map((lead) => lead.annualSavings),
   );
   const averageSavings =
     averageSavingsValue === null ? null : Math.round(averageSavingsValue);
   const averageLeadScoreValue = averageKnown(
-    crmLeads.map((lead) => lead.leadScore)
+    crmLeads.map((lead) => lead.leadScore),
   );
   const averageLeadScore =
     averageLeadScoreValue === null ? null : Math.round(averageLeadScoreValue);
   const averagePayback = averageKnown(
-    crmLeads.map((lead) => lead.estimatedRoiYears)
+    crmLeads.map((lead) => lead.estimatedRoiYears),
   );
   const totalPipelineValue = sumKnown(
-    crmLeads.map((lead) => lead.systemCostBeforeIncentives)
+    crmLeads.map((lead) => lead.systemCostBeforeIncentives),
   );
   const pdfGeneratedValues = leadList
     .map((lead) => lead.pdf_generated)
@@ -358,9 +402,7 @@ export default async function DashboardPage() {
     pdfGeneratedValues.length === leadList.length
       ? pdfGeneratedValues.filter(Boolean).length
       : null;
-  const lastUpdatedAt = latestTimestamp(
-    crmLeads.map((lead) => lead.updatedAt)
-  );
+  const lastUpdatedAt = latestTimestamp(crmLeads.map((lead) => lead.updatedAt));
 
   const crmFollowUps: DashboardCrmFollowUp[] = followUpList.map((item) => ({
     id: item.id,
@@ -380,6 +422,7 @@ export default async function DashboardPage() {
     <DashboardCrm
       leads={crmLeads}
       followUps={crmFollowUps}
+      initialView={initialView}
       stats={{
         totalLeads,
         averageSavings,
@@ -390,6 +433,10 @@ export default async function DashboardPage() {
         conversionRate: null,
         totalPipelineValue,
         lastUpdatedAt,
+        loadedAt: new Date().toISOString(),
+        totalFollowUps: followUpsError
+          ? null
+          : (followUpCount ?? followUpList.length),
       }}
     />
   );
@@ -407,7 +454,9 @@ function DashboardAccessGate({
           Homeowner dashboard
         </p>
         <h1 className="mt-3 text-3xl font-semibold tracking-tight text-white">
-          {configurationMissing ? "Dashboard is not configured." : "Access required."}
+          {configurationMissing
+            ? "Dashboard is not configured."
+            : "Access required."}
         </h1>
         <p className="mt-3 text-sm leading-7 text-slate-300">
           {configurationMissing
@@ -466,31 +515,16 @@ function validTimestampOrNull(value: unknown) {
 }
 
 function latestTimestamp(values: Array<string | null>) {
-  return values
-    .filter((value): value is string => Boolean(value))
-    .sort((a, b) => Date.parse(b) - Date.parse(a))[0] ?? null;
+  return (
+    values
+      .filter((value): value is string => Boolean(value))
+      .sort((a, b) => Date.parse(b) - Date.parse(a))[0] ?? null
+  );
 }
 
-function getLeadStatus(
-  followUps: Array<{ status?: string }>
-): DashboardLeadStatus {
-  if (followUps.some((followUp) => followUp.status === "sent")) {
-    return "contacted";
-  }
-
-  if (
-    followUps.some(
-      (followUp) =>
-        followUp.status === "queued" || followUp.status === "scheduled"
-    )
-  ) {
-    return "contacted";
-  }
-
-  return "new";
-}
-
-function normalizeLeadStatus(value?: string | null): DashboardLeadStatus | null {
+function normalizeLeadStatus(
+  value?: string | null,
+): DashboardLeadStatus | null {
   if (!value) {
     return null;
   }
@@ -527,7 +561,10 @@ function describeDashboardIssue(message: string) {
     };
   }
 
-  if (normalized.includes("relation") || normalized.includes("does not exist")) {
+  if (
+    normalized.includes("relation") ||
+    normalized.includes("does not exist")
+  ) {
     return {
       summary:
         "The dashboard connected to Supabase, but the lead dashboard tables are missing.",

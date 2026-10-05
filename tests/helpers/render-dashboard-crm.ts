@@ -3,7 +3,11 @@
 // condition the unit tests use.
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { DashboardCrm, type DashboardCrmLead } from "../../src/components/dashboard-crm";
+import {
+  DashboardCrm,
+  type DashboardCrmLead,
+} from "../../src/components/dashboard-crm";
+import { normalizeDashboardView } from "../../src/lib/dashboard-analytics";
 
 const lead = (id: string, name: string, address: string): DashboardCrmLead => ({
   id,
@@ -34,7 +38,7 @@ const lead = (id: string, name: string, address: string): DashboardCrmLead => ({
   leadScoreExplanation: "",
   leadScoreLabel: null,
   reportUrl: "",
-  status: "test-lead",
+  status: "new",
   pdfStatus: "ready",
   utilityBillUploaded: false,
   batteryAdded: false,
@@ -56,17 +60,29 @@ const stats = {
   conversionRate: null,
   totalPipelineValue: null,
   lastUpdatedAt: null,
+  loadedAt: "2026-10-05T12:00:00.000Z",
 };
 
 process.stdout.write(
   renderToStaticMarkup(
     createElement(DashboardCrm, {
       leads: [
-        lead("00000000-0000-4000-8000-0000000000a1", "Avery", "1 Test Way, Mesa, AZ 85201"),
-        lead("00000000-0000-4000-8000-0000000000b2", "Blake", "2 Test Way, Mesa, AZ 85201"),
+        lead(
+          "00000000-0000-4000-8000-0000000000a1",
+          "Avery",
+          "1 Test Way, Mesa, AZ 85201",
+        ),
+        lead(
+          "00000000-0000-4000-8000-0000000000b2",
+          "Blake",
+          "2 Test Way, Mesa, AZ 85201",
+        ),
       ],
       followUps: [],
       stats,
-    })
-  )
+      initialView: process.argv[2]
+        ? normalizeDashboardView(process.argv[2])
+        : "pipeline",
+    }),
+  ),
 );

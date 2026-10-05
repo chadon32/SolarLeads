@@ -11,6 +11,7 @@
     "perf:benchmark": "tsx scripts/benchmark-performance.ts",
     "seo:audit": "tsx scripts/seo-benchmark.ts",
     "pdf:preview": "tsx --conditions=react-server scripts/preview-report-pdf.ts",
+    "preview:dashboard": "tsx scripts/preview-dashboard-workspace.ts",
     "mobile:start": "npm --prefix mobile start",
     "mobile:typecheck": "npm --prefix mobile run typecheck",
     "mobile:export:ios": "npm --prefix mobile run export:ios",
