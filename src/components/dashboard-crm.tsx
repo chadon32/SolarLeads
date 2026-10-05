@@ -662,6 +662,7 @@ export function DashboardCrm({ leads, followUps, stats }: DashboardCrmProps) {
                 <LeadTable
                   leads={filteredLeads}
                   onDownloadPdf={handlePdfDownload}
+                  onDeleteLead={(lead) => void handleDeleteLead(lead)}
                   onSelectLead={setSelectedLeadId}
                   onStatusChange={(lead, nextStatus) =>
                     void handleStatusChange(lead, nextStatus)
@@ -758,6 +759,7 @@ function StageSummary({ leads }: { leads: DashboardCrmLead[] }) {
 function LeadTable({
   leads,
   onDownloadPdf,
+  onDeleteLead,
   onSelectLead,
   onStatusChange,
   pdfUnavailableIds,
@@ -767,6 +769,7 @@ function LeadTable({
 }: {
   leads: DashboardCrmLead[];
   onDownloadPdf: (lead: DashboardCrmLead) => void;
+  onDeleteLead: (lead: DashboardCrmLead) => void;
   onSelectLead: (leadId: string) => void;
   onStatusChange: (
     lead: DashboardCrmLead,
@@ -879,6 +882,16 @@ function LeadTable({
                     Email
                   </a>
                 ) : null}
+                <button
+                  type="button"
+                  aria-label={`Delete ${formatName(lead.name) || "this lead"}`}
+                  disabled={deletingIds.has(lead.id) || updatingIds.has(lead.id)}
+                  onClick={() => onDeleteLead(lead)}
+                  className="inline-flex min-h-10 items-center gap-1.5 rounded-full border border-rose-300/25 bg-rose-300/10 px-3.5 py-2 text-xs font-semibold text-rose-100 transition hover:bg-rose-300/18 disabled:cursor-wait disabled:opacity-60"
+                >
+                  <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                  {deletingIds.has(lead.id) ? "Deleting..." : "Delete"}
+                </button>
               </div>
             </article>
           );
