@@ -224,7 +224,7 @@ test("shows a safe fallback message when Places fails", async ({ page }) => {
   await home.open();
   await home.addressInput().fill(TEST_ADDRESS);
 
-  await expect(page.getByText(/Local fallback/i)).toBeVisible();
+  await expect(page.getByText(/local address matching/i)).toBeVisible();
   await expect(page.locator("#address-error")).toContainText(
     /temporarily unavailable/i
   );

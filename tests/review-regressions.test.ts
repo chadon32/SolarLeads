@@ -11,6 +11,7 @@ import { deriveLeadSubmissionNumbers } from "../src/lib/lead-submission";
 import { calculateTwentyYearSolarCosts } from "../src/lib/financial-model";
 import { initialReportDeliveryStatus } from "../src/lib/follow-up-state";
 import { isEstimateDocument, sanitizeEstimateNavigationUrl } from "../mobile/src/estimate-navigation";
+import { estimateAnnualSolarSavings } from "../src/lib/solar-savings";
 
 const roof = TEST_ROOF_ANALYSIS as RoofAnalysis;
 
@@ -40,7 +41,7 @@ test("a ten-panel report does not borrow the twenty-panel configuration energy",
     address: TEST_ADDRESS, analysis: roof, activePanelCount: 10, monthlyBill: 200,
   }), { monthlyBill: 200, panelWatts: 400 });
   assert.equal(snapshot.metrics.annualKwh, 6800);
-  assert.equal(snapshot.metrics.annualSavings, 1054);
+  assert.equal(snapshot.metrics.annualSavings, estimateAnnualSolarSavings({ annualKwh: 6800, monthlyBill: 200 }));
 });
 
 test("intermediate panel counts grow production instead of plateauing at sparse configs", () => {

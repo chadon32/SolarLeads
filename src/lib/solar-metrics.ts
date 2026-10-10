@@ -9,6 +9,7 @@ import { calculateFederalResidentialSolarCredit } from "@/lib/financial-model";
 import {
   ARIZONA_AVG_ANNUAL_HOME_KWH,
   ARIZONA_AVG_RATE_PER_KWH,
+  ARIZONA_FIXED_MONTHLY_CHARGE,
   INSTALLED_COST_PER_WATT,
   STANDARD_PANEL_WATTS,
 } from "@/lib/solar-assumptions";
@@ -21,6 +22,7 @@ export {
 } from "@/lib/solar-assumptions";
 
 import { getSelectedPanelEnergy } from "@/lib/selected-panel-energy";
+import { estimateAnnualSolarSavings } from "@/lib/solar-savings";
 
 const compassLabels = [
   "N",
@@ -176,7 +178,8 @@ export function getMaxPanelCount(analysis: RoofAnalysis) {
  */
 export function getTargetAnnualUsageKwh(monthlyBill?: number | null) {
   if (monthlyBill && monthlyBill > 0) {
-    return (monthlyBill * 12) / ARIZONA_AVG_RATE_PER_KWH;
+    // The fixed monthly charge is not electricity use.
+    return (Math.max(0, monthlyBill - ARIZONA_FIXED_MONTHLY_CHARGE) * 12) / ARIZONA_AVG_RATE_PER_KWH;
   }
 
   return ARIZONA_AVG_ANNUAL_HOME_KWH;
@@ -274,12 +277,9 @@ export function buildSolarMetrics(
   const usableRoofAreaM2 = getUsableAreaM2(analysis);
   const avgPitchDeg = getAveragePitchDeg(analysis);
   const annualKwh = getAnnualKwhForPanelCount(analysis, panelCount);
-  const utilitySavingsValue = annualKwh * ARIZONA_AVG_RATE_PER_KWH;
   const annualBill =
     options.monthlyBill && options.monthlyBill > 0 ? options.monthlyBill * 12 : null;
-  const annualSavings = Math.round(
-    annualBill ? annualBill * Math.min(utilitySavingsValue / annualBill, 1) : utilitySavingsValue
-  );
+  const annualSavings = estimateAnnualSolarSavings({ annualKwh, monthlyBill: options.monthlyBill });
   const systemKw = roundTo((panelCount * STANDARD_PANEL_WATTS) / 1000, 1);
   const installedCost = panelCount * STANDARD_PANEL_WATTS * INSTALLED_COST_PER_WATT;
   const netInstalledCost =
@@ -345,7 +345,12 @@ export function calculateEnergyOffsetPct(
     return 0;
   }
 
-  return Math.min(100, Math.max(0, Math.round(((kwh * rate) / (bill * 12)) * 100)));
+  const energyBill = (bill - ARIZONA_FIXED_MONTHLY_CHARGE) * 12;
+  if (energyBill <= 0) {
+    return 0;
+  }
+
+  return Math.min(100, Math.max(0, Math.round(((kwh * rate) / energyBill) * 100)));
 }
 
 export function formatCompassDirection(value: number) {

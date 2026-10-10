@@ -1,14 +1,9 @@
 import type { Metadata, Viewport } from "next";
-import { Instrument_Serif, Manrope, Space_Grotesk } from "next/font/google";
+import { Instrument_Serif, Manrope } from "next/font/google";
 import { GoogleAnalytics } from "@/components/google-analytics";
 import { APP_CANONICAL_URL, APP_NAME, APP_TAGLINE } from "@/lib/brand";
 import { isPreviewDeployment } from "@/lib/seo";
 import "./globals.css";
-
-const display = Space_Grotesk({
-  variable: "--font-display",
-  subsets: ["latin"],
-});
 
 const body = Manrope({
   variable: "--font-body",
@@ -70,7 +65,7 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  themeColor: "#020617",
+  themeColor: "#0c1522",
   colorScheme: "dark",
 };
 
@@ -83,7 +78,7 @@ export default function RootLayout({
     <html
       lang="en"
       data-scroll-behavior="smooth"
-      className={`${display.variable} ${body.variable} ${editorial.variable} h-full`}
+      className={`${body.variable} ${editorial.variable} h-full`}
     >
       <body className="min-h-full antialiased">
         <a className="skip-link" href="#main-content">

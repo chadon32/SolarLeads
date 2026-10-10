@@ -40,7 +40,7 @@ async function assertNoPageOverflow(page: Page) {
 }
 
 async function fillRequiredReportFields(page: Page) {
-  await page.getByLabel("Average monthly electric bill").selectOption("$200-$300");
+  await page.getByLabel("Average monthly electric bill").selectOption("$200–$299");
   await page.getByLabel("Owns home or rents").selectOption("Own");
   await page.getByLabel("Solar timeline").selectOption("Just researching");
   await page.getByLabel("Name").fill("Synthetic Homeowner");
@@ -63,7 +63,7 @@ async function exercisePersona(page: Page, persona: Persona, viewportLabel: stri
     await expect(page.locator("#report-dashboard")).toBeVisible({ timeout: 20_000 });
     await expect(page.getByText("Panels: 19 of 19", { exact: true })).toBeVisible();
 
-    await page.getByRole("tab", { name: "3D Model", exact: true }).click();
+    await page.getByRole("tab", { name: "3D model", exact: true }).click();
     const scene = page.getByTestId("roof-scene-3d");
     await expect(scene.locator("canvas")).toBeVisible({ timeout: 20_000 });
     await expect(scene).toHaveAttribute("data-rendered-panel-count", "19");
@@ -84,8 +84,8 @@ async function exercisePersona(page: Page, persona: Persona, viewportLabel: stri
     }
 
     await page.getByRole("tab", { name: "Savings", exact: true }).click();
-    await page.getByRole("combobox", { name: "Savings monthly bill" }).selectOption("300");
-    await expect(page.getByRole("combobox", { name: "Savings monthly bill" })).toHaveValue(
+    await page.getByRole("combobox", { name: "Monthly electric bill" }).selectOption("300");
+    await expect(page.getByRole("combobox", { name: "Monthly electric bill" })).toHaveValue(
       "300"
     );
     await capture(page, `${viewportLabel}-salesperson-savings`);
@@ -97,7 +97,7 @@ async function exercisePersona(page: Page, persona: Persona, viewportLabel: stri
   if (persona === "inexperienced-homeowner") {
     await page.getByRole("tab", { name: "Send Report", exact: true }).click();
     await expect(page.getByLabel("Name")).toBeVisible();
-    await page.getByRole("button", { name: "Send My Full Report", exact: true }).last().click();
+    await page.getByRole("button", { name: "Send my full report", exact: true }).last().click();
     const summary = page.getByRole("alert").filter({ hasText: "Please review" }).first();
     await expect(summary).toBeFocused();
     await expect(page.locator("#lead-name-error")).toBeVisible();
@@ -110,7 +110,7 @@ async function exercisePersona(page: Page, persona: Persona, viewportLabel: stri
     await page.getByRole("tab", { name: "Panels", exact: true }).click();
     const panelSlider = page.locator('input[type="range"]').first();
     await panelSlider.fill("10");
-    await expect(page.getByText("Solar panels: 10 of 19", { exact: true })).toBeVisible();
+    await expect(page.getByText("Panels: 10 of 19", { exact: true })).toBeVisible();
     if ((page.viewportSize()?.width ?? 1440) >= 640) {
       await page.getByRole("combobox", { name: "Module" }).selectOption("rec-alpha-pure-rx");
     }
@@ -118,7 +118,7 @@ async function exercisePersona(page: Page, persona: Persona, viewportLabel: stri
     await expect(page.getByRole("button", { name: "Battery added", exact: true })).toBeVisible();
 
     await page.getByRole("tab", { name: "Financing", exact: true }).click();
-    await page.getByRole("button", { name: "loan", exact: true }).click();
+    await page.getByRole("button", { name: "Loan", exact: true }).click();
     await page.getByRole("slider", { name: "Down payment", exact: true }).press("ArrowRight");
     await page.getByRole("slider", { name: "APR", exact: true }).press("ArrowRight");
     await page.getByRole("combobox", { name: "Term", exact: true }).selectOption("25");
@@ -128,7 +128,7 @@ async function exercisePersona(page: Page, persona: Persona, viewportLabel: stri
     return;
   }
 
-  await page.getByRole("tab", { name: "Roof & Shade", exact: true }).click();
+  await page.getByRole("tab", { name: "Roof & shade", exact: true }).click();
   await expect(page.getByText("Roof and sunlight model", { exact: true })).toBeVisible();
   await expect(page.getByText("Installer verification checklist", { exact: true })).toBeVisible();
   await expect(page.getByText(/final panel placement/i).first()).toBeVisible();
@@ -143,7 +143,7 @@ async function exercisePersona(page: Page, persona: Persona, viewportLabel: stri
   }
   await capture(page, `${viewportLabel}-professional-installer-sunlight`);
 
-  await page.getByRole("tab", { name: "3D Model", exact: true }).click();
+  await page.getByRole("tab", { name: "3D model", exact: true }).click();
   await expect(page.getByTestId("roof-scene-3d").locator("canvas")).toBeVisible({
     timeout: 20_000,
   });
@@ -253,7 +253,7 @@ for (const viewport of viewports) {
         await page.getByRole("combobox", { name: "Module" }).selectOption("canadian-solar-hiku6");
       }
       await page.getByRole("tab", { name: "Savings", exact: true }).click();
-      await page.getByRole("combobox", { name: "Savings monthly bill" }).selectOption("300");
+      await page.getByRole("combobox", { name: "Monthly electric bill" }).selectOption("300");
 
       await expect.poll(() => new URL(page.url()).searchParams.get("bill")).toBe("300");
       await expect.poll(() => new URL(page.url()).searchParams.get("panels")).toBe("12");
@@ -267,14 +267,14 @@ for (const viewport of viewports) {
       await expect(page.locator("#report-dashboard")).toBeVisible({ timeout: 20_000 });
       expect(page.url()).toBe(urlBeforeRefresh);
       await page.getByRole("tab", { name: "Panels", exact: true }).click();
-      await expect(page.getByText("Solar panels: 12 of 19", { exact: true })).toBeVisible();
+      await expect(page.getByText("Panels: 12 of 19", { exact: true })).toBeVisible();
       if ((page.viewportSize()?.width ?? 1440) >= 640) {
         await expect(page.getByRole("combobox", { name: "Module" })).toHaveValue(
           "canadian-solar-hiku6"
         );
       }
       await page.getByRole("tab", { name: "Savings", exact: true }).click();
-      await expect(page.getByRole("combobox", { name: "Savings monthly bill" })).toHaveValue(
+      await expect(page.getByRole("combobox", { name: "Monthly electric bill" })).toHaveValue(
         "300"
       );
       await capture(page, `${viewport.label}-refresh-restored`);
@@ -303,17 +303,17 @@ for (const viewport of viewports) {
       await home.openReadyEstimate();
       await home.openReportForm();
       await fillRequiredReportFields(page);
-      const submit = page.getByRole("button", { name: "Send My Full Report", exact: true }).last();
+      const submit = page.getByRole("button", { name: "Send my full report", exact: true }).last();
       await submit.scrollIntoViewIfNeeded();
       const firstRequest = page.waitForRequest("**/api/leads");
       await submit.click();
       await firstRequest;
       await expect(page.getByText("Synthetic report service failure.", { exact: true })).toBeVisible();
       await expect(page).toHaveURL(/\/estimate\?/);
-      await expect(page.getByRole("button", { name: "Send My Full Report", exact: true }).last()).toBeEnabled();
+      await expect(page.getByRole("button", { name: "Send my full report", exact: true }).last()).toBeEnabled();
       await capture(page, `${viewport.label}-report-error-recoverable`);
 
-      const retrySubmit = page.getByRole("button", { name: "Send My Full Report", exact: true }).last();
+      const retrySubmit = page.getByRole("button", { name: "Send my full report", exact: true }).last();
       await retrySubmit.scrollIntoViewIfNeeded();
       await retrySubmit.click();
       await expect(page).toHaveURL(/\/thank-you$/, { timeout: 15_000 });
@@ -350,7 +350,7 @@ test(
     page.on("request", (request) => {
       if (request.url().endsWith("/api/leads")) leadRequests += 1;
     });
-    const submit = page.getByRole("button", { name: "Send My Full Report", exact: true }).last();
+    const submit = page.getByRole("button", { name: "Send my full report", exact: true }).last();
     await submit.scrollIntoViewIfNeeded();
     const saveRequest = page.waitForRequest("**/api/leads");
     await submit.click();

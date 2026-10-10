@@ -63,7 +63,7 @@ test("rooftop view tabs use roving keyboard focus", async ({ page }) => {
   await home.openReadyEstimate();
 
   const sunlightTab = page.getByRole("tab", { name: "Sunlight", exact: true });
-  const modelTab = page.getByRole("tab", { name: "3D Model", exact: true });
+  const modelTab = page.getByRole("tab", { name: "3D model", exact: true });
   await expect(modelTab).toHaveAttribute("tabindex", "0");
   await expect(sunlightTab).toHaveAttribute("tabindex", "-1");
 
@@ -146,15 +146,15 @@ test("malformed lead response shows a recoverable error", async ({ page }) => {
   const home = new HomeEstimatePage(page);
   await home.openReadyEstimate();
   await home.openReportForm();
-  await page.getByLabel("Average monthly electric bill").selectOption("$200-$300");
+  await page.getByLabel("Average monthly electric bill").selectOption("$200–$299");
   await page.getByLabel("Owns home or rents").selectOption("Own");
   await page.getByLabel("Solar timeline").selectOption("Just researching");
   await page.getByLabel("Name").fill("Test Homeowner");
   await page.getByLabel("Email").fill("test-homeowner@example.test");
-  await page.getByRole("button", { name: "Send My Full Report" }).last().click();
+  await page.getByRole("button", { name: "Send my full report" }).last().click();
 
   await expect(page.getByText("Could not save your report request.")).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Send My Full Report" }).last()
+    page.getByRole("button", { name: "Send my full report" }).last()
   ).toBeEnabled();
 });

@@ -212,7 +212,7 @@ type GoogleOverlayViewInstance = GoogleMapOverlayInstance & {
 
 const viewModes: Array<{ id: ViewMode; label: string }> = [
   { id: "irradiance", label: "Sunlight" },
-  { id: "model3d", label: "3D Model" },
+  { id: "model3d", label: "3D model" },
 ];
 
 function getInitialRoofAnalysisLayers(): LayerVisibility {
@@ -617,8 +617,8 @@ export function SolarAnalysis({
     );
     return (
       <section className="space-y-5">
-        <div className="rounded-[1.8rem] border border-rose-400/20 bg-rose-950/20 p-6 text-sm leading-7 text-rose-200">
-          <p className="text-base font-semibold text-white">
+        <div className="rounded-card border border-rose-400/20 bg-rose-950/20 p-6 text-sm leading-7 text-rose-200">
+          <p className="text-base font-semibold text-ink">
             {isRateLimited
               ? "Roof analysis is temporarily limited."
               : "Solar data not available for this address."}
@@ -634,7 +634,7 @@ export function SolarAnalysis({
           <button
             type="button"
             onClick={() => setRetryCount((count) => count + 1)}
-            className="mt-5 inline-flex min-h-11 items-center justify-center rounded-full border border-white/15 bg-white/[0.08] px-5 py-3 text-sm font-semibold text-white transition hover:bg-white/[0.14] focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200"
+            className="mt-5 inline-flex min-h-11 items-center justify-center rounded-full border border-white/15 bg-white/[0.08] px-5 py-3 text-sm font-semibold text-ink transition hover:bg-white/[0.14] focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-200"
           >
             Retry analysis
           </button>
@@ -646,11 +646,11 @@ export function SolarAnalysis({
   if (stage === "invalid") {
     return (
       <section className="space-y-5">
-        <div className="rounded-[1.8rem] border border-amber-400/20 bg-amber-950/18 p-6">
-          <p className="text-[0.62rem] font-semibold uppercase tracking-[0.34em] text-amber-300">
+        <div className="rounded-card border border-amber-400/20 bg-amber-950/18 p-6">
+          <p className="text-xs font-semibold text-amber-300">
             Rooftop validation failed
           </p>
-          <h3 className="mt-3 text-2xl font-semibold tracking-tight text-white">
+          <h3 className="mt-3 text-2xl font-semibold tracking-tight text-ink">
             A usable residential roof was not confirmed for this address.
           </h3>
           <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-300">
@@ -683,12 +683,8 @@ export function SolarAnalysis({
 
       {satelliteImage && stage !== "done" ? (
         <div className={compact ? "grid gap-4" : "grid gap-6 xl:grid-cols-[minmax(0,1.55fr)_22rem]"}>
-          <div className="overflow-hidden rounded-[1.85rem] border border-white/10 bg-slate-950/76 shadow-[0_12px_42px_rgba(2,8,20,0.36)]">
-            <ViewportHeader
-              address={resolvedProperty?.address ?? address}
-              viewMode={viewMode}
-              onSelectView={selectViewMode}
-            />
+          <div className="overflow-hidden rounded-card border border-white/10 bg-slate-950/76">
+            <ViewportHeader viewMode={viewMode} onSelectView={selectViewMode} />
             <div className={compact ? "relative min-h-[24rem]" : "relative min-h-[30rem]"}>
               <Image
                 src={satelliteImage}
@@ -700,15 +696,12 @@ export function SolarAnalysis({
               <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(3,8,15,0.1),rgba(3,8,15,0.72))]" />
               <div className="absolute inset-x-0 top-0 h-32 bg-[linear-gradient(180deg,rgba(10,18,30,0.72),transparent)]" />
               <div className="absolute inset-0 flex items-center justify-center">
-                <div className="rounded-[1.45rem] border border-white/10 bg-slate-950/84 px-7 py-5 text-center shadow-[0_12px_36px_rgba(6,12,24,0.34)] backdrop-blur-xl">
-                  <p className="text-[0.62rem] font-semibold uppercase tracking-[0.34em] text-cyan-300">
-                    Processing
+                <div className="rounded-card border border-white/10 bg-slate-950/84 px-7 py-5 text-center backdrop-blur-xl">
+                  <p className="text-base font-semibold text-ink">
+                    Reading your roof from aerial photos…
                   </p>
-                  <p className="mt-3 text-base font-medium text-white">
-                    Analyzing roof with Google Solar data...
-                  </p>
-                  <p className="mt-2 text-sm leading-6 text-slate-300">
-                    Waiting for Google Solar API roof geometry, panel coordinates, and annual flux layers.
+                  <p className="mt-2 text-sm leading-6 text-ink-muted">
+                    Loading roof shape, panel positions and sunlight data from Google.
                   </p>
                 </div>
               </div>
@@ -721,19 +714,15 @@ export function SolarAnalysis({
 
       {stage === "done" && roofData && metrics ? (
         compact ? (
-          <article className="w-full min-w-0 max-w-full overflow-hidden rounded-[1.5rem] border border-cyan-200/12 bg-slate-900/78 shadow-[0_14px_44px_rgba(2,8,20,0.36)]">
-            <ViewportHeader
-              address={resolvedProperty?.address ?? address}
-              viewMode={viewMode}
-              onSelectView={selectViewMode}
-            />
+          <article className="w-full min-w-0 max-w-full overflow-hidden rounded-card border border-ridge bg-dusk">
+            <ViewportHeader viewMode={viewMode} onSelectView={selectViewMode} />
             <div
               id="roof-analysis-viewport-panel"
               role="tabpanel"
               aria-labelledby={`roof-view-tab-${viewMode}`}
-              className="border-t border-white/8 p-3"
+              className="border-t border-ridge p-2 sm:p-3"
             >
-              <div className="relative overflow-hidden rounded-[1.1rem] border border-white/12 bg-slate-800/35">
+              <div className="relative overflow-hidden rounded-card bg-night">
                 <ViewportCanvas
                   annualFluxUrl={annualFluxUrl}
                   dsmUrl={dsmUrl}
@@ -760,45 +749,11 @@ export function SolarAnalysis({
                   canRenderPanels={roofData.solarPanels.length > 0}
                 />
               </div>
-              <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
-                <CompactMapStat
-                  label="Panel layout"
-                  source="Recommended"
-                  value={`${metrics.selectedPanelCount} of ${metrics.maxSelectablePanelCount} panels`}
-                />
-                <CompactMapStat
-                  label="System size"
-                  source="User-adjusted"
-                  value={`${metrics.selectedSystemKw.toFixed(1)} kW`}
-                />
-                <CompactMapStat
-                  label="Orientation"
-                  source="Solar API"
-                  value={metrics.orientationLabel}
-                />
-                <CompactMapStat
-                  label="Est. savings"
-                  source="Modeled"
-                  value={`$${metrics.selectedAnnualSavingsUSD.toLocaleString()}`}
-                />
-                <CompactMapStat
-                  label="Modeled payback"
-                  source="Modeled"
-                  value={`${metrics.roiYears.toFixed(1)} yrs`}
-                />
-              </div>
-              <div className="mt-3">
+              <div className="mt-4 grid gap-2 px-1 sm:px-2">
                 <ConfidenceReadouts roofData={roofData} />
-              </div>
-              <div className="mt-3 rounded-[1rem] border border-white/10 bg-slate-950/62 p-3 text-xs leading-5 text-slate-200">
-                <p>
-                  Panel positions come from the Google Solar API model for this
-                  roof, aligned to a rack grid for display.
-                </p>
-                <p className="mt-2 text-slate-400">
-                  Final panel placement requires installer verification - roof
-                  measurements, fire setbacks, and electrical design can adjust
-                  the layout.
+                <p className="text-sm leading-6 text-ink-dim">
+                  Panel positions are a first layout from Google&rsquo;s roof data. Final panel placement
+                  needs installer verification: they measure the roof, fire setbacks and wiring.
                 </p>
               </div>
             </div>
@@ -806,19 +761,15 @@ export function SolarAnalysis({
         ) : (
         <div className="space-y-6">
           <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_23rem]">
-            <article className="overflow-hidden rounded-[1.95rem] border border-white/10 bg-slate-950/82 shadow-[0_14px_44px_rgba(2,8,20,0.36)]">
-              <ViewportHeader
-                address={resolvedProperty?.address ?? address}
-                viewMode={viewMode}
-                onSelectView={selectViewMode}
-              />
+            <article className="overflow-hidden rounded-card border border-white/10 bg-slate-950/82">
+              <ViewportHeader viewMode={viewMode} onSelectView={selectViewMode} />
               <div
                 id="roof-analysis-viewport-panel"
                 role="tabpanel"
                 aria-labelledby={`roof-view-tab-${viewMode}`}
                 className="border-t border-white/8 p-4 sm:p-5"
               >
-                <div className="relative overflow-hidden rounded-[1.7rem] border border-white/8">
+                <div className="relative overflow-hidden rounded-card border border-white/8">
                   <ViewportCanvas
                     annualFluxUrl={annualFluxUrl}
                     dsmUrl={dsmUrl}
@@ -847,10 +798,10 @@ export function SolarAnalysis({
               />
 
               <SidebarPanel>
-                <p className="text-[0.62rem] font-semibold uppercase tracking-[0.34em] text-cyan-300">
+                <p className="text-xs font-semibold text-sky-300">
                   Analysis status
                 </p>
-                <h3 className="mt-3 text-2xl font-semibold tracking-tight text-white">
+                <h3 className="mt-3 text-2xl font-semibold tracking-tight text-ink">
                   Preliminary roof model ready
                 </h3>
                 <p className="mt-3 text-sm leading-7 text-slate-300">
@@ -879,11 +830,11 @@ export function SolarAnalysis({
               <FinancialSnapshot metrics={metrics} />
               <SegmentationPanel roofData={roofData} />
 
-              <SidebarPanel className="bg-[linear-gradient(180deg,rgba(103,232,249,0.08),rgba(255,255,255,0.02))]">
-                <p className="text-[0.62rem] font-semibold uppercase tracking-[0.34em] text-cyan-300">
+              <SidebarPanel className="bg-[linear-gradient(180deg,rgba(124,203,230,0.08),rgba(255,255,255,0.02))]">
+                <p className="text-xs font-semibold text-sky-300">
                   Next step
                 </p>
-                <h3 className="mt-3 text-xl font-semibold tracking-tight text-white">
+                <h3 className="mt-3 text-xl font-semibold tracking-tight text-ink">
                   Turn this preliminary model into a confirmed proposal.
                 </h3>
                 <p className="mt-3 text-sm leading-7 text-slate-300">
@@ -923,15 +874,12 @@ export function SolarAnalysis({
 }
 
 function ViewportHeader({
-  address,
   viewMode,
   onSelectView,
 }: {
-  address: string;
   viewMode: ViewMode;
   onSelectView: (next: ViewMode) => void;
 }) {
-  const displayAddress = formatDisplayAddress(address);
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
   const moveTab = (index: number) => {
@@ -945,67 +893,52 @@ function ViewportHeader({
   };
 
   return (
-    <div className="flex w-full min-w-0 max-w-full flex-col gap-4 px-4 py-4 sm:px-5">
-      <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
-        <div className="min-w-0">
-          <p className="text-[0.62rem] font-semibold uppercase tracking-[0.34em] text-cyan-300">
-            Rooftop analysis
-          </p>
-          <p className="mt-2 max-w-2xl break-words text-sm leading-6 text-slate-300">
-            Roof measurements and annual flux are projected from the current Solar API building model onto the rooftop image.
-          </p>
-        </div>
-        <div className="max-w-full break-words rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs leading-5 text-slate-300 lg:rounded-full">
-          {displayAddress}
-        </div>
-      </div>
-
+    <div className="flex w-full min-w-0 max-w-full flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-5">
+      <h2 className="text-lg font-semibold text-ink">Your roof</h2>
       <div
         role="tablist"
         aria-label="Rooftop analysis views"
-        className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap"
+        className="inline-flex gap-1 rounded-full border border-ridge bg-night p-1"
       >
         {viewModes.map((mode, index) => (
-            <button
-              key={mode.id}
-              id={`roof-view-tab-${mode.id}`}
-              type="button"
-              role="tab"
-              aria-selected={viewMode === mode.id}
-              aria-controls="roof-analysis-viewport-panel"
-              tabIndex={viewMode === mode.id ? 0 : -1}
-              ref={(element) => {
-                tabRefs.current[index] = element;
-              }}
-              onClick={() => onSelectView(mode.id)}
-              onKeyDown={(event: KeyboardEvent<HTMLButtonElement>) => {
-                let nextIndex: number | null = null;
+          <button
+            key={mode.id}
+            id={`roof-view-tab-${mode.id}`}
+            type="button"
+            role="tab"
+            aria-selected={viewMode === mode.id}
+            aria-controls="roof-analysis-viewport-panel"
+            tabIndex={viewMode === mode.id ? 0 : -1}
+            ref={(element) => {
+              tabRefs.current[index] = element;
+            }}
+            onClick={() => onSelectView(mode.id)}
+            onKeyDown={(event: KeyboardEvent<HTMLButtonElement>) => {
+              let nextIndex: number | null = null;
 
-                if (event.key === "ArrowLeft") {
-                  nextIndex = (index - 1 + viewModes.length) % viewModes.length;
-                } else if (event.key === "ArrowRight") {
-                  nextIndex = (index + 1) % viewModes.length;
-                } else if (event.key === "Home") {
-                  nextIndex = 0;
-                } else if (event.key === "End") {
-                  nextIndex = viewModes.length - 1;
-                }
+              if (event.key === "ArrowLeft") {
+                nextIndex = (index - 1 + viewModes.length) % viewModes.length;
+              } else if (event.key === "ArrowRight") {
+                nextIndex = (index + 1) % viewModes.length;
+              } else if (event.key === "Home") {
+                nextIndex = 0;
+              } else if (event.key === "End") {
+                nextIndex = viewModes.length - 1;
+              }
 
-                if (nextIndex === null) {
-                  return;
-                }
+              if (nextIndex === null) {
+                return;
+              }
 
-                event.preventDefault();
-                moveTab(nextIndex);
-              }}
-              className={`min-h-11 w-full rounded-full px-2 py-2 text-[0.65rem] font-semibold uppercase tracking-[0.12em] transition sm:w-auto sm:px-3.5 sm:text-xs sm:tracking-[0.24em] ${
-                viewMode === mode.id
-                  ? "bg-cyan-300 text-slate-950"
-                  : "border border-white/10 bg-white/[0.04] text-slate-300 hover:bg-white/[0.08]"
-              }`}
-            >
-              {mode.label}
-            </button>
+              event.preventDefault();
+              moveTab(nextIndex);
+            }}
+            className={`min-h-11 rounded-full px-4 py-2 text-sm font-semibold ${
+              viewMode === mode.id ? "bg-ink text-night" : "text-ink-muted hover:text-ink"
+            }`}
+          >
+            {mode.label}
+          </button>
         ))}
       </div>
     </div>
@@ -1026,13 +959,13 @@ function ModuleDesignPanel({
     Math.round(((selectedPanelCount * active.watts) / 1000) * 10) / 10;
 
   return (
-    <div data-viewer-overlay="" className="pointer-events-auto absolute bottom-3 right-3 z-20 hidden max-h-[calc(100%-1.5rem)] w-60 max-w-[calc(100%-1.5rem)] overflow-y-auto rounded-2xl border border-white/10 bg-slate-950/80 p-4 text-white shadow-[0_18px_60px_rgba(0,0,0,0.45)] backdrop-blur-xl sm:block">
-      <label className="block text-[0.6rem] font-medium uppercase tracking-[0.14em] text-white/55">
+    <div data-viewer-overlay="" className="pointer-events-auto absolute bottom-3 right-3 z-20 hidden max-h-[calc(100%-1.5rem)] w-60 max-w-[calc(100%-1.5rem)] overflow-y-auto rounded-card border border-white/10 bg-slate-950/80 p-4 text-ink backdrop-blur-xl sm:block">
+      <label className="block text-xs font-medium text-ink-dim">
         Module
         <select
           value={active.id}
           onChange={(event) => onSelectedPanelIdChange(event.target.value)}
-          className="mt-1.5 min-h-10 w-full rounded-lg border border-white/12 bg-white/[0.06] px-2.5 py-2 text-sm font-medium text-white outline-none transition focus:border-cyan-300/60"
+          className="mt-1.5 min-h-10 w-full rounded-control border border-white/12 bg-white/[0.06] px-2.5 py-2 text-sm font-medium text-ink outline-none transition focus:border-sky-300/60"
         >
           {SOLAR_PANELS.map((panel) => (
             <option key={panel.id} value={panel.id} className="bg-slate-900">
@@ -1043,27 +976,27 @@ function ModuleDesignPanel({
       </label>
 
       <details className="mt-2 text-xs">
-      <summary className="min-h-11 cursor-pointer content-center rounded-lg text-cyan-100 focus-visible:outline-2 focus-visible:outline-cyan-200">Module specifications</summary>
+      <summary className="min-h-11 cursor-pointer content-center rounded-control text-sky-100 focus-visible:outline-2 focus-visible:outline-sky-200">Module specifications</summary>
       <dl className="mt-2 space-y-1.5 text-xs">
         <div className="flex items-center justify-between gap-3">
-          <dt className="text-white/55">Dimensions</dt>
-          <dd className="text-right font-medium text-white/90">
+          <dt className="text-ink-dim">Dimensions</dt>
+          <dd className="text-right font-medium text-ink">
             {active.dimensions}
           </dd>
         </div>
         <div className="flex items-center justify-between gap-3">
-          <dt className="text-white/55">Rated power</dt>
-          <dd className="font-medium text-white/90">{active.watts} W</dd>
+          <dt className="text-ink-dim">Rated power</dt>
+          <dd className="font-medium text-ink">{active.watts} W</dd>
         </div>
         <div className="flex items-center justify-between gap-3">
-          <dt className="text-white/55">Efficiency</dt>
-          <dd className="font-medium text-white/90">
+          <dt className="text-ink-dim">Efficiency</dt>
+          <dd className="font-medium text-ink">
             {active.efficiency}%
           </dd>
         </div>
         <div className="flex items-center justify-between gap-3">
-          <dt className="text-white/55">Tier</dt>
-          <dd className="font-medium capitalize text-white/90">
+          <dt className="text-ink-dim">Tier</dt>
+          <dd className="font-medium capitalize text-ink">
             {active.tier}
           </dd>
         </div>
@@ -1071,9 +1004,9 @@ function ModuleDesignPanel({
       </details>
 
       <div className="mt-1 border-t border-white/10 pt-2">
-        <p className="text-sm font-semibold text-white">
+        <p className="text-sm font-semibold text-ink">
           {systemKw} kW
-          <span className="ml-1.5 text-xs font-normal text-white/55">
+          <span className="ml-1.5 text-xs font-normal text-ink-dim">
             · {selectedPanelCount} modules
           </span>
         </p>
@@ -1465,7 +1398,7 @@ function ViewportCanvas({
             <p className="max-w-sm text-sm leading-6 text-slate-300">
               Google Maps browser key or roof center is missing. Add
               {" "}
-              <span className="font-semibold text-white">NEXT_PUBLIC_GOOGLE_MAPS_API_KEY</span>
+              <span className="font-semibold text-ink">NEXT_PUBLIC_GOOGLE_MAPS_API_KEY</span>
               {" "}
               and complete the roof lookup to render live map overlays.
             </p>
@@ -1484,10 +1417,10 @@ function ViewportCanvas({
               <MapEvidenceOverlay layerVisibility={layerVisibility} sunlightSource={mapSunlightSource} />
             ) : (
               <div data-viewer-overlay="" className="pointer-events-none absolute left-2 top-2 z-10 flex max-w-[calc(100%-11rem)] flex-wrap items-center gap-1.5 sm:left-3 sm:top-3">
-                <span className="rounded-full border border-white/10 bg-slate-950/58 px-2.5 py-1.5 text-[0.66rem] font-semibold uppercase tracking-[0.12em] text-cyan-100/95 backdrop-blur-[2px]">
-                  3D roof model · Solar API elevation scan
+                <span className="rounded-full border border-white/10 bg-slate-950/58 px-2.5 py-1.5 text-xs font-semibold text-sky-100/95 backdrop-blur-[2px]">
+                  3D roof model
                 </span>
-                <span className="rounded-full border border-white/10 bg-slate-950/62 px-2.5 py-1.5 text-[0.66rem] font-semibold uppercase tracking-[0.1em] text-white/95 backdrop-blur-[2px]">
+                <span className="rounded-full border border-white/10 bg-slate-950/62 px-2.5 py-1.5 text-xs font-semibold text-ink backdrop-blur-[2px]">
                   {renderedPanelCount} panel layout · {systemKw.toFixed(1)} kW
                 </span>
               </div>
@@ -1591,18 +1524,18 @@ function LayerControl({
   ];
 
   return (
-    <div data-viewer-overlay="" className="pointer-events-auto absolute right-2 top-2 z-20 w-[9.75rem] max-w-[calc(100%-1rem)] rounded-[0.9rem] border border-white/20 bg-slate-950/68 p-2 shadow-[0_10px_24px_rgba(2,8,20,0.24)] backdrop-blur-md sm:right-3 sm:top-3 sm:w-auto">
-      <p className="px-1 text-[0.62rem] font-bold uppercase tracking-[0.18em] text-cyan-100/86">
+    <div data-viewer-overlay="" className="pointer-events-auto absolute right-2 top-2 z-20 w-[9.75rem] max-w-[calc(100%-1rem)] rounded-card border border-white/20 bg-slate-950/68 p-2 backdrop-blur-md sm:right-3 sm:top-3 sm:w-auto">
+      <p className="px-1 text-xs font-bold text-sky-100/86">
         Layers
       </p>
       <div className="mt-2 grid gap-1.5">
         {toggles.map((toggle) => (
           <label
             key={toggle.id}
-            className={`flex items-center justify-between gap-2 rounded-full border border-white/10 px-2.5 py-2 text-[0.68rem] font-semibold ${
+            className={`flex items-center justify-between gap-2 rounded-full border border-white/10 px-2.5 py-2 text-xs font-semibold ${
               toggle.disabled
-                ? "cursor-not-allowed bg-white/[0.025] text-white/38"
-                : "cursor-pointer bg-white/[0.05] text-white/86"
+                ? "cursor-not-allowed bg-white/[0.025] text-ink-dim"
+                : "cursor-pointer bg-white/[0.05] text-ink"
             }`}
           >
             <span>{toggle.label}</span>
@@ -1616,13 +1549,13 @@ function LayerControl({
                   [toggle.id]: event.target.checked,
                 })
               }
-              className="h-4 w-4 shrink-0 accent-cyan-300"
+              className="h-4 w-4 shrink-0 accent-sky-300"
             />
           </label>
         ))}
       </div>
       {toggles.some((toggle) => toggle.helper) ? (
-        <p className="mt-2 px-1 text-[0.58rem] leading-4 text-white/58">
+        <p className="mt-2 px-1 text-xs leading-4 text-ink-dim">
           {toggles.find((toggle) => toggle.helper)?.helper}
         </p>
       ) : null}
@@ -1677,19 +1610,19 @@ function MobileMapControls({
         aria-expanded={isOpen}
         aria-controls="mobile-map-controls-panel"
         onClick={() => setIsOpen((current) => !current)}
-        className="flex min-h-12 w-full items-center justify-between gap-3 rounded-xl border border-white/12 bg-white/[0.05] px-3.5 py-2.5 text-left transition hover:bg-white/[0.08]"
+        className="flex min-h-12 w-full items-center justify-between gap-3 rounded-card border border-white/12 bg-white/[0.05] px-3.5 py-2.5 text-left transition hover:bg-white/[0.08]"
       >
         <span className="min-w-0">
-          <span className="block text-[0.62rem] font-bold uppercase tracking-[0.16em] text-cyan-200">
+          <span className="block text-xs font-bold text-sky-200">
             Map controls
           </span>
-          <span className="mt-0.5 block truncate text-[0.68rem] text-slate-400">
+          <span className="mt-0.5 block truncate text-xs text-slate-400">
             {enabledLayers || "All layers hidden"}
           </span>
         </span>
         <span
           aria-hidden="true"
-          className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-white/12 bg-slate-950/55 text-lg leading-none text-white"
+          className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-white/12 bg-slate-950/55 text-lg leading-none text-ink"
         >
           {isOpen ? "-" : "+"}
         </span>
@@ -1698,14 +1631,14 @@ function MobileMapControls({
       {isOpen ? (
         <div
           id="mobile-map-controls-panel"
-          className="mt-3 rounded-2xl border border-white/12 bg-white/[0.035] p-3"
+          className="mt-3 rounded-card border border-white/12 bg-white/[0.035] p-3"
         >
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <p className="text-[0.58rem] font-bold uppercase tracking-[0.16em] text-cyan-200">
+              <p className="text-xs font-bold text-sky-200">
                 Solar readiness view
               </p>
-              <p className="mt-1 text-xs font-semibold leading-5 text-white">
+              <p className="mt-1 text-xs font-semibold leading-5 text-ink">
                 {panelSummary}
               </p>
             </div>
@@ -1713,7 +1646,7 @@ function MobileMapControls({
               type="button"
               aria-label="Close map controls"
               onClick={() => setIsOpen(false)}
-              className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-white/12 bg-slate-950/60 text-lg leading-none text-slate-200 transition hover:bg-white/10 hover:text-white"
+              className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-white/12 bg-slate-950/60 text-lg leading-none text-slate-200 transition hover:bg-white/10 hover:text-ink"
             >
               X
             </button>
@@ -1725,7 +1658,7 @@ function MobileMapControls({
               {toggles.map((toggle) => (
                 <label
                   key={toggle.id}
-                  className="flex min-h-11 min-w-[6rem] flex-1 cursor-pointer items-center justify-between gap-2 rounded-xl border border-white/12 bg-white/[0.05] px-3 py-2 text-[0.68rem] font-semibold text-white/90"
+                  className="flex min-h-11 min-w-[6rem] flex-1 cursor-pointer items-center justify-between gap-2 rounded-card border border-white/12 bg-white/[0.05] px-3 py-2 text-xs font-semibold text-ink"
                 >
                   <span>{toggle.label}</span>
                   <input
@@ -1737,7 +1670,7 @@ function MobileMapControls({
                         [toggle.id]: event.target.checked,
                       })
                     }
-                    className="h-4 w-4 shrink-0 accent-cyan-300"
+                    className="h-4 w-4 shrink-0 accent-sky-300"
                   />
                 </label>
               ))}
@@ -1745,13 +1678,13 @@ function MobileMapControls({
           </fieldset>
 
           <div
-            className="mt-3 flex flex-wrap gap-x-3 gap-y-1.5 border-t border-white/8 pt-2 text-[0.62rem] leading-4 text-slate-300"
+            className="mt-3 flex flex-wrap gap-x-3 gap-y-1.5 border-t border-white/8 pt-2 text-xs leading-4 text-slate-300"
             aria-label="Map legend"
           >
             {layerVisibility.roofPlanes && !hideRoofPlanes ? (
               <>
                 <MobileLegendItem
-                  swatch="border border-cyan-400 bg-cyan-300/30"
+                  swatch="border border-sky-400 bg-sky-300/30"
                   label="Usable roof"
                 />
                 <MobileLegendItem
@@ -1783,7 +1716,7 @@ function MobileMapControls({
 function MobileLegendItem({ swatch, label }: { swatch: string; label: string }) {
   return (
     <span className="inline-flex items-center gap-1.5">
-      <span className={`h-2.5 w-2.5 shrink-0 rounded-[0.15rem] ${swatch}`} />
+      <span className={`h-2.5 w-2.5 shrink-0 rounded-control ${swatch}`} />
       <span>{label}</span>
     </span>
   );
@@ -1800,26 +1733,26 @@ function MapEvidenceOverlay({
   return (
     <>
       <div className="pointer-events-none absolute left-2 top-2 z-10 flex max-w-[calc(100%-11rem)] flex-wrap items-center gap-1.5 sm:left-3 sm:top-3 sm:max-w-[calc(100%-1.5rem)]">
-        <span className="rounded-full border border-white/10 bg-slate-950/58 px-2.5 py-1.5 text-[0.66rem] font-semibold uppercase tracking-[0.12em] text-cyan-100/95 shadow-none backdrop-blur-[2px]">
+        <span className="rounded-full border border-white/10 bg-slate-950/58 px-2.5 py-1.5 text-xs font-semibold text-sky-100/95 shadow-none backdrop-blur-[2px]">
           Google Solar API roof model
         </span>
-        <span className="rounded-full border border-white/10 bg-slate-950/62 px-2.5 py-1.5 text-[0.66rem] font-semibold uppercase tracking-[0.1em] text-white/95 shadow-none backdrop-blur-[2px]">
+        <span className="rounded-full border border-white/10 bg-slate-950/62 px-2.5 py-1.5 text-xs font-semibold text-ink shadow-none backdrop-blur-[2px]">
           Roof analysis view
         </span>
       </div>
-      <div className="pointer-events-none absolute left-2 top-20 z-10 max-w-[min(16rem,calc(100%-1rem))] rounded-[0.85rem] border border-white/30 bg-white/76 p-2.5 text-[0.72rem] font-medium text-slate-900 shadow-[0_8px_18px_rgba(15,23,42,0.16)] backdrop-blur-md sm:left-3">
+      <div className="pointer-events-none absolute left-2 top-20 z-10 max-w-[min(16rem,calc(100%-1rem))] rounded-card border border-white/30 bg-white/76 p-2.5 text-xs font-medium text-slate-900 backdrop-blur-md sm:left-3">
         <div className="flex items-center justify-between gap-2 border-b border-slate-900/10 pb-1.5">
-          <p className="text-[0.58rem] font-bold uppercase tracking-[0.18em] text-slate-700">
+          <p className="text-xs font-bold text-slate-700">
             Legend
           </p>
-          <span className="rounded-full bg-cyan-300/65 px-1.5 py-0.5 text-[0.54rem] font-bold uppercase tracking-[0.12em] text-slate-950">
+          <span className="rounded-full bg-sky-300/65 px-1.5 py-0.5 text-xs font-bold text-slate-950">
             Solar API
           </span>
         </div>
         <div className="mt-1.5 grid gap-1">
           {layerVisibility.roofPlanes ? (
             <>
-              <LegendItem swatch="border border-cyan-500 bg-cyan-300/30" label="Roof plane - usable solar area" />
+              <LegendItem swatch="border border-sky-500 bg-sky-300/30" label="Roof plane - usable solar area" />
               <LegendItem swatch="border border-amber-500/70 bg-amber-300/15" label="Planning reserve - installer verifies" />
             </>
           ) : null}
@@ -1835,7 +1768,7 @@ function MapEvidenceOverlay({
             </>
           ) : null}
         </div>
-        <p className="mt-2 border-t border-slate-900/10 pt-2 text-[0.68rem] leading-4 text-slate-700">
+        <p className="mt-2 border-t border-slate-900/10 pt-2 text-xs leading-4 text-slate-700">
           Open 3D Model to review the preliminary panel layout. Installer verifies the final design.
         </p>
       </div>
@@ -1846,7 +1779,7 @@ function MapEvidenceOverlay({
 function LegendItem({ swatch, label }: { swatch: string; label: string }) {
   return (
     <div className="flex items-center gap-2 leading-4">
-      <span className={`h-2.5 w-2.5 shrink-0 rounded-[0.18rem] ${swatch}`} />
+      <span className={`h-2.5 w-2.5 shrink-0 rounded-control ${swatch}`} />
       <span>{label}</span>
     </div>
   );
@@ -2909,25 +2842,23 @@ function createSelectedHomeOverlay({
   container.style.pointerEvents = "none";
   container.style.transform = "translate(-50%, -100%)";
   container.style.zIndex = "20";
-  container.innerHTML = `
+  container.innerHTML =`
     <div style="
       display:flex;
       flex-direction:column;
       align-items:center;
       gap:4px;
       filter:drop-shadow(0 10px 18px rgba(2,8,20,0.42));
-      font-family:Inter, Arial, sans-serif;
+      font-family:var(--font-body), Arial, sans-serif;
     ">
       <div style="
         border:1px solid rgba(255,255,255,0.72);
         border-radius:999px;
         background:rgba(8,13,24,0.76);
         color:#ffffff;
-        font-size:10px;
-        font-weight:800;
-        letter-spacing:0.16em;
-        padding:5px 8px;
-        text-transform:uppercase;
+        font-size:13px;
+        font-weight:700;
+        padding:5px 10px;
         white-space:nowrap;
         backdrop-filter:blur(6px);
       ">Selected home</div>
@@ -2935,9 +2866,9 @@ function createSelectedHomeOverlay({
         width:18px;
         height:18px;
         border-radius:999px;
-        background:#67e8f9;
+        background:#f2b544;
         border:3px solid #ffffff;
-        box-shadow:0 0 0 5px rgba(103,232,249,0.28);
+        box-shadow:0 0 0 5px rgba(124,203,230,0.28);
       "></div>
       <div style="
         width:2px;
@@ -3558,47 +3489,38 @@ function PanelSelectionSlider({
   canRenderPanels: boolean;
 }) {
   const safeMax = Math.max(1, max);
+  const current = Math.min(value, safeMax);
 
   return (
-    <div className="rounded-[1.45rem] border border-white/10 bg-white/[0.03] p-4 shadow-[0_10px_28px_rgba(2,8,20,0.18)]">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <p className="text-[0.56rem] font-semibold uppercase tracking-[0.32em] text-cyan-300">
-            Panels: {Math.min(value, safeMax)} of {safeMax}
-          </p>
-          <p className="mt-2 text-sm leading-6 text-slate-300">
-            Starts at a practical bill-offset size. The preliminary ceiling
-            includes usable house and garage planes, a three-foot planning
-            reserve, and layout spacing. Final capacity still requires installer
-            verification.
-          </p>
-        </div>
-        <div className="shrink-0 self-start whitespace-nowrap rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs font-semibold text-white">
-          {Math.min(value, safeMax)} / {safeMax}
-        </div>
-      </div>
+    <div className="px-1 sm:px-2">
+      <p className="text-base font-semibold text-ink">
+        Panels: {current} of {safeMax}
+      </p>
+      <p className="mt-1 text-sm leading-6 text-ink-muted">
+        We start with the size that best matches your bill. {safeMax} is the most that fit on the usable
+        parts of your roof after fire-code setbacks; an installer confirms it.
+      </p>
       <input
         type="range"
         min={1}
         max={safeMax}
-        value={Math.min(value, safeMax)}
+        value={current}
         onChange={(event) => onChange(Number(event.target.value))}
         aria-label="Number of solar panels"
-        aria-valuetext={`${Math.min(value, safeMax)} of ${safeMax} panels`}
+        aria-valuetext={`${current} of ${safeMax} panels`}
         // h-11 keeps the visual track thin while giving the control a ~44px
         // touch area; the bare input was 16px tall and awkward to grab on a
         // phone, which matters because this is the primary sizing interaction.
-        className="mt-4 h-11 w-full cursor-pointer accent-cyan-300"
+        className="mt-2 h-11 w-full cursor-pointer accent-sun"
       />
-      <div className="mt-2 flex items-center justify-between text-[0.65rem] uppercase tracking-[0.22em] text-slate-400">
+      <div className="flex items-center justify-between text-sm text-ink-dim">
         <span>1 panel</span>
-        <span>Preliminary max {safeMax}</span>
+        <span>{safeMax} panels</span>
       </div>
       {!canRenderPanels ? (
-        <p className="mt-3 text-xs leading-5 text-slate-400">
-          Panel count is estimated from usable roof area - not a verified
-          layout. Google Solar did not return individual module coordinates
-          for this property, so no panels are drawn on the map.
+        <p className="mt-2 text-sm leading-6 text-ink-dim">
+          Google didn&rsquo;t return exact panel positions for this home, so the count is estimated from
+          roof area and no panels are drawn.
         </p>
       ) : null}
     </div>
@@ -3619,9 +3541,9 @@ function SunroofSummaryCard({
   const displayAddress = formatDisplayAddress(address);
 
   return (
-    <div className="overflow-hidden rounded-[1.15rem] border border-black/10 bg-white/95 text-slate-900 shadow-[0_18px_40px_rgba(15,23,42,0.18)] backdrop-blur">
+    <div className="overflow-hidden rounded-card border border-black/10 bg-white/95 text-slate-900 backdrop-blur">
       <div className="border-b border-slate-200 px-4 py-3">
-        <p className="text-[0.64rem] font-semibold uppercase tracking-[0.28em] text-slate-500">
+        <p className="text-xs font-semibold text-slate-500">
           Preliminary property model
         </p>
         <p className="mt-2 line-clamp-2 text-sm leading-5 text-slate-700">{displayAddress}</p>
@@ -3630,7 +3552,7 @@ function SunroofSummaryCard({
       <div className="border-b border-slate-200 px-4 py-3 text-sm text-slate-700">
         <div className="flex items-center justify-between gap-3">
         <span>Solar suitability estimate</span>
-          <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[0.64rem] font-semibold uppercase tracking-[0.18em] text-emerald-700">
+          <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
             {confidence}/100
           </span>
         </div>
@@ -3690,27 +3612,21 @@ function SummaryMetric({
   );
 }
 
+/** One plain-language line: the weakest of the three quality checks decides it. */
 function ConfidenceReadouts({ roofData }: { roofData: RoofAnalysis }) {
   const readouts = getVisualizationConfidenceReadouts(roofData);
+  const weakest = readouts.reduce((low, readout) => (readout.score < low.score ? readout : low));
+  const explanation =
+    weakest.level === "High" || weakest.level === "Good"
+      ? "The roof outline and panel positions line up well with the aerial photos."
+      : weakest.level === "Moderate"
+        ? "Parts of the roof were hard to read from the aerial photos, so an installer should check the layout."
+        : "Google had little detail for this roof, so treat the layout as a rough guide.";
 
   return (
-    <div className="grid gap-2 rounded-[1rem] border border-white/8 bg-slate-950/34 p-3">
-      {readouts.map((readout) => (
-        <div
-          key={readout.label}
-          className="flex items-center justify-between gap-3 text-xs"
-        >
-          <span className="text-slate-400">{readout.label}</span>
-          <span
-            className={`rounded-full border px-2.5 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.16em] ${getConfidenceToneClass(
-              readout.level
-            )}`}
-          >
-            {readout.level} · {readout.score}/100
-          </span>
-        </div>
-      ))}
-    </div>
+    <p className="text-sm leading-6 text-ink-muted">
+      <span className="font-semibold text-ink">Roof data quality: {weakest.level}.</span> {explanation}
+    </p>
   );
 }
 
@@ -3783,18 +3699,6 @@ function getConfidenceLevel(score: number) {
   return "Limited";
 }
 
-function getConfidenceToneClass(level: string) {
-  if (level === "High" || level === "Good") {
-    return "border-emerald-300/18 bg-emerald-300/10 text-emerald-100";
-  }
-
-  if (level === "Moderate") {
-    return "border-amber-300/18 bg-amber-300/10 text-amber-100";
-  }
-
-  return "border-rose-300/18 bg-rose-300/10 text-rose-100";
-}
-
 function RoofStatsPanel({
   roofData,
   metrics,
@@ -3806,17 +3710,17 @@ function RoofStatsPanel({
   const secondarySegment = roofData.roofSegments[1];
 
   return (
-    <div className="mt-4 rounded-[1.45rem] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.025))] p-4 shadow-[0_10px_28px_rgba(2,8,20,0.18)]">
+    <div className="mt-4 rounded-card border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.025))] p-4">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-[0.56rem] font-semibold uppercase tracking-[0.32em] text-cyan-300">
+          <p className="text-xs font-semibold text-sky-300">
             Roof stats
           </p>
           <p className="mt-2 text-sm leading-6 text-slate-300">
             Solar API roof measurements with the current estimated panel capacity.
           </p>
         </div>
-        <div className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.22em] text-slate-300">
+        <div className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-xs font-semibold text-slate-300">
           Solar API
         </div>
       </div>
@@ -3848,26 +3752,26 @@ function RoofStatsPanel({
         <MetricRow label="Estimated payback" source="Modeled" value={`${metrics.roiYears.toFixed(1)} yrs`} />
       </div>
 
-      <div className="mt-4 rounded-[1rem] border border-white/8 bg-white/[0.03] p-3">
-        <p className="text-[0.56rem] font-semibold uppercase tracking-[0.28em] text-slate-400">
+      <div className="mt-4 rounded-card border border-white/8 bg-white/[0.03] p-3">
+        <p className="text-xs font-semibold text-slate-400">
           Segment breakdown
         </p>
         <div className="mt-3 space-y-2">
           <div className="flex items-center justify-between gap-3 text-sm">
             <span className="text-slate-300">Primary</span>
-            <span className="text-white">
+            <span className="text-ink">
               {primarySegment ? `${primarySegment.areaM2.toFixed(1)} sq m` : "-"}
             </span>
           </div>
           <div className="flex items-center justify-between gap-3 text-sm">
             <span className="text-slate-300">Secondary</span>
-            <span className="text-white">
+            <span className="text-ink">
               {secondarySegment ? `${secondarySegment.areaM2.toFixed(1)} sq m` : "-"}
             </span>
           </div>
           <div className="flex items-center justify-between gap-3 text-sm">
             <span className="text-slate-300">Garage</span>
-            <span className="text-white">
+            <span className="text-ink">
               {roofData.roofSegments[2]
                 ? `${roofData.roofSegments[2].areaM2.toFixed(1)} sq m`
                 : "-"}
@@ -3889,11 +3793,11 @@ function AnalysisSidebarSkeleton() {
       {[0, 1, 2, 3].map((index) => (
         <div
           key={index}
-          className="rounded-[1.6rem] border border-white/10 bg-white/[0.04] p-5 shadow-[0_10px_30px_rgba(2,8,20,0.22)] backdrop-blur-xl"
+          className="rounded-card border border-white/10 bg-white/[0.04] p-5 backdrop-blur-xl"
         >
           <div className="h-3 w-24 rounded-full bg-white/10" />
           <div className="mt-4 h-7 w-40 rounded-full bg-white/10" />
-          <div className="mt-3 h-20 rounded-[1rem] bg-white/[0.04]" />
+          <div className="mt-3 h-20 rounded-card bg-white/[0.04]" />
         </div>
       ))}
     </aside>
@@ -3909,7 +3813,7 @@ function SidebarPanel({
 }) {
   return (
     <article
-      className={`rounded-[1.6rem] border border-white/10 bg-white/[0.04] p-5 shadow-[0_10px_30px_rgba(2,8,20,0.22)] backdrop-blur-xl ${className}`.trim()}
+      className={`rounded-card border border-white/10 bg-white/[0.04] p-5 backdrop-blur-xl ${className}`.trim()}
     >
       {children}
     </article>
@@ -3926,11 +3830,11 @@ function IntelligenceCard({
   body: string;
 }) {
   return (
-    <article className="rounded-[1.6rem] border border-white/10 bg-white/[0.04] p-5 shadow-[0_10px_28px_rgba(2,8,20,0.2)] backdrop-blur-xl transition hover:bg-white/[0.05]">
-      <p className="text-[0.62rem] font-semibold uppercase tracking-[0.34em] text-cyan-300">
+    <article className="rounded-card border border-white/10 bg-white/[0.04] p-5 backdrop-blur-xl transition hover:bg-white/[0.05]">
+      <p className="text-xs font-semibold text-sky-300">
         {eyebrow}
       </p>
-      <h3 className="mt-3 text-xl font-semibold tracking-tight text-white">
+      <h3 className="mt-3 text-xl font-semibold tracking-tight text-ink">
         {title}
       </h3>
       <p className="mt-3 text-sm leading-7 text-slate-300">{body}</p>
@@ -3944,7 +3848,7 @@ function AnalysisProgress({ step, pct }: { step: string; pct: number }) {
       role="status"
       aria-live="polite"
       aria-atomic="true"
-      className="rounded-[1.55rem] border border-white/10 bg-white/[0.05] p-4 shadow-[0_10px_28px_rgba(2,8,20,0.2)] backdrop-blur-xl"
+      className="rounded-card border border-white/10 bg-white/[0.05] p-4 backdrop-blur-xl"
     >
       <p className="text-sm text-slate-300 animate-pulse">{step}</p>
       <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/10">
@@ -3967,51 +3871,24 @@ function MetricRow({
   value: string;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 rounded-[1.1rem] border border-white/8 bg-white/[0.03] px-3 py-3 text-sm">
+    <div className="flex items-center justify-between gap-3 rounded-card border border-white/8 bg-white/[0.03] px-3 py-3 text-sm">
       <span className="flex flex-wrap items-center gap-2 text-slate-400">
         {label}
         {source ? (
-          <span className="rounded-full border border-white/10 bg-black/20 px-2 py-0.5 text-[0.52rem] font-semibold uppercase tracking-[0.14em] text-slate-300">
+          <span className="rounded-full border border-white/10 bg-black/20 px-2 py-0.5 text-xs font-semibold text-slate-300">
             {source}
           </span>
         ) : null}
       </span>
-      <span className="font-semibold text-white">{value}</span>
-    </div>
-  );
-}
-
-function CompactMapStat({
-  label,
-  source,
-  value,
-}: {
-  label: string;
-  source: string;
-  value: string;
-}) {
-  return (
-    <div className="rounded-[0.9rem] border border-white/8 bg-white/[0.035] px-3 py-2.5">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        {/* slate-400, not slate-500: at 8.8px with wide tracking this label
-            names the number beneath it, and slate-500 measured 3.58:1 here —
-            under the 4.5:1 needed for text this size. */}
-        <p className="text-[0.55rem] font-semibold uppercase tracking-[0.22em] text-slate-400">
-          {label}
-        </p>
-        <span className="rounded-full border border-white/10 bg-black/20 px-2 py-0.5 text-[0.5rem] font-semibold uppercase tracking-[0.14em] text-slate-300">
-          {source}
-        </span>
-      </div>
-      <p className="mt-1 text-sm font-semibold text-white">{value}</p>
+      <span className="font-semibold text-ink">{value}</span>
     </div>
   );
 }
 
 function FinancialSnapshot({ metrics }: { metrics: AnalysisMetrics }) {
   return (
-    <div className="rounded-[1.45rem] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.025))] p-4 shadow-[0_10px_28px_rgba(2,8,20,0.18)]">
-      <p className="text-[0.56rem] font-semibold uppercase tracking-[0.32em] text-cyan-300">
+    <div className="rounded-card border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.025))] p-4">
+      <p className="text-xs font-semibold text-sky-300">
         Savings model
       </p>
       <div className="mt-4 grid gap-3">
@@ -4028,17 +3905,17 @@ function FinancialSnapshot({ metrics }: { metrics: AnalysisMetrics }) {
 function SegmentationPanel({ roofData }: { roofData: RoofAnalysis }) {
   return (
     <SidebarPanel>
-      <p className="text-[0.62rem] font-semibold uppercase tracking-[0.34em] text-cyan-300">
+      <p className="text-xs font-semibold text-sky-300">
         Roof segmentation
       </p>
       <div className="mt-4 space-y-3">
         {roofData.roofSegments.slice(0, 3).map((segment) => (
-          <div key={segment.label} className="rounded-[1.15rem] border border-white/8 bg-white/[0.03] p-3">
+          <div key={segment.label} className="rounded-card border border-white/8 bg-white/[0.03] p-3">
             <div className="flex items-center justify-between gap-3">
-              <p className="text-sm font-semibold capitalize text-white">
+              <p className="text-sm font-semibold capitalize text-ink">
                 {segment.label}
               </p>
-              <p className="text-[0.65rem] uppercase tracking-[0.24em] text-slate-400">
+              <p className="text-xs text-slate-400">
                 {segment.panelsFit} API candidates
               </p>
             </div>
@@ -4070,14 +3947,14 @@ function SegmentationPanel({ roofData }: { roofData: RoofAnalysis }) {
 function Pill({ label, tone = "slate" }: { label: string; tone?: "slate" | "cyan" | "amber" }) {
   const toneClass =
     tone === "cyan"
-      ? "border-cyan-300/18 bg-cyan-300/10 text-cyan-100"
+      ? "border-sky-300/18 bg-sky-300/10 text-sky-100"
       : tone === "amber"
         ? "border-amber-300/18 bg-amber-300/10 text-amber-100"
         : "border-white/10 bg-white/[0.05] text-slate-200";
 
   return (
     <span
-      className={`rounded-full border px-3 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.26em] ${toneClass}`.trim()}
+      className={`rounded-full border px-3 py-1 text-xs font-semibold ${toneClass}`.trim()}
     >
       {label}
     </span>

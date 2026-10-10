@@ -14,7 +14,7 @@ export function SunlightLegend({ tone = "dark" }: { tone?: "dark" | "light" }) {
       className="grid gap-1"
     >
       <span aria-hidden="true" className="block h-2 w-full rounded-full" style={{ backgroundImage: sunlightRampGradientCss() }} />
-      <span aria-hidden="true" className={`flex justify-between gap-2 text-[0.6rem] leading-3 ${tone === "dark" ? "text-slate-300" : "text-slate-600"}`}>
+      <span aria-hidden="true" className={`flex justify-between gap-2 text-xs leading-3 ${tone === "dark" ? "text-slate-300" : "text-slate-600"}`}>
         <span>≤{floor}%</span>
         <span>of best-case sun</span>
         <span>100%</span>

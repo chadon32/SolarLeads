@@ -3,7 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { getSeriousAccessibilityViolations } from "../helpers/accessibility";
 import { installSafeApiMocks } from "../helpers/network";
 
-const publicPaths = ["/", "/solar-guide", "/privacy", "/terms"];
+const publicPaths = ["/", "/solar-guide", "/about", "/privacy", "/terms"];
 
 test("public metadata and useful content are present without JavaScript", async ({ browser, baseURL }) => {
   const context = await browser.newContext({ javaScriptEnabled: false, baseURL });

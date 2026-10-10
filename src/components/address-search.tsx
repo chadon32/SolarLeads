@@ -38,7 +38,7 @@ const serviceAreaMessage =
   "We currently serve Arizona homes only. Please choose an Arizona street address.";
 const MAX_ADDRESS_LENGTH = 220;
 const addressTooLongMessage =
-  `Keep your address under ${MAX_ADDRESS_LENGTH} characters, including the city and state.`;
+  `Addresses can be up to ${MAX_ADDRESS_LENGTH} characters, including the city and state.`;
 
 function buildFallbackSuggestions(query: string) {
   const typedAddress = query.trim();
@@ -155,7 +155,6 @@ export function AddressSearch({
   const [query, setQuery] = useState(selectedAddress ?? "");
   const [predictions, setPredictions] = useState<Prediction[]>([]);
   const [open, setOpen] = useState(false);
-  const [placesReady, setPlacesReady] = useState(false);
   const [fallbackActive, setFallbackActive] = useState(false);
   const [status, setStatus] = useState("Address lookup ready.");
   const [activeIndex, setActiveIndex] = useState(-1);
@@ -350,7 +349,6 @@ export function AddressSearch({
           const fallback = buildFallbackSuggestions(trimmed);
           setPredictions(fallback);
           setActivePredictionIndex(fallback.length ? 0 : -1);
-          setPlacesReady(false);
           setFallbackActive(true);
           setStatus(
             payload.message ??
@@ -369,7 +367,6 @@ export function AddressSearch({
         ) {
           setPredictions(nextPredictions);
           setActivePredictionIndex(0);
-          setPlacesReady(true);
           setStatus("Exact property match found. Starting roof scan...");
           setAddressError(null);
           setSearching(false);
@@ -379,17 +376,16 @@ export function AddressSearch({
 
         setPredictions(nextPredictions);
         setActivePredictionIndex(nextPredictions.length ? 0 : -1);
-        setPlacesReady(true);
         setFallbackActive(false);
         setStatus(
           nextPredictions.length
             ? "Choose the matching address to start the roof scan."
-            : "No matching addresses found."
+            : "No Arizona addresses match."
         );
         setAddressError(
           nextPredictions.length
             ? null
-            : "No results found. Try a nearby street address or check your spelling."
+            : "No results found. We cover Arizona homes only; check the street, city and ZIP, or try a nearby address."
         );
         setSearching(false);
       } catch (error) {
@@ -400,7 +396,6 @@ export function AddressSearch({
         const fallback = buildFallbackSuggestions(trimmed);
         setPredictions(fallback);
         setActivePredictionIndex(fallback.length ? 0 : -1);
-        setPlacesReady(false);
         setFallbackActive(true);
         setStatus("Local fallback active - Google Places search is unavailable.");
         setAddressError(lookupUnavailableMessage);
@@ -414,7 +409,7 @@ export function AddressSearch({
     };
   }, [open, query, setActivePredictionIndex]);
 
-  const helperText = `Pick the matching address to start the solar report workflow. Use a full street address, city, and state (up to ${MAX_ADDRESS_LENGTH} characters).`;
+  const helperText = "Arizona homes only. Start typing, then choose your address from the list.";
 
   const exactPredictionMatch = predictions.find(
     (prediction) =>
@@ -444,17 +439,17 @@ export function AddressSearch({
   };
 
   return (
-    <div className="relative w-full">
-      <label
-        htmlFor="address-search-input"
-        className="mb-3 block text-xs font-semibold uppercase tracking-[0.34em] text-cyan-100/90"
-      >
+    <div className="relative w-full text-left">
+      <label htmlFor="address-search-input" className="mb-2 block text-sm font-semibold text-ink">
         Enter your Arizona address
       </label>
       <div className="relative">
         <div className="relative">
+          {/* The pin is positioned against the input alone, so it stays inside
+              the field when the Analyze button stacks below it on phones. */}
+          <div className="relative">
           <MapPin
-            className="pointer-events-none absolute left-4 top-1/2 z-10 h-5 w-5 -translate-y-1/2 text-cyan-100/80"
+            className="pointer-events-none absolute left-4 top-1/2 z-10 h-5 w-5 -translate-y-1/2 text-ink-dim"
             aria-hidden="true"
           />
           <input
@@ -473,8 +468,8 @@ export function AddressSearch({
             aria-activedescendant={activePredictionId}
             aria-busy={isSelecting}
             aria-describedby={`address-helper${
-              status !== "Address lookup ready." ? " address-status" : ""
-            }${addressError ? " address-error" : ""}`}
+              status !== "Address lookup ready." ?" address-status" : ""
+            }${addressError ?" address-error" : ""}`}
             aria-invalid={Boolean(addressError)}
             onChange={(event) => {
               const nextQuery = event.target.value;
@@ -539,32 +534,22 @@ export function AddressSearch({
             }}
             placeholder="Enter your Arizona address..."
             maxLength={MAX_ADDRESS_LENGTH}
-            className={`w-full rounded-full border bg-black/24 py-4 pl-12 pr-4 text-base text-white outline-none transition placeholder:text-white/45 focus:border-cyan-200/50 focus:bg-black/32 sm:pr-28 ${
-              addressError ? "border-rose-300/55" : "border-white/12"
+            className={`w-full rounded-full border bg-raised py-3.5 pl-12 pr-4 text-base text-ink outline-none transition-colors placeholder:text-ink-dim focus:border-sky-300 sm:pr-32 ${
+              addressError ? "border-rose-300/70" : "border-ridge"
             }`}
           />
+          </div>
           <button
             type="button"
             aria-label="Start roof analysis with the selected address"
             disabled={!canSubmitAddress || isSelecting}
             onMouseDown={(event) => event.preventDefault()}
             onClick={submitCurrentAddress}
-            className="mt-3 inline-flex min-h-11 w-full items-center justify-center gap-1.5 rounded-full bg-white px-4 text-slate-950 shadow-[0_12px_30px_rgba(255,255,255,0.18)] transition hover:scale-[1.01] hover:bg-cyan-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:scale-100 sm:absolute sm:right-2 sm:top-1/2 sm:mt-0 sm:h-11 sm:min-h-0 sm:w-auto sm:-translate-y-1/2 sm:px-3 sm:hover:scale-105"
+            className="btn btn-primary mt-3 w-full sm:absolute sm:right-1.5 sm:top-1/2 sm:mt-0 sm:w-auto sm:-translate-y-1/2"
           >
-            <span className="text-xs font-bold">Analyze</span>
+            Analyze
             <ArrowRight className="h-4 w-4" aria-hidden="true" />
           </button>
-        </div>
-
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-white/58">
-          <span>
-            Search powered by Google Places.{" "}
-            {fallbackActive
-              ? "Local fallback"
-              : placesReady
-                ? "Google Places active"
-                : "Address lookup ready"}
-          </span>
         </div>
         {status !== "Address lookup ready." ? (
           <p
@@ -572,16 +557,16 @@ export function AddressSearch({
             role="status"
             aria-live="polite"
             aria-busy={isSelecting}
-            className="mt-2 text-xs leading-5 text-white/45"
+            className="mt-2 text-xs leading-5 text-ink-dim"
           >
             {status}
           </p>
         ) : null}
 
         {open && exactPredictionMatch ? (
-          <p className="mt-2 text-xs text-cyan-200">
+          <p className="mt-2 text-xs text-sky-200">
             Press Enter to use{" "}
-            <span className="font-semibold text-white">
+            <span className="font-semibold text-ink">
               {exactPredictionMatch.description}
             </span>
             .
@@ -593,7 +578,7 @@ export function AddressSearch({
             id="address-suggestions"
             role="listbox"
             aria-label="Address suggestions"
-            className="liquid-glass absolute z-20 mt-3 max-h-72 w-full overflow-auto rounded-[1.3rem] bg-black/72 shadow-[0_24px_70px_rgba(2,8,20,0.55)] backdrop-blur-xl"
+            className="liquid-glass absolute z-20 mt-3 max-h-72 w-full overflow-auto rounded-card bg-black/72 backdrop-blur-xl"
           >
             {showLoadingShell
               ? Array.from({ length: 4 }).map((_, index) => (
@@ -601,7 +586,7 @@ export function AddressSearch({
                     key={`skeleton-${index}`}
                     className="flex items-start gap-3 border-b border-white/6 px-4 py-3 last:border-b-0"
                   >
-                    <span className="mt-1 h-2 w-2 rounded-full bg-cyan-300/40 shadow-[0_0_18px_rgba(103,232,249,0.25)]" />
+                    <span className="mt-1 h-2 w-2 rounded-full bg-sky-300/40 " />
                     <span className="min-w-0 flex-1">
                       <span className="block h-3.5 w-44 rounded-full bg-white/8 animate-pulse" />
                       <span className="mt-2 block h-2.5 w-32 rounded-full bg-white/8 animate-pulse [animation-delay:140ms]" />
@@ -625,9 +610,9 @@ export function AddressSearch({
                       onMouseDown={(event) => event.preventDefault()}
                       onClick={() => selectPrediction(prediction)}
                     >
-                      <span className="mt-1 h-2 w-2 rounded-full bg-cyan-300 shadow-[0_0_18px_rgba(103,232,249,0.7)]" />
+                      <span className="mt-1 h-2 w-2 rounded-full bg-sky-300 " />
                       <span className="min-w-0">
-                        <span className="block text-sm font-medium text-white">
+                        <span className="block text-sm font-medium text-ink">
                           {prediction.structured_formatting?.main_text ??
                             prediction.description}
                         </span>
@@ -642,16 +627,16 @@ export function AddressSearch({
           </div>
         )}
       </div>
-      <p className="mt-3 text-sm text-white/58">
-        Currently serving Arizona addresses only.
-      </p>
       {addressError ? (
         <p id="address-error" role="alert" className="mt-2 text-sm leading-6 text-rose-300">
           {addressError}
         </p>
       ) : null}
-      <p id="address-helper" className="mt-3 text-sm leading-6 text-white/45">
-        {helperText}
+      <p id="address-helper" className="mt-2 text-sm leading-6 text-ink-dim">
+        {query.length >= MAX_ADDRESS_LENGTH ? addressTooLongMessage : helperText}
+      </p>
+      <p className="mt-1 text-xs leading-5 text-ink-dim">
+        Search powered by Google Places.{fallbackActive ? " Using local address matching." : null}
       </p>
     </div>
   );

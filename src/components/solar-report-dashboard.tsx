@@ -1,16 +1,6 @@
 "use client";
 
-import {
-  Car,
-  DollarSign,
-  Grid3X3,
-  Leaf,
-  Sun,
-  TreePine,
-  TrendingUp,
-  Zap,
-  type LucideIcon,
-} from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import {
   type KeyboardEvent,
   type ReactNode,
@@ -19,13 +9,7 @@ import {
 } from "react";
 import type { RoofAnalysis } from "@/lib/roof-analysis";
 import { RedactedScenarioShareCard } from "@/components/redacted-scenario-share-card";
-import { trackEvent } from "@/lib/analytics";
-import {
-  buildRedactedScenarioText,
-  getBroadRoofCategory,
-  getBroadSunCategory,
-  getSystemRange,
-} from "@/lib/scenario-share";
+import { billOptionsIncluding } from "@/lib/monthly-bill-options";
 import {
   buildSolarAdvisorInputFromAnalysis,
   buildSolarAdvisorProfile,
@@ -34,7 +18,13 @@ import {
 import {
   ARIZONA_AVG_RATE_PER_KWH,
 } from "@/lib/solar-metrics";
-import { ARIZONA_INSTALLED_COST_MARKET } from "@/lib/solar-assumptions";
+import {
+  ARIZONA_EXPORT_CREDIT_PER_KWH,
+  ARIZONA_EXPORT_CREDIT_SOURCE,
+  ARIZONA_FIXED_MONTHLY_CHARGE,
+  ARIZONA_INSTALLED_COST_MARKET,
+  SOLAR_SELF_CONSUMPTION_SHARE,
+} from "@/lib/solar-assumptions";
 import { buildActiveSolarEstimate, getActiveEstimateMetrics } from "@/lib/active-solar-estimate";
 import {
   BATTERY_OPTIONS,
@@ -68,12 +58,12 @@ type SolarReportDashboardProps = {
   analysis: RoofAnalysis;
   activePanelCount?: number;
   monthlyBill?: number;
-  onActivePanelCountChange?: (panelCount: number) => void;
-  onMonthlyBillChange?: (monthlyBill: number) => void;
   onSelectedInverterTypeChange?: (inverterType: InverterType) => void;
   onSelectedPanelIdChange?: (panelId: string) => void;
   onAddBatteryChange?: (addBattery: boolean) => void;
   onBatteryOptionChange?: (batteryOption: string) => void;
+  /** Given only where the page has no header bill picker (the iOS app). */
+  onMonthlyBillChange?: (monthlyBill: number) => void;
   onTabChange?: (tab: DetailTab) => void;
   addBattery?: boolean;
   batteryOption?: string;
@@ -92,22 +82,17 @@ type MetricSource =
   | "illustrative"
   | "estimated";
 
-const monthlyBillOptions = [100, 150, 200, 250, 300, 350, 400, 450, 500];
 const DEFAULT_LOAN_RATE = 6.49;
 const DEFAULT_LOAN_TERM_YEARS = 20;
 
-function billOptionsIncluding(currentBill: number) {
-  return monthlyBillOptions.includes(currentBill)
-    ? monthlyBillOptions
-    : [...monthlyBillOptions, currentBill].sort((a, b) => a - b);
-}
-
 const detailTabs: Array<{ id: DetailTab; label: string }> = [
   { id: "overview", label: "Overview" },
-  { id: "roof", label: "Roof & Shade" },
+  { id: "roof", label: "Roof & shade" },
   { id: "panels", label: "Panels" },
   { id: "savings", label: "Savings" },
   { id: "financing", label: "Financing" },
+  // The iOS app finds this tab by its exact text ("Send Report"); keep it in sync with
+  // mobile/src/analysis-bridge.ts before renaming.
   { id: "send", label: "Send Report" },
 ];
 
@@ -126,7 +111,6 @@ export function SolarReportDashboard({
   address,
   analysis,
   monthlyBill: externalMonthlyBill = 200,
-  onActivePanelCountChange,
   onAddBatteryChange,
   onBatteryOptionChange,
   onMonthlyBillChange,
@@ -173,9 +157,6 @@ export function SolarReportDashboard({
     ]
   );
 
-  const updateMonthlyBill = (value: number) => {
-    onMonthlyBillChange?.(value);
-  };
   const setActiveTab = (tab: DetailTab) => {
     setInternalActiveTab(tab);
     onTabChange?.(tab);
@@ -223,150 +204,49 @@ export function SolarReportDashboard({
   };
 
   return (
-    <>
-      <aside className="min-w-0 space-y-3 lg:col-span-5">
-        <section className="rounded-[1.35rem] border border-cyan-200/12 bg-slate-950/72 p-4 shadow-[0_18px_65px_rgba(0,0,0,0.34)] backdrop-blur-xl">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-[0.62rem] font-semibold uppercase tracking-[0.28em] text-cyan-100/82">
-                Preliminary roof model ready
-              </p>
-              <h2 className="mt-2 line-clamp-2 text-lg font-semibold text-white">
-                {address}
-              </h2>
-            </div>
-            <SourceBadge source="solar-api" />
-          </div>
-          <p className="mt-3 text-sm leading-6 text-white/62">
-            Estimated solar layout generated from available roof and sunlight data.
-            Final panel placement, incentives, pricing, and savings require installer confirmation.
-          </p>
-          <div className="mt-4 grid grid-cols-2 gap-2">
-            <MiniReadout label="Solar readiness" source="modeled" value={`${values.advisor.suitability.score}/100`} />
-            <MiniReadout label="Panels" source="solar-api" value={`${values.panelCount}`} />
-            <MiniReadout label="Annual savings" source="user-adjusted" value={formatMoney(values.annualSavings)} />
-            <MiniReadout label="System size" source="user-adjusted" value={`${values.recommendedKw.toFixed(1)} kW`} />
-          </div>
-          <SuitabilityExplanationCard advisor={values.advisor} />
-        </section>
-
-        <section className="rounded-[1.15rem] border border-white/12 bg-slate-950/68 p-4 shadow-[0_12px_36px_rgba(0,0,0,0.22)]">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-[0.62rem] font-semibold uppercase tracking-[0.28em] text-cyan-100/82">
-                Fine-tune layout
-              </p>
-              <h3 className="mt-2 text-base font-semibold text-white">
-                Panel count and bill input
-              </h3>
-            </div>
-            <SourceBadge source="user-adjusted" />
-          </div>
-          <label className="mt-4 block">
-            <div className="flex items-center justify-between gap-3 text-xs text-white/58">
-              <span className="font-semibold uppercase tracking-[0.2em]">
-                Solar panels: {values.panelCount} of {values.maxPanelCount}
-              </span>
-              {values.panelCount === values.recommendedPanelCount ? (
-                <span className="rounded-full bg-emerald-300/16 px-2 py-1 text-[0.56rem] font-bold uppercase tracking-[0.16em] text-emerald-100">
-                  Recommended
-                </span>
-              ) : null}
-            </div>
-            <input
-              type="range"
-              min={1}
-              max={values.maxPanelCount}
-              value={values.panelCount}
-              onChange={(event) => onActivePanelCountChange?.(Number(event.target.value))}
-              className="mt-2 h-11 w-full cursor-pointer accent-cyan-300"
-            />
-          </label>
-          {values.excludedCandidateCount > 0 ? (
-            <p className="mt-2 text-xs leading-5 text-amber-100/85">
-              {values.excludedCandidateCount} raw Solar API positions were removed before
-              the preliminary ceiling because of spacing, overlap, or estimated setbacks.
-            </p>
-          ) : null}
-          {values.remainingPanelCapacity > 0 ? (
-            <p className="mt-2 text-xs leading-5 text-white/58">
-              The selected {values.panelCount}-panel layout leaves {values.remainingPanelCapacity}{" "}
-              positions available below the preliminary ceiling.
-            </p>
-          ) : null}
-          <p className="mt-2 text-xs leading-5 text-white/46">
-            Panels are placed from available roof candidate points and adjusted for spacing,
-            setbacks, and overlap prevention.
-          </p>
-          <select
-            value={monthlyBill}
-            onChange={(event) => updateMonthlyBill(Number(event.target.value))}
-            aria-label="Monthly electric bill"
-            className="mt-4 w-full rounded-full border border-white/12 bg-black/35 px-4 py-3 text-base font-semibold text-white outline-none transition focus:border-cyan-200/50"
-          >
-            {billOptionsIncluding(monthlyBill).map((value) => (
-              <option key={value} value={value} className="bg-slate-950">
-                {formatMoney(value)}
-              </option>
-            ))}
-          </select>
-          <div className="mt-4 grid grid-cols-2 gap-3">
-            <MiniReadout label="Panel footprint" source="solar-api" value={`${formatNumber(values.installationSqFt)} sq ft`} />
-            <MiniReadout label="Annual savings" source="user-adjusted" value={formatMoney(values.annualSavings)} />
-          </div>
-          <BillComparisonCard values={values} />
-        </section>
-
-        <AiSolarAdvisorCard
-          advisor={values.advisor}
-          selectedQuestion={selectedAdvisorQuestion}
-          onSelectQuestion={setSelectedAdvisorQuestion}
-        />
-
-        <DataProvenanceBlock />
-      </aside>
-
-      <section
-        id="report-dashboard"
-        className="w-full min-w-0 max-w-full rounded-[1.5rem] border border-white/12 bg-slate-950/70 p-3 shadow-[0_18px_70px_rgba(0,0,0,0.32)] backdrop-blur-xl sm:p-4 lg:col-span-12"
+    <section
+      id="report-dashboard"
+      className="w-full min-w-0 max-w-full rounded-card border border-ridge bg-dusk p-3 sm:p-4 lg:col-span-12"
+    >
+      <div
+        role="tablist"
+        aria-label="Solar report detail sections"
+        className="grid grid-cols-3 gap-1 rounded-card border border-ridge bg-night p-1 xl:grid-cols-6 xl:rounded-full"
       >
-        <div
-          role="tablist"
-          aria-label="Solar report detail sections"
-          className="grid grid-cols-3 gap-1 rounded-[1.15rem] border border-white/10 bg-black/28 p-1 xl:grid-cols-6 xl:rounded-full"
-        >
-          {detailTabs.map((tab) => (
-            <button
-              key={tab.id}
-              id={`report-tab-${tab.id}`}
-              role="tab"
-              type="button"
-              aria-selected={activeTab === tab.id}
-              aria-controls="report-tabpanel"
-              tabIndex={activeTab === tab.id ? 0 : -1}
-              onClick={() => setActiveTab(tab.id)}
-              onKeyDown={(event) => handleDetailTabKeyDown(event, tab.id)}
-              className={`min-h-11 rounded-full px-2 py-2 text-[0.68rem] font-semibold uppercase leading-4 tracking-[0.05em] transition xl:px-4 xl:py-3 xl:text-xs xl:tracking-[0.14em] ${
-                activeTab === tab.id
-                  ? "bg-white text-slate-950"
-                  : "text-[#cbd5e1] hover:text-white"
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
+        {detailTabs.map((tab) => (
+          <button
+            key={tab.id}
+            id={`report-tab-${tab.id}`}
+            role="tab"
+            type="button"
+            aria-selected={activeTab === tab.id}
+            aria-controls="report-tabpanel"
+            tabIndex={activeTab === tab.id ? 0 : -1}
+            onClick={() => setActiveTab(tab.id)}
+            onKeyDown={(event) => handleDetailTabKeyDown(event, tab.id)}
+            className={`min-h-11 rounded-full px-2 py-2 text-sm font-semibold leading-5 xl:px-4 ${
+              activeTab === tab.id
+                ? "bg-ink text-night"
+                : "text-ink-muted hover:text-ink"
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
 
-        <div
-          id="report-tabpanel"
-          role="tabpanel"
-          aria-labelledby={`report-tab-${activeTab}`}
-          className="mt-4"
-        >
+      <div
+        id="report-tabpanel"
+        role="tabpanel"
+        aria-labelledby={`report-tab-${activeTab}`}
+        className="mt-4"
+      >
           {activeTab === "overview" ? (
             <ReportOverviewTab
               analysis={analysis}
               onSendReport={openSendReport}
+              onSelectQuestion={setSelectedAdvisorQuestion}
+              selectedQuestion={selectedAdvisorQuestion}
               values={values}
             />
           ) : null}
@@ -395,7 +275,8 @@ export function SolarReportDashboard({
           ) : null}
           {activeTab === "savings" ? (
             <SavingsTab
-              onMonthlyBillChange={updateMonthlyBill}
+              imageryDate={analysis.imageryDate}
+              onMonthlyBillChange={onMonthlyBillChange}
               values={values}
             />
           ) : null}
@@ -409,9 +290,8 @@ export function SolarReportDashboard({
           <div hidden={activeTab !== "send"}>
             {reportFormOpened ? <SendReportTab sendReportContent={sendReportContent} /> : null}
           </div>
-        </div>
-      </section>
-    </>
+      </div>
+    </section>
   );
 }
 
@@ -529,17 +409,17 @@ function PanelsTab({
     <section id="panel-selection" className="grid gap-4 scroll-mt-24">
       <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
         <div>
-          <p className="text-[0.62rem] font-semibold uppercase tracking-[0.28em] text-cyan-100/82">
+          <p className="text-xs font-semibold text-sky-100/82">
             Panel selection
           </p>
-          <h3 className="mt-2 text-xl font-semibold tracking-tight text-white">
+          <h3 className="mt-2 text-xl font-semibold tracking-tight text-ink">
             Recommended panel for this roof
           </h3>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-white/62">
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-ink-muted">
             We show the current panel first, then a few alternatives. Open the
             comparison table only if you want the full equipment catalog.
           </p>
-          <p className="mt-2 max-w-3xl text-xs leading-5 text-white/48">
+          <p className="mt-2 max-w-3xl text-xs leading-5 text-ink-dim">
             Manufacturer specifications are model-specific. Installed costs use
             the Arizona market average of ${ARIZONA_INSTALLED_COST_MARKET.averagePerWatt.toFixed(2)}/W
             as of {ARIZONA_INSTALLED_COST_MARKET.asOf}; actual equipment pricing,
@@ -559,9 +439,9 @@ function PanelsTab({
             variant="featured"
           />
           <div className="grid gap-3">
-            <div className="rounded-[1rem] border border-white/10 bg-black/18 p-4">
-              <p className="text-sm font-semibold text-white">Why this panel?</p>
-              <p className="mt-2 text-sm leading-6 text-white/58">
+            <div className="rounded-card border border-white/10 bg-black/18 p-4">
+              <p className="text-sm font-semibold text-ink">Why this panel?</p>
+              <p className="mt-2 text-sm leading-6 text-ink-dim">
                 {selectedPanel.brand} {selectedPanel.model} balances output,
                 roof fit, Arizona heat performance, and modeled payback for the
                 current monthly bill.
@@ -619,21 +499,21 @@ function PanelsTab({
         utility={utility}
       />
 
-      <div className="overflow-hidden rounded-[1rem] border border-white/10 bg-black/18 p-4">
+      <div className="overflow-hidden rounded-card border border-white/10 bg-black/18 p-4">
         <button
           type="button"
           onClick={() => setShowComparison((current) => !current)}
           className="flex w-full items-center justify-between gap-3 text-left"
         >
           <span>
-            <span className="block text-sm font-semibold text-white">
+            <span className="block text-sm font-semibold text-ink">
               {showComparison ? "Hide comparison" : "Compare all panels"}
             </span>
-            <span className="mt-1 block text-xs text-white/62">
+            <span className="mt-1 block text-xs text-ink-muted">
               Sorted by payback by default.
             </span>
           </span>
-          <span className="rounded-full border border-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-white/70">
+          <span className="rounded-full border border-white/10 px-3 py-1 text-xs font-semibold text-ink-muted">
             {showComparison ? "Hide" : "Show"}
           </span>
         </button>
@@ -681,25 +561,25 @@ function PanelOptionCard({
 
   return (
     <article
-      className={`relative flex h-full flex-col overflow-hidden rounded-[1.1rem] border p-4 transition ${
+      className={`relative flex h-full flex-col overflow-hidden rounded-card border p-4 transition ${
         isSelected
-          ? "border-cyan-200/70 bg-cyan-200/[0.09] shadow-[0_0_0_1px_rgba(103,232,249,0.18),0_18px_50px_rgba(34,211,238,0.12)]"
-          : "border-white/10 bg-black/18"
+          ? "border-sky-300 bg-raised"
+          : "border-ridge bg-night/40"
       } ${isFeatured ? "min-h-[25rem]" : "min-h-[18rem]"}`}
     >
       <div className="absolute right-3 top-3 z-10 flex flex-col items-end gap-1.5">
         {isSelected ? (
-          <span className="rounded-full bg-cyan-200 px-2 py-1 text-[0.62rem] font-black uppercase tracking-[0.1em] text-slate-950">
+          <span className="rounded-full bg-sky-200 px-2 py-1 text-xs font-black text-slate-950">
             Selected
           </span>
         ) : null}
         {fit.recommended ? (
-          <span className="rounded-full bg-emerald-300 px-2 py-1 text-[0.62rem] font-black uppercase tracking-[0.1em] text-slate-950">
+          <span className="rounded-full bg-emerald-300 px-2 py-1 text-xs font-black text-slate-950">
             Recommended
           </span>
         ) : null}
         {!fit.fits ? (
-          <span className="rounded-full bg-slate-500/70 px-2 py-1 text-[0.62rem] font-black uppercase tracking-[0.1em] text-white">
+          <span className="rounded-full bg-slate-500/70 px-2 py-1 text-xs font-black text-ink">
             Roof too small
           </span>
         ) : null}
@@ -707,21 +587,21 @@ function PanelOptionCard({
 
       <div className="flex items-start justify-between gap-3 pr-24">
         <div className="min-w-0">
-          <p className="text-sm font-bold text-white">{panel.brand}</p>
-          <h4 className="mt-1 line-clamp-2 text-base font-semibold text-white/88">
+          <p className="text-sm font-bold text-ink">{panel.brand}</p>
+          <h4 className="mt-1 line-clamp-2 text-base font-semibold text-ink">
             {panel.model}
           </h4>
-          <p className="mt-1 line-clamp-2 text-xs leading-5 text-white/58">{panel.bestFor}</p>
+          <p className="mt-1 line-clamp-2 text-xs leading-5 text-ink-dim">{panel.bestFor}</p>
           <a
             href={panel.specSourceUrl}
             target="_blank"
             rel="noreferrer"
-            className="mt-1 inline-flex text-[0.68rem] font-medium text-cyan-100/70 underline decoration-cyan-100/25 underline-offset-2 hover:text-cyan-100"
+            className="mt-1 inline-flex text-xs font-medium text-sky-100/70 underline decoration-sky-100/25 underline-offset-2 hover:text-sky-100"
           >
             Manufacturer specifications
           </a>
         </div>
-        <span className={`shrink-0 rounded-full border px-2 py-1 text-[0.62rem] font-bold uppercase tracking-[0.12em] ${getTierBadgeClass(panel.tier)}`}>
+        <span className={`shrink-0 rounded-full border px-2 py-1 text-xs font-bold ${getTierBadgeClass(panel.tier)}`}>
           {getTierLabel(panel.tier)}
         </span>
       </div>
@@ -734,17 +614,17 @@ function PanelOptionCard({
       </div>
 
       {isFeatured ? (
-      <div className="mt-4 rounded-[0.9rem] border border-amber-200/14 bg-amber-200/[0.06] p-3">
+      <div className="mt-4 rounded-card border border-amber-200/14 bg-amber-200/[0.06] p-3">
         <p className="text-xs font-semibold text-amber-100">
           {fit.azHeatLoss}
         </p>
-        <p className="mt-1 text-xs leading-5 text-white/50">
+        <p className="mt-1 text-xs leading-5 text-ink-muted">
           Temperature coefficient: {panel.tempCoefficient}% / C.
         </p>
       </div>
       ) : null}
 
-      <div className="mt-auto grid gap-1.5 pt-4 text-xs text-white/58">
+      <div className="mt-auto grid gap-1.5 pt-4 text-xs text-ink-dim">
         <PanelFinancialRow label="System size" value={`${fit.systemKw.toFixed(1)} kW`} />
         <PanelFinancialRow label="Current layout" value={`${fit.maxPanelsFit} panels`} />
         {isFeatured ? (
@@ -762,7 +642,7 @@ function PanelOptionCard({
         className={`mt-4 min-h-11 w-full rounded-full px-4 py-3 text-sm font-semibold transition ${
           isSelected
             ? "bg-white text-slate-950"
-            : "border border-white/10 bg-white/[0.06] text-white hover:bg-white/[0.1]"
+            : "border border-white/10 bg-white/[0.06] text-ink hover:bg-white/[0.1]"
         } disabled:cursor-not-allowed disabled:opacity-50`}
       >
         {isSelected ? "Selected panel" : "Select this panel"}
@@ -773,16 +653,16 @@ function PanelOptionCard({
 
 function PanelOptionSkeleton() {
   return (
-    <div className="min-h-[18rem] animate-pulse rounded-[1.1rem] border border-white/10 bg-black/18 p-4">
+    <div className="min-h-[18rem] animate-pulse rounded-card border border-white/10 bg-black/18 p-4">
       <div className="h-4 w-20 rounded-full bg-white/10" />
       <div className="mt-4 h-6 w-4/5 rounded-full bg-white/10" />
       <div className="mt-2 h-4 w-3/5 rounded-full bg-white/10" />
       <div className="mt-6 grid grid-cols-2 gap-2">
         {Array.from({ length: 4 }).map((_, index) => (
-          <div key={index} className="h-16 rounded-[0.75rem] bg-white/8" />
+          <div key={index} className="h-16 rounded-card bg-white/8" />
         ))}
       </div>
-      <div className="mt-6 h-20 rounded-[0.9rem] bg-amber-200/10" />
+      <div className="mt-6 h-20 rounded-card bg-amber-200/10" />
       <div className="mt-6 grid gap-2">
         {Array.from({ length: 6 }).map((_, index) => (
           <div key={index} className="h-5 rounded-full bg-white/8" />
@@ -807,11 +687,11 @@ function getTierBadgeClass(tier: SolarPanel["tier"]) {
 
 function PanelSpec({ label, value }: { label: string; value: string }) {
   return (
-    <div className="min-w-0 overflow-hidden rounded-[0.75rem] border border-white/8 bg-black/20 p-2">
-      <p className="text-[0.62rem] font-semibold uppercase tracking-[0.12em] text-white/70">
+    <div className="min-w-0 overflow-hidden rounded-card border border-white/8 bg-black/20 p-2">
+      <p className="text-xs font-semibold text-ink-muted">
         {label}
       </p>
-      <p className="mt-1 truncate font-semibold text-white">{value}</p>
+      <p className="mt-1 truncate font-semibold text-ink">{value}</p>
     </div>
   );
 }
@@ -820,7 +700,7 @@ function PanelFinancialRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between gap-3 border-b border-white/8 py-1.5 last:border-b-0">
       <span>{label}</span>
-      <span className="shrink-0 font-semibold text-white">{value}</span>
+      <span className="shrink-0 font-semibold text-ink">{value}</span>
     </div>
   );
 }
@@ -839,17 +719,17 @@ function InverterSelector({
   const recommendation = getInverterRecommendation(annualSunlightHours);
 
   return (
-    <div className="rounded-[1rem] border border-white/10 bg-black/18 p-4">
+    <div className="rounded-card border border-white/10 bg-black/18 p-4">
       <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-end">
         <div>
-          <p className="text-[0.62rem] font-semibold uppercase tracking-[0.24em] text-cyan-100/80">
+          <p className="text-xs font-semibold text-sky-100/80">
             Inverter option
           </p>
-          <h4 className="mt-1 text-lg font-semibold text-white">
+          <h4 className="mt-1 text-lg font-semibold text-ink">
             Match electronics to roof shade
           </h4>
         </div>
-        <span className="rounded-full border border-white/10 bg-white/[0.06] px-3 py-1.5 text-xs font-semibold text-white/72">
+        <span className="rounded-full border border-white/10 bg-white/[0.06] px-3 py-1.5 text-xs font-semibold text-ink-muted">
           Shade risk: {shadeRisk}
         </span>
       </div>
@@ -859,33 +739,33 @@ function InverterSelector({
             key={option.id}
             type="button"
             onClick={() => onSelectedInverterTypeChange?.(option.id)}
-            className={`rounded-[0.95rem] border p-3 text-left transition ${
+            className={`rounded-card border p-3 text-left transition ${
               option.id === selectedInverterType
-                ? "border-cyan-200/42 bg-cyan-200/[0.075]"
+                ? "border-sky-200/42 bg-sky-200/[0.075]"
                 : option.id === recommendation.inverterType
                   ? "border-emerald-200/36 bg-emerald-200/[0.055]"
                 : "border-white/10 bg-black/20 hover:bg-white/[0.04]"
             }`}
           >
             <div className="flex items-center justify-between gap-2">
-              <p className="text-sm font-semibold text-white">{option.label}</p>
+              <p className="text-sm font-semibold text-ink">{option.label}</p>
               {option.id === recommendation.inverterType ? (
-                <span className="rounded-full bg-emerald-300/16 px-2 py-1 text-[0.5rem] font-bold uppercase tracking-[0.12em] text-emerald-100">
+                <span className="rounded-full bg-emerald-300/16 px-2 py-1 text-xs font-bold text-emerald-100">
                   Recommended
                 </span>
               ) : null}
             </div>
-            <p className="mt-1 text-xs leading-5 text-white/50">{option.brands}</p>
-            <p className="mt-2 text-xs font-semibold text-cyan-100">
+            <p className="mt-1 text-xs leading-5 text-ink-dim">{option.brands}</p>
+            <p className="mt-2 text-xs font-semibold text-sky-100">
               {option.costAdderPerWatt > 0
                 ? `+$${option.costAdderPerWatt.toFixed(2)}/W`
                 : "$0/W add-on"}
             </p>
-            <p className="mt-1 text-xs leading-5 text-white/60">{option.bestFor}</p>
+            <p className="mt-1 text-xs leading-5 text-ink-muted">{option.bestFor}</p>
           </button>
         ))}
       </div>
-      <p className="mt-3 text-xs leading-5 text-white/50">
+      <p className="mt-3 text-xs leading-5 text-ink-dim">
         {recommendation.note} Final equipment selection should be confirmed by the installer.
       </p>
     </div>
@@ -928,16 +808,16 @@ function BatteryStorageSection({
   onBatteryOptionChange?: (batteryOption: string) => void;
 }) {
   return (
-    <section id="battery-storage" className="rounded-[1rem] border border-white/10 bg-black/18 p-4">
+    <section id="battery-storage" className="rounded-card border border-white/10 bg-black/18 p-4">
       <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
         <div>
-          <p className="text-[0.62rem] font-semibold uppercase tracking-[0.24em] text-cyan-100/80">
+          <p className="text-xs font-semibold text-sky-100/80">
             Battery backup
           </p>
-          <h4 className="mt-1 text-lg font-semibold text-white">
+          <h4 className="mt-1 text-lg font-semibold text-ink">
             Add battery storage?
           </h4>
-          <p className="mt-2 text-xs leading-5 text-white/50">
+          <p className="mt-2 text-xs leading-5 text-ink-dim">
             Battery storage can provide backup power during outages. Capacity,
             backup duration, and current incentive eligibility require installer
             and tax-professional confirmation.
@@ -948,8 +828,8 @@ function BatteryStorageSection({
           onClick={() => onAddBatteryChange?.(!addBattery)}
           className={`inline-flex min-h-11 min-w-32 items-center justify-center rounded-full px-4 py-3 text-sm font-semibold transition ${
             addBattery
-              ? "bg-cyan-200 text-slate-950"
-              : "border border-white/10 bg-white/[0.06] text-white/76 hover:bg-white/[0.1]"
+              ? "bg-sky-200 text-slate-950"
+              : "border border-white/10 bg-white/[0.06] text-ink-muted hover:bg-white/[0.1]"
           }`}
         >
           {addBattery ? "Battery added" : "Add battery"}
@@ -988,26 +868,26 @@ function BatteryCard({
     <button
       type="button"
       onClick={onSelect}
-      className={`rounded-[0.95rem] border p-3 text-left transition ${
+      className={`rounded-card border p-3 text-left transition ${
         selected
-          ? "border-cyan-200/48 bg-cyan-200/[0.08]"
+          ? "border-sky-200/48 bg-sky-200/[0.08]"
           : "border-white/10 bg-black/20 hover:bg-white/[0.04]"
       }`}
     >
       <div className="flex items-start justify-between gap-2">
         <div>
-          <p className="text-sm font-semibold text-white">
+          <p className="text-sm font-semibold text-ink">
             {battery.brand} {battery.model}
           </p>
-          <p className="mt-1 text-xs leading-5 text-white/50">{battery.bestFor}</p>
+          <p className="mt-1 text-xs leading-5 text-ink-dim">{battery.bestFor}</p>
         </div>
         {selected ? (
-          <span className="rounded-full bg-cyan-200 px-2 py-1 text-[0.52rem] font-bold uppercase tracking-[0.12em] text-slate-950">
+          <span className="rounded-full bg-sky-200 px-2 py-1 text-xs font-bold text-slate-950">
             Selected
           </span>
         ) : null}
       </div>
-      <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-white/58">
+      <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-ink-dim">
         <PanelFinancialRow label="Capacity" value={`${battery.capacityKwh} kWh`} />
         <PanelFinancialRow label="Backup" value={`~${battery.backupHours} hrs`} />
         <PanelFinancialRow label="Cost" value={formatMoney(battery.cost)} />
@@ -1032,13 +912,13 @@ function IncentivesSection({
   const federalCreditRate = getFederalResidentialSolarCreditRate();
 
   return (
-    <section className="rounded-[1rem] border border-white/10 bg-black/18 p-4">
+    <section className="rounded-card border border-white/10 bg-black/18 p-4">
       <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-end">
         <div>
-          <p className="text-[0.62rem] font-semibold uppercase tracking-[0.24em] text-cyan-100/80">
+          <p className="text-xs font-semibold text-sky-100/80">
             Available incentives
           </p>
-          <h4 className="mt-1 text-lg font-semibold text-white">
+          <h4 className="mt-1 text-lg font-semibold text-ink">
             Current modeled tax incentives
           </h4>
         </div>
@@ -1074,7 +954,7 @@ function IncentivesSection({
           />
         ) : null}
       </div>
-      <div className="mt-4 rounded-[0.95rem] border border-emerald-200/24 bg-emerald-300/16 px-4 py-3 text-sm font-semibold text-emerald-50 shadow-[0_14px_34px_rgba(16,185,129,0.12)]">
+      <div className="mt-4 rounded-card border border-emerald-200/24 bg-emerald-300/16 px-4 py-3 text-sm font-semibold text-emerald-50">
         Potential modeled tax credits: {formatMoney(totalIncentives)}. Actual
         eligibility depends on current law and individual tax circumstances.
       </div>
@@ -1092,10 +972,10 @@ function IncentiveCard({
   title: string;
 }) {
   return (
-    <article className="rounded-[0.95rem] border border-white/8 bg-white/[0.035] p-3">
-      <h5 className="text-sm font-semibold text-white">{title}</h5>
-      <p className="mt-2 text-xs leading-5 text-white/55">{body}</p>
-      <p className="mt-2 text-[0.56rem] font-semibold uppercase tracking-[0.16em] text-cyan-100/70">
+    <article className="rounded-card border border-white/8 bg-white/[0.035] p-3">
+      <h5 className="text-sm font-semibold text-ink">{title}</h5>
+      <p className="mt-2 text-xs leading-5 text-ink-dim">{body}</p>
+      <p className="mt-2 text-xs font-semibold text-sky-100/70">
         Source: {source}
       </p>
     </article>
@@ -1128,29 +1008,29 @@ function PanelComparisonTable({
   ];
 
   return (
-    <div className="mt-4 overflow-x-auto rounded-[0.9rem] border border-white/10">
+    <div className="mt-4 overflow-x-auto rounded-card border border-white/10">
       <table className="min-w-[62rem] w-full text-left text-xs">
-        <thead className="bg-white/[0.05] text-white/50">
+        <thead className="bg-white/[0.05] text-ink-dim">
           <tr>
             {headers.map((header) => (
               <th key={header.key} className="px-3 py-2">
                 <button
                   type="button"
                   onClick={() => onSortKeyChange(header.key)}
-                  className={`font-semibold uppercase tracking-[0.14em] ${
-                    sortKey === header.key ? "text-cyan-100" : ""
+                  className={`font-semibold ${
+                    sortKey === header.key ? "text-sky-100" : ""
                   }`}
                 >
                   {header.label}
                   {sortKey === header.key
                     ? sortDirection === "asc"
-                      ? " asc"
-                      : " desc"
+                      ?" asc"
+                      :" desc"
                     : ""}
                 </button>
               </th>
             ))}
-            <th className="px-3 py-2 font-semibold uppercase tracking-[0.14em]">
+            <th className="px-3 py-2 font-semibold">
               Panels
             </th>
           </tr>
@@ -1159,11 +1039,11 @@ function PanelComparisonTable({
           {fits.map(({ fit, panel }) => (
             <tr
               key={panel.id}
-              className={`border-t border-white/8 text-white/68 ${
-                panel.id === selectedPanelId ? "bg-cyan-200/[0.08]" : ""
+              className={`border-t border-white/8 text-ink-muted ${
+                panel.id === selectedPanelId ? "bg-sky-200/[0.08]" : ""
               }`}
             >
-              <td className="px-3 py-2 font-semibold text-white">{panel.brand}</td>
+              <td className="px-3 py-2 font-semibold text-ink">{panel.brand}</td>
               <td className="px-3 py-2">{panel.model}</td>
               <td className="px-3 py-2">{panel.watts}W</td>
               <td className="px-3 py-2">
@@ -1185,113 +1065,127 @@ function PanelComparisonTable({
 
 function ReportOverviewTab({
   analysis,
+  onSelectQuestion,
   onSendReport,
+  selectedQuestion,
   values,
 }: {
   analysis: RoofAnalysis;
+  onSelectQuestion: (index: number) => void;
   onSendReport: () => void;
+  selectedQuestion: number;
   values: DashboardValues;
 }) {
-  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "unavailable">("idle");
-
-  const copyHomeownerSummary = async () => {
-    const summary = buildRedactedScenarioText({
-      label: "Planning baseline",
-      roof: getBroadRoofCategory(analysis.roofShape),
-      sun: getBroadSunCategory(analysis.shadingRisk),
-      system: getSystemRange(values.recommendedKw),
-    });
-
-    if (!navigator.clipboard?.writeText) {
-      setCopyStatus("unavailable");
-      return;
-    }
-
-    try {
-      await navigator.clipboard.writeText(summary);
-      setCopyStatus("copied");
-      trackEvent("scenario_share_copied", {
-        output: "overview_copy",
-        surface: "overview",
-      });
-    } catch {
-      setCopyStatus("unavailable");
-    }
-  };
+  const { advisor } = values;
+  const activeQuestion = advisor.questions[selectedQuestion] ?? advisor.questions[0];
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[1fr_0.75fr]">
-      <div className="grid grid-cols-2 gap-2 sm:gap-3">
-        <CompactInfo
-          icon={Sun}
-          source="solar-api"
-          title={`${values.advisor.suitability.score}/100`}
-          body="Preliminary Solar Readiness Score for this roof."
-          tone="gold"
-        />
-        <CompactInfo
-          icon={Grid3X3}
-          source="solar-api"
-          title={`${values.panelCount} panels`}
-          body={`${formatNumber(values.usableAreaSqFt)} square feet estimated solar-ready.`}
-        />
-        <CompactInfo
-          icon={Zap}
-          source="user-adjusted"
-          title={`${values.recommendedKw.toFixed(1)} kW`}
-          body="Estimated system power rating. One kW equals 1,000 watts of panel capacity; production also depends on sunlight, roof layout, and equipment."
-        />
-        <CompactInfo
-          icon={TrendingUp}
-          source="user-adjusted"
-          title={formatMoney(values.annualSavings)}
-          body="Estimated first-year bill savings using the monthly bill input."
-          tone="gold"
-        />
-      </div>
-      <div className="rounded-[1rem] border border-white/10 bg-black/20 p-4">
-        <p className="text-[0.62rem] font-semibold uppercase tracking-[0.24em] text-cyan-100/80">
-          AI Solar Advisor
-        </p>
-        <p className="mt-3 text-sm leading-6 text-white/66">
-          {values.advisor.summary}
-        </p>
-        <div className="mt-4 grid grid-cols-2 gap-2">
-          <MiniReadout
-            label="20-year savings"
-            note="Modeled net comparison of utility and solar costs over 20 years; not annual savings multiplied by 20."
-            source="modeled"
-            value={formatMoney(values.twentyYearSavings)}
-          />
-          <MiniReadout label="Estimated annual bill covered" source="modeled" value={`${values.energyOffsetPct}%`} />
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
+      <section aria-labelledby="overview-meaning-heading" className="rounded-card border border-ridge bg-night/50 p-4 sm:p-5">
+        <h3 id="overview-meaning-heading" className="text-lg font-semibold text-ink">
+          What this means for your home
+        </h3>
+        <p className="mt-2 text-[0.9375rem] leading-7 text-ink-muted">{advisor.summary}</p>
+
+        <div className="mt-5 border-t border-ridge pt-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <h4 className="text-base font-semibold text-ink">
+              Why the readiness score is {advisor.suitability.score}/100
+            </h4>
+            <span className="tag">{toSentenceCase(advisor.candidateLabel)}</span>
+          </div>
+          <p className="mt-1 text-sm leading-6 text-ink-dim">
+            A modeled score from your roof&rsquo;s usable area, sunlight and shade. It&rsquo;s our
+            estimate, not a rating from Google or an installer.
+          </p>
+          <ul className="mt-3 grid gap-2 text-sm leading-6">
+            {advisor.suitability.positiveFactors.slice(0, 3).map((factor) => (
+              <li key={factor} className="flex gap-2.5 text-ink-muted">
+                <span aria-hidden="true" className="mt-2 h-2 w-2 shrink-0 rounded-full bg-gain" />
+                {factor}
+              </li>
+            ))}
+            {advisor.suitability.limitingFactors.slice(0, 2).map((factor) => (
+              <li key={factor} className="flex gap-2.5 text-ink-muted">
+                <span aria-hidden="true" className="mt-2 h-2 w-2 shrink-0 rounded-full bg-sun" />
+                {factor}
+              </li>
+            ))}
+          </ul>
         </div>
-        <button
-          type="button"
-          onClick={onSendReport}
-          className="mt-4 inline-flex w-full items-center justify-center rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100"
-        >
-          Send My Full Report
-        </button>
-        <button
-          type="button"
-          onClick={copyHomeownerSummary}
-          className="mt-2 inline-flex w-full items-center justify-center rounded-full border border-white/12 bg-white/[0.06] px-5 py-3 text-sm font-semibold text-white/82 transition hover:bg-white/[0.1] hover:text-white"
-        >
-          {copyStatus === "copied" ? "Copied homeowner summary" : "Copy homeowner summary"}
-        </button>
-        <p aria-live="polite" className="mt-2 text-center text-xs text-cyan-100/72">
-          {copyStatus === "copied"
-            ? "Summary copied to your clipboard."
-            : copyStatus === "unavailable"
-              ? "Clipboard access is unavailable in this browser."
-              : "Share a short, plain-language snapshot of this estimate."}
-        </p>
-        <RedactedScenarioShareCard
-          roofShape={analysis.roofShape}
-          shadingRisk={analysis.shadingRisk}
-          systemKw={values.recommendedKw}
-        />
+
+        <div className="mt-5 border-t border-ridge pt-4">
+          <h4 className="text-base font-semibold text-ink">Common questions</h4>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {advisor.questions.map((item, index) => (
+              <button
+                key={item.question}
+                type="button"
+                aria-pressed={index === selectedQuestion}
+                onClick={() => onSelectQuestion(index)}
+                className={`min-h-11 rounded-full px-3.5 py-2 text-sm font-semibold ${
+                  index === selectedQuestion
+                    ? "bg-ink text-night"
+                    : "border border-ridge text-ink-muted hover:text-ink"
+                }`}
+              >
+                {item.question}
+              </button>
+            ))}
+          </div>
+          {activeQuestion ? (
+            <p className="mt-3 text-sm leading-6 text-ink-muted">{activeQuestion.answer}</p>
+          ) : null}
+        </div>
+      </section>
+
+      <div className="grid content-start gap-4">
+        <section aria-labelledby="overview-longterm-heading" className="rounded-card border border-ridge bg-night/50 p-4 sm:p-5">
+          <h3 id="overview-longterm-heading" className="text-lg font-semibold text-ink">
+            The longer view
+          </h3>
+          <dl className="mt-2 divide-y divide-ridge">
+            <OverviewStat
+              label={values.twentyYearSavings < 0 ? "20-year net loss" : "20-year savings"}
+              value={formatMoney(values.twentyYearSavings)}
+              note="Utility costs minus solar costs over 20 years. It isn't the yearly savings times 20."
+            />
+            <OverviewStat label="Electricity use covered by solar" value={`${values.energyOffsetPct}%`} />
+            <OverviewStat
+              label="Payback"
+              value={formatPaybackYears(values.paybackYears)}
+              note="Years until savings cover the system's net cost."
+            />
+          </dl>
+          <button type="button" onClick={onSendReport} className="btn btn-primary mt-4 w-full">
+            Send my full report
+          </button>
+        </section>
+
+        <details id="scenario-share-disclosure" className="group rounded-card border border-ridge bg-night/50">
+          <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-base font-semibold text-ink sm:px-5">
+            Share a privacy-safe summary
+            <ChevronDown aria-hidden="true" className="h-4 w-4 shrink-0 text-ink-dim transition-transform group-open:rotate-180" />
+          </summary>
+          <div className="px-4 pb-4 sm:px-5 sm:pb-5">
+            <RedactedScenarioShareCard
+              roofShape={analysis.roofShape}
+              shadingRisk={analysis.shadingRisk}
+              systemKw={values.recommendedKw}
+            />
+          </div>
+        </details>
       </div>
+    </div>
+  );
+}
+
+function OverviewStat({ label, note, value }: { label: string; note?: string; value: string }) {
+  return (
+    <div className="grid grid-cols-[1fr_auto] items-baseline gap-x-4 py-3">
+      <dt className="text-sm text-ink-muted">{label}</dt>
+      <dd className="text-lg font-semibold text-ink">{value}</dd>
+      {note ? <dd className="col-span-2 mt-1 text-xs leading-5 text-ink-dim">{note}</dd> : null}
     </div>
   );
 }
@@ -1307,43 +1201,43 @@ function RoofShadeTab({
 }) {
   return (
     <div className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
-      <div className="rounded-[1rem] border border-white/10 bg-black/20 p-4">
-        <p className="text-[0.62rem] font-semibold uppercase tracking-[0.24em] text-cyan-100/80">
+      <div className="rounded-card border border-white/10 bg-black/20 p-4">
+        <p className="text-xs font-semibold text-sky-100/80">
           Roof and sunlight model
         </p>
         <div className="mt-4 grid grid-cols-2 gap-2">
           <MiniReadout label="Sunlight" source="solar-api" value={`${formatNumber(values.sunlightHours)} hrs`} />
           <MiniReadout label="Roof area" source="solar-api" value={`${formatNumber(values.usableAreaSqFt)} sq ft`} />
           <MiniReadout label="Orientation" source="solar-api" value={analysis.roofSegments[0]?.label ?? "Primary"} />
-          <MiniReadout label="Shade risk" source="estimated" value={analysis.shadingRisk} />
+          <MiniReadout label="Shade risk" source="estimated" value={capitalize(analysis.shadingRisk)} />
         </div>
-        <p className="mt-4 text-sm leading-6 text-white/58">
+        <p className="mt-4 text-sm leading-6 text-ink-dim">
           Use the map layer toggles above the roof image to view panels, roof
           planes, and estimated sunlight quality. The heat layer is intentionally
           subtle so the roof remains readable.
         </p>
-        <div className="mt-4 rounded-[0.9rem] border border-white/8 bg-slate-950/34 p-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-white/76">
+        <div className="mt-4 rounded-card border border-white/8 bg-slate-950/34 p-3">
+          <p className="text-xs font-semibold text-ink-muted">
             Installer verification checklist
           </p>
-          <ul className="mt-3 grid gap-2 text-xs leading-5 text-white/58">
+          <ul className="mt-3 grid gap-2 text-xs leading-5 text-ink-dim">
             <li>Confirm roof measurements, condition, obstructions, and fire setbacks.</li>
             <li>Verify electrical service capacity and utility interconnection requirements.</li>
             <li>Confirm equipment, tariff, incentives, production, and final pricing.</li>
           </ul>
-          <p className="mt-3 text-xs leading-5 text-cyan-100/72">
+          <p className="mt-3 text-xs leading-5 text-sky-100/72">
             These items require an on-site installer review and are not editable in this preliminary homeowner model.
           </p>
         </div>
       </div>
-      <div className="rounded-[1rem] border border-white/10 bg-black/20 p-4">
-        <p className="text-[0.62rem] font-semibold uppercase tracking-[0.24em] text-white/70">
+      <div className="rounded-card border border-white/10 bg-black/20 p-4">
+        <p className="text-xs font-semibold text-ink-muted">
           Estimated sunlight quality
         </p>
-        <p className="mt-2 text-lg font-semibold text-white">
+        <p className="mt-2 text-lg font-semibold text-ink">
           {advisor.sunlightQuality.label} / {advisor.sunlightQuality.score}
         </p>
-        <p className="mt-3 text-sm leading-6 text-white/58">
+        <p className="mt-3 text-sm leading-6 text-ink-dim">
           {advisor.sunlightQuality.summary}
         </p>
         <div className="mt-4 grid gap-2">
@@ -1361,123 +1255,158 @@ function RoofShadeTab({
   );
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function OverviewTab({
-  values,
-}: {
-  values: DashboardValues;
-}) {
-  return (
-    <div className="grid gap-3 md:grid-cols-3">
-      <CompactInfo
-        icon={Sun}
-        source="solar-api"
-        title={`${formatNumber(values.sunlightHours)} hours`}
-        body="Usable sunlight per year based on the current roof profile."
-        tone="gold"
-      />
-      <CompactInfo
-        icon={Grid3X3}
-        source="solar-api"
-        title={`${values.panelCount} panels`}
-        body={`${formatNumber(values.usableAreaSqFt)} square feet available for solar panels.`}
-      />
-      <CompactInfo
-        icon={DollarSign}
-        source="modeled"
-        title={formatMoney(values.twentyYearSavings)}
-        body={values.twentyYearSavings < 0
-          ? "Estimated net loss over 20 years: this system costs more than staying with utility power under these assumptions."
-          : "Estimated net savings over 20 years."}
-        tone="gold"
-      />
-    </div>
-  );
-}
-
 function SavingsTab({
+  imageryDate,
   onMonthlyBillChange,
   values,
 }: {
-  onMonthlyBillChange: (monthlyBill: number) => void;
+  imageryDate?: string | null;
+  onMonthlyBillChange?: (monthlyBill: number) => void;
   values: DashboardValues;
 }) {
   return (
-    <div className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
-        <div className="rounded-[1rem] border border-white/10 bg-black/20 p-4">
-          <label htmlFor="savings-monthly-bill" className="block text-[0.62rem] font-semibold uppercase tracking-[0.22em] text-cyan-100/80">
-            Savings monthly bill
-          </label>
-          <select
-            id="savings-monthly-bill"
-            aria-label="Savings monthly bill"
-            value={values.monthlyBill}
-            onChange={(event) => onMonthlyBillChange(Number(event.target.value))}
-            className="mt-3 w-full rounded-full border border-white/12 bg-black/35 px-4 py-3 text-base font-semibold text-white outline-none transition focus:border-cyan-200/50"
-          >
-            {billOptionsIncluding(values.monthlyBill).map((value) => (
-              <option key={value} value={value} className="bg-slate-950">
-                {formatMoney(value)}
-              </option>
-            ))}
-          </select>
+    <div className="grid gap-4">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+        <section aria-labelledby="savings-bill-heading" className="rounded-card border border-ridge bg-night/50 p-4 sm:p-5">
+          <h3 id="savings-bill-heading" className="text-lg font-semibold text-ink">
+            Your monthly bill
+          </h3>
+          {onMonthlyBillChange ? (
+            <div className="mt-3">
+              <label htmlFor="savings-monthly-bill" className="field-label">
+                Monthly electric bill
+              </label>
+              <select
+                id="savings-monthly-bill"
+                value={values.monthlyBill}
+                onChange={(event) => onMonthlyBillChange(Number(event.target.value))}
+                className="field-input mt-2 font-semibold"
+              >
+                {billOptionsIncluding(values.monthlyBill).map((value) => (
+                  <option key={value} value={value} className="bg-night">
+                    {formatMoney(value)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <p className="mt-1 text-sm leading-6 text-ink-dim">
+              Based on a {formatMoney(values.monthlyBill)} average bill. Change it at the top of the page.
+            </p>
+          )}
           <BillComparisonCard values={values} />
-        </div>
-        <CompactInfo
-          icon={Zap}
-          source="user-adjusted"
-          title={`${values.recommendedKw.toFixed(1)} kW`}
-          body="System power rating from the current roof and bill profile. One kW equals 1,000 watts of panel capacity."
-        />
-        <CompactInfo
-          icon={TrendingUp}
-          source="user-adjusted"
-          title={formatMoney(values.annualSavings)}
-          body="Estimated first-year bill savings from the current bill and roof estimate."
-          tone="gold"
-        />
+        </section>
+        <section aria-labelledby="savings-time-heading" className="rounded-card border border-ridge bg-night/50 p-4 sm:p-5">
+          <h3 id="savings-time-heading" className="text-lg font-semibold text-ink">
+            Savings over time
+          </h3>
+          <div className="mt-3">
+            <EstimateTable rows={values.savingsRows} />
+          </div>
+          <p className="mt-3 text-xs leading-5 text-ink-dim">
+            Annual savings is a first-year estimate. The 20-year figures compare what you&rsquo;d pay the
+            utility with and without solar; they aren&rsquo;t the yearly savings times 20. Payback is the
+            time for savings to cover the system&rsquo;s net cost, not a loan term.
+          </p>
+        </section>
       </div>
-      <div className="grid gap-3">
-        <p className="rounded-[1rem] border border-white/10 bg-black/20 p-4 text-sm leading-6 text-white/62">
-          Annual savings is a modeled first-year estimate. 20-year cash savings
-          is a modeled net comparison of utility and solar costs over 20 years;
-          it is not annual savings multiplied by 20. Payback is the estimated
-          time for modeled savings to cover the current net system cost; it is
-          not the loan term.
-        </p>
-        <EstimateTable rows={values.savingsRows} />
-      </div>
+      <HowThisWasCalculated imageryDate={imageryDate} values={values} />
     </div>
   );
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function EnvironmentalTab({ values }: { values: DashboardValues }) {
+/** Every input behind the savings figures, in plain language, with sources. */
+function HowThisWasCalculated({
+  imageryDate,
+  values,
+}: {
+  imageryDate?: string | null;
+  values: DashboardValues;
+}) {
+  const imageryMonth = formatImageryMonth(imageryDate);
+  const rows: Array<{ term: string; detail: ReactNode }> = [
+    {
+      term: "Solar production",
+      detail: `${formatNumber(values.annualKwh)} kWh per year from ${values.panelCount} panels`,
+    },
+    {
+      term: "Electricity price",
+      detail: `$${ARIZONA_AVG_RATE_PER_KWH.toFixed(3)} per kWh, the Arizona residential average`,
+    },
+    {
+      term: "Power sent to the grid",
+      detail: (
+        <>
+          Credited at ${ARIZONA_EXPORT_CREDIT_PER_KWH.toFixed(4)} per kWh (
+          <a
+            className="text-sky-200 underline decoration-sky-200/40 underline-offset-4 hover:text-ink"
+            href={ARIZONA_EXPORT_CREDIT_SOURCE.url}
+            rel="noreferrer"
+            target="_blank"
+          >
+            {ARIZONA_EXPORT_CREDIT_SOURCE.label}
+          </a>
+          )
+        </>
+      ),
+    },
+    {
+      term: "Fixed charge",
+      detail: `$${ARIZONA_FIXED_MONTHLY_CHARGE} a month stays on your bill, the utility's basic service charge`,
+    },
+    {
+      term: "Solar used at home",
+      detail: `${Math.round(SOLAR_SELF_CONSUMPTION_SHARE * 100)}% of production is used as it's made; the rest is sent to the grid`,
+    },
+    {
+      term: "Installed cost",
+      detail: `$${values.costPerWatt.toFixed(2)} per watt before incentives`,
+    },
+    {
+      term: "Roof imagery",
+      detail: imageryMonth ? `Aerial photos taken ${imageryMonth}` : "Google didn't report when the photos were taken",
+    },
+  ];
+
   return (
-    <div className="grid gap-3 md:grid-cols-3">
-      <CompactInfo
-        icon={Leaf}
-        source="modeled"
-        title={`${values.carbonMetricTons.toFixed(1)} metric tons`}
-        body="Carbon dioxide avoided annually."
-        tone="gold"
-      />
-      <CompactInfo
-        icon={Car}
-        source="modeled"
-        title={`${values.carsRemoved.toFixed(1)} cars`}
-        body="Passenger cars removed from the road for one year."
-      />
-      <CompactInfo
-        icon={TreePine}
-        source="modeled"
-        title={`${values.treesEquivalent.toFixed(1)} trees`}
-        body="Trees grown for 10 years equivalent."
-        tone="gold"
-      />
-    </div>
+    <section
+      aria-labelledby="how-calculated-heading"
+      className="rounded-card border border-ridge bg-night/50 p-4 sm:p-5"
+    >
+      <h3 id="how-calculated-heading" className="text-lg font-semibold text-ink">
+        How this estimate was calculated
+      </h3>
+      <dl className="mt-3 grid gap-x-8 gap-y-3 sm:grid-cols-2">
+        {rows.map((row) => (
+          <div key={row.term}>
+            <dt className="text-sm font-semibold text-ink">{row.term}</dt>
+            <dd className="mt-0.5 text-sm leading-6 text-ink-muted">{row.detail}</dd>
+          </div>
+        ))}
+      </dl>
+      <p className="mt-4 text-xs leading-5 text-ink-dim">
+        Roof shape, sunlight and panel positions come from Google&rsquo;s Solar data for this address. Savings
+        and costs are our estimates from the figures above, so an installer&rsquo;s quote will differ.
+      </p>
+    </section>
   );
+}
+
+/** "2023-09-26" → "September 2023"; null when the date is missing or malformed. */
+function formatImageryMonth(imageryDate?: string | null) {
+  const match = imageryDate?.match(/^(\d{4})-(\d{2})/);
+  if (!match) {
+    return null;
+  }
+  const month = Number(match[2]);
+  if (month < 1 || month > 12) {
+    return null;
+  }
+  return new Date(Date.UTC(Number(match[1]), month - 1, 1)).toLocaleString("en-US", {
+    month: "long",
+    timeZone: "UTC",
+    year: "numeric",
+  });
 }
 
 function BillComparisonCard({ values }: { values: DashboardValues }) {
@@ -1486,19 +1415,13 @@ function BillComparisonCard({ values }: { values: DashboardValues }) {
   const solarPct = clamp((withSolar / currentBill) * 100, 0, 100);
 
   return (
-    <div className="mt-4 rounded-[1rem] border border-white/10 bg-black/22 p-3">
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-[0.58rem] font-semibold uppercase tracking-[0.2em] text-white/70">
-          Bill after solar
-        </p>
-        <SourceBadge source="user-adjusted" />
+    <div className="mt-4">
+      <div className="grid gap-3">
+        <BillBar label="Current bill" tone="cost" value={currentBill} widthPct={100} />
+        <BillBar label="With solar" tone="gain" value={withSolar} widthPct={solarPct} />
       </div>
-      <div className="mt-3 grid gap-2">
-        <BillBar label="Current bill" tone="rose" value={currentBill} widthPct={100} />
-        <BillBar label="With solar" tone="emerald" value={withSolar} widthPct={solarPct} />
-      </div>
-      <p className="mt-2 text-xs leading-5 text-cyan-100/74">
-        Estimated savings gap: {formatMoney(values.monthlySavings)} / mo
+      <p className="mt-3 text-sm font-semibold text-ink">
+        You&rsquo;d save about {formatMoney(values.monthlySavings)} a month
       </p>
     </div>
   );
@@ -1511,21 +1434,19 @@ function BillBar({
   widthPct,
 }: {
   label: string;
-  tone: "emerald" | "rose";
+  tone: "cost" | "gain";
   value: number;
   widthPct: number;
 }) {
-  const color = tone === "emerald" ? "bg-emerald-300" : "bg-rose-300";
-
   return (
     <div>
-      <div className="flex items-center justify-between text-xs text-white/58">
+      <div className="flex items-center justify-between text-sm text-ink-muted">
         <span>{label}</span>
-        <span className="font-semibold text-white">{formatMoney(value)}</span>
+        <span className="font-semibold text-ink">{formatMoney(value)}</span>
       </div>
-      <div className="mt-1 h-2 rounded-full bg-white/10">
+      <div className="mt-1.5 h-2.5 rounded-full bg-raised">
         <div
-          className={`h-full rounded-full ${color}`}
+          className={`h-full rounded-full ${tone === "gain" ? "bg-gain" : "bg-cost"}`}
           style={{ width: `${Math.max(4, widthPct)}%` }}
         />
       </div>
@@ -1608,17 +1529,17 @@ function FinancingTab({
       id="financing-calculator"
       className="grid scroll-mt-24 gap-4 lg:grid-cols-[0.95fr_1.05fr]"
     >
-      <div className="rounded-[1rem] border border-white/10 bg-black/20 p-4">
+      <div className="rounded-card border border-white/10 bg-black/20 p-4">
         <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
           <div>
-            <p className="text-[0.62rem] font-semibold uppercase tracking-[0.22em] text-cyan-100/78">
+            <p className="text-xs font-semibold text-sky-100/78">
               Financing comparison
             </p>
-            <h3 className="mt-2 text-lg font-semibold text-white">
+            <h3 className="mt-2 text-lg font-semibold text-ink">
               Illustrative financing scenarios
             </h3>
           </div>
-          <span className="rounded-full border border-amber-200/20 bg-amber-200/10 px-3 py-1.5 text-[0.62rem] font-semibold uppercase tracking-[0.14em] text-amber-100">
+          <span className="rounded-full border border-amber-200/20 bg-amber-200/10 px-3 py-1.5 text-xs font-semibold text-amber-100">
             Not a loan offer
           </span>
         </div>
@@ -1629,17 +1550,17 @@ function FinancingTab({
               type="button"
               aria-pressed={financingMode === mode}
               onClick={() => onFinancingModeChange(mode)}
-              className={`min-h-11 rounded-full px-3 py-2 text-[0.65rem] font-semibold uppercase tracking-[0.14em] transition ${
+              className={`min-h-11 rounded-full px-3 py-2 text-sm font-semibold ${
                 financingMode === mode
-                  ? "bg-white text-slate-950"
-                  : "text-white/58 hover:text-white"
+                  ? "bg-ink text-night"
+                  : "text-ink-muted hover:text-ink"
               }`}
             >
-              {mode === "lease" ? "Lease" : mode}
+              {mode === "buy" ? "Buy" : mode === "lease" ? "Lease" : "Loan"}
             </button>
           ))}
         </div>
-        <p className="mt-4 text-sm leading-7 text-white/62">
+        <p className="mt-4 text-sm leading-7 text-ink-muted">
           {financingCopy[financingMode]}
         </p>
         <p className="mt-3 text-xs leading-5 text-amber-100/78">
@@ -1649,7 +1570,7 @@ function FinancingTab({
           for new 2026 expenditures under current IRS guidance.
         </p>
         {financingMode === "loan" ? (
-          <div className="mt-4 grid gap-3 rounded-[1rem] border border-white/10 bg-slate-950/35 p-3">
+          <div className="mt-4 grid gap-3 rounded-card border border-white/10 bg-slate-950/35 p-3">
             <SliderField
               label="Down payment"
               max={30}
@@ -1667,15 +1588,15 @@ function FinancingTab({
               value={loanRate}
               onChange={setLoanRate}
             />
-            <label className="grid gap-1 text-xs text-white/58">
-              <span className="font-semibold uppercase tracking-[0.18em]">
+            <label className="grid gap-1 text-xs text-ink-dim">
+              <span className="font-semibold">
                 Term
               </span>
               <select
                 aria-label="Term"
                 value={loanTermYears}
                 onChange={(event) => setLoanTermYears(Number(event.target.value))}
-                className="rounded-full border border-white/12 bg-black/35 px-3 py-2 font-semibold text-white outline-none"
+                className="rounded-full border border-white/12 bg-black/35 px-3 py-2 font-semibold text-ink outline-none"
               >
                 {[10, 15, 20, 25].map((term) => (
                   <option key={term} value={term} className="bg-slate-950">
@@ -1684,16 +1605,16 @@ function FinancingTab({
                 ))}
               </select>
             </label>
-            <div className="rounded-[0.9rem] border border-white/8 bg-black/24 p-3 text-sm">
+            <div className="rounded-card border border-white/8 bg-black/24 p-3 text-sm">
               <div className="flex items-center justify-between">
-                <span className="text-white/56">Monthly loan payment</span>
-                <span className="font-semibold text-white">
+                <span className="text-ink-dim">Monthly loan payment</span>
+                <span className="font-semibold text-ink">
                   {formatMoney(monthlyLoanPayment)}
                 </span>
               </div>
               <div className="mt-2 flex items-center justify-between">
-                <span className="text-white/56">Monthly solar savings</span>
-                <span className="font-semibold text-white">
+                <span className="text-ink-dim">Monthly solar savings</span>
+                <span className="font-semibold text-ink">
                   {formatMoney(values.monthlySavings)}
                 </span>
               </div>
@@ -1714,15 +1635,15 @@ function FinancingTab({
         <div
           aria-label="Current financing scenario"
           aria-live="polite"
-          className="mt-4 rounded-[1rem] border border-cyan-200/15 bg-cyan-200/[0.06] p-3"
+          className="mt-4 rounded-card border border-sky-200/15 bg-sky-200/[0.06] p-3"
         >
-          <p className="text-[0.62rem] font-semibold uppercase tracking-[0.2em] text-cyan-100/80">
+          <p className="text-xs font-semibold text-sky-100/80">
             Current scenario
           </p>
-          <p className="mt-2 text-sm leading-6 text-white/78">
+          <p className="mt-2 text-sm leading-6 text-ink-muted">
             {formatMoney(values.monthlyBill)}/mo bill, {values.panelCount} panels ({values.recommendedKw.toFixed(1)} kW), {values.selectedPanel.brand} {values.selectedPanel.model}
           </p>
-          <p className="mt-1 text-sm font-semibold leading-6 text-white">
+          <p className="mt-1 text-sm font-semibold leading-6 text-ink">
             {financingMode === "loan" ? "Loan: " : ""}{currentScenarioValue}
           </p>
         </div>
@@ -1740,13 +1661,7 @@ function FinancingTab({
               />
             </>
           ) : null}
-          {financingMode === "lease" ? (
-            <>
-              <MiniReadout label="Upfront payment" source="illustrative" value="Provider quote required" />
-              <MiniReadout label="Monthly lease or PPA price" source="illustrative" value="Provider quote required" />
-              <MiniReadout label="Monthly bill savings" source="user-adjusted" value={formatMoney(values.monthlySavings)} />
-            </>
-          ) : null}
+          {financingMode === "lease" ? <LeaseCalculator monthlySavings={values.monthlySavings} /> : null}
           <MiniReadout
             label={financingMode === "buy" ? "Estimated cash cost" : "Selected down payment"}
             note={
@@ -1794,14 +1709,14 @@ function FinancingTab({
           aria-controls="financing-assumptions"
           aria-expanded={showDetails}
           onClick={() => setShowDetails((current) => !current)}
-          className="min-h-11 rounded-full border border-white/10 bg-white/[0.06] px-4 py-3 text-sm font-semibold text-white/78 transition hover:bg-white/[0.1] hover:text-white"
+          className="min-h-11 rounded-full border border-white/10 bg-white/[0.06] px-4 py-3 text-sm font-semibold text-ink-muted transition hover:bg-white/[0.1] hover:text-ink"
         >
           {showDetails ? "Hide assumptions and exclusions" : "View assumptions and exclusions"}
         </button>
         {showDetails ? (
           <div id="financing-assumptions" className="grid gap-4">
             {financingMode === "lease" ? (
-              <p className="rounded-[1rem] border border-amber-200/15 bg-amber-300/8 p-4 text-sm leading-6 text-amber-50/80">
+              <p className="rounded-card border border-amber-200/15 bg-amber-300/8 p-4 text-sm leading-6 text-amber-50/80">
                 A lease or PPA cannot be modeled responsibly without a provider
                 price, escalator, term, buyout schedule, and production guarantee.
               </p>
@@ -1812,6 +1727,56 @@ function FinancingTab({
           </div>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+/**
+ * A lease or PPA payment replaces part of the bill, so the visitor enters the
+ * quoted monthly price and sees what is left after paying it.
+ */
+function LeaseCalculator({ monthlySavings }: { monthlySavings: number }) {
+  const [quote, setQuote] = useState("");
+  const leasePrice = Number(quote);
+  const hasQuote = quote.trim() !== "" && Number.isFinite(leasePrice) && leasePrice >= 0;
+  const kept = monthlySavings - leasePrice;
+
+  return (
+    <div className="grid gap-3 rounded-control bg-night/60 p-3">
+      <label className="block">
+        <span className="field-label">Monthly price from your lease or PPA quote</span>
+        <span className="mt-2 flex items-center gap-2">
+          <span aria-hidden="true" className="text-ink-muted">$</span>
+          <input
+            type="number"
+            inputMode="decimal"
+            min={0}
+            step={1}
+            value={quote}
+            onChange={(event) => setQuote(event.target.value)}
+            placeholder="e.g. 120"
+            className="field-input"
+          />
+        </span>
+      </label>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <div className="rounded-control border border-ridge px-3 py-2.5">
+          <p className="text-sm text-ink-muted">Bill savings before the lease payment</p>
+          <p className="mt-1 text-lg font-semibold text-ink">{formatMoney(monthlySavings)}</p>
+        </div>
+        <div className="rounded-control border border-ridge px-3 py-2.5">
+          <p className="text-sm text-ink-muted">What you keep each month</p>
+          <p className={`mt-1 text-lg font-semibold ${hasQuote && kept < 0 ? "text-cost" : "text-ink"}`}>
+            {hasQuote ? formatMoney(kept) : "Enter your quote"}
+          </p>
+        </div>
+      </div>
+      {hasQuote && kept < 0 ? (
+        <p className="text-sm leading-6 text-ink-muted">
+          The lease payment is more than the modeled bill savings, so this lease would cost you about{" "}
+          {formatMoney(Math.abs(kept))} a month.
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -1834,10 +1799,10 @@ function SliderField({
   value: number;
 }) {
   return (
-    <label className="block text-xs text-white/58">
+    <label className="block text-xs text-ink-dim">
       <div className="flex items-center justify-between gap-3">
-        <span className="font-semibold uppercase tracking-[0.18em]">{label}</span>
-        <span className="font-semibold text-white">
+        <span className="font-semibold">{label}</span>
+        <span className="font-semibold text-ink">
           {value.toFixed(step < 1 ? 1 : 0)}
           {suffix}
         </span>
@@ -1850,7 +1815,7 @@ function SliderField({
         step={step}
         value={value}
         onChange={(event) => onChange(Number(event.target.value))}
-        className="mt-2 w-full accent-cyan-300"
+        className="mt-2 w-full accent-sky-300"
       />
     </label>
   );
@@ -1864,9 +1829,9 @@ function SendReportTab({
   return (
     <div id="generate-report" className="scroll-mt-24">
       {sendReportContent ?? (
-        <div className="rounded-[1rem] border border-white/10 bg-black/20 p-5">
-          <h3 className="text-xl font-semibold text-white">Send My Full Report</h3>
-          <p className="mt-2 text-sm leading-6 text-white/60">
+        <div className="rounded-card border border-white/10 bg-black/20 p-5">
+          <h3 className="text-xl font-semibold text-ink">Send My Full Report</h3>
+          <p className="mt-2 text-sm leading-6 text-ink-muted">
             The quote request form is unavailable in this preview, but the report model is ready.
           </p>
         </div>
@@ -1875,282 +1840,20 @@ function SendReportTab({
   );
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function NextStepsTab() {
-  return (
-    <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-center">
-      <div>
-        <h3 className="text-2xl font-semibold text-white">Ready to get started?</h3>
-        <p className="mt-2 max-w-2xl text-sm leading-7 text-white/62">
-          Review your solar report, compare your options, and connect with a
-          solar provider when you are ready.
-        </p>
-      </div>
-      <div className="flex flex-col gap-2 sm:flex-row lg:flex-col">
-        <a
-          href="#report-dashboard"
-          className="inline-flex items-center justify-center rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100"
-        >
-          Send My Full Report
-        </a>
-        <a
-          href="#how-it-works"
-          className="inline-flex items-center justify-center rounded-full border border-white/10 bg-black/20 px-5 py-3 text-sm font-semibold text-white/76 transition hover:text-white"
-        >
-          Learn About Going Solar
-        </a>
-      </div>
-    </div>
-  );
-}
-
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function GuidedProgressStrip() {
-  const steps = [
-    "Roof found",
-    "Solar-ready area estimated",
-    "Panel layout generated",
-    "Savings modeled",
-  ];
-
-  return (
-    <section className="rounded-[1.05rem] border border-white/10 bg-black/24 p-3">
-      <div className="grid gap-2 sm:grid-cols-4">
-        {steps.map((step, index) => (
-          <div key={step} className="flex items-center gap-2 text-xs text-white/62">
-            <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full border border-cyan-200/20 bg-cyan-200/10 text-[0.65rem] font-semibold text-cyan-100">
-              {index + 1}
-            </span>
-            <span>{step}</span>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function DataProvenanceBlock() {
-  return (
-    <section className="rounded-[1.05rem] border border-white/10 bg-black/24 p-3 text-xs leading-5 text-white/54">
-      <p className="font-semibold uppercase tracking-[0.24em] text-cyan-100/78">
-        Data sources
-      </p>
-      <p className="mt-2">
-        Roof geometry, imagery, sunlight, and panel candidates: Google Solar API.
-        Savings, cost, bill offset, and financing: modeled estimates using Arizona
-        assumptions and user inputs.
-      </p>
-    </section>
-  );
-}
-
-function SuitabilityExplanationCard({
-  advisor,
-}: {
-  advisor: SolarAdvisorProfile;
-}) {
-  return (
-    <div className="mt-4 rounded-[1.05rem] border border-white/10 bg-black/24 p-3">
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-[0.62rem] font-semibold uppercase tracking-[0.24em] text-white/70">
-          {advisor.suitability.headline}
-        </p>
-        <span className="shrink-0 rounded-full border border-cyan-200/18 bg-cyan-200/10 px-2.5 py-1 text-[0.58rem] font-semibold uppercase tracking-[0.16em] text-cyan-100">
-          {advisor.candidateLabel}
-        </span>
-      </div>
-      <div className="mt-3 grid gap-2">
-        {advisor.suitability.positiveFactors.slice(0, 3).map((factor) => (
-          <div key={factor} className="flex gap-2 text-xs leading-5 text-white/66">
-            <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-300" />
-            <span>{factor}</span>
-          </div>
-        ))}
-        {advisor.suitability.limitingFactors.slice(0, 2).map((factor) => (
-          <div key={factor} className="flex gap-2 text-xs leading-5 text-amber-100/80">
-            <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-300" />
-            <span>{factor}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function AiSolarAdvisorCard({
-  advisor,
-  onSelectQuestion,
-  selectedQuestion,
-}: {
-  advisor: SolarAdvisorProfile;
-  onSelectQuestion: (index: number) => void;
-  selectedQuestion: number;
-}) {
-  const activeQuestion =
-    advisor.questions[selectedQuestion] ?? advisor.questions[0];
-
-  return (
-    <section className="rounded-[1.15rem] border border-white/12 bg-slate-950/68 p-4 shadow-[0_12px_36px_rgba(0,0,0,0.22)]">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-[0.62rem] font-semibold uppercase tracking-[0.28em] text-cyan-100/82">
-            AI Solar Advisor
-          </p>
-          <h3 className="mt-2 text-base font-semibold text-white">
-            Plain-English roof guidance
-          </h3>
-        </div>
-        <SourceBadge source="estimated" />
-      </div>
-      <p className="mt-3 text-sm leading-6 text-white/64">
-        {advisor.summary}
-      </p>
-      <div className="mt-3 rounded-[0.9rem] border border-white/10 bg-black/22 p-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-[0.62rem] font-semibold uppercase tracking-[0.2em] text-white/70">
-            Estimated sunlight quality
-          </p>
-          <span className="rounded-full border border-emerald-200/18 bg-emerald-200/10 px-2.5 py-1 text-[0.56rem] font-semibold uppercase tracking-[0.14em] text-emerald-100">
-            {advisor.sunlightQuality.label} / {advisor.sunlightQuality.score}
-          </span>
-        </div>
-        <p className="mt-2 text-xs leading-5 text-white/52">
-          {advisor.sunlightQuality.summary}
-        </p>
-      </div>
-      <div className="mt-4 flex flex-wrap gap-2">
-        {advisor.questions.map((item, index) => (
-          <button
-            key={item.question}
-            type="button"
-            onClick={() => onSelectQuestion(index)}
-            className={`min-h-11 rounded-full px-3 py-2 text-[0.62rem] font-semibold uppercase tracking-[0.12em] transition ${
-              index === selectedQuestion
-                ? "bg-white text-slate-950"
-                : "border border-white/10 bg-black/20 text-white/58 hover:text-white"
-            }`}
-          >
-            {item.question}
-          </button>
-        ))}
-      </div>
-      {activeQuestion ? (
-        <div className="mt-3 rounded-[0.95rem] border border-cyan-200/12 bg-cyan-200/[0.055] p-3">
-          <p className="text-sm font-semibold text-white">
-            {activeQuestion.question}
-          </p>
-          <p className="mt-2 text-xs leading-5 text-white/62">
-            {activeQuestion.answer}
-          </p>
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
+/**
+ * Where a number came from is explained once, in "How this estimate was
+ * calculated". The only per-number marker kept is "Example", because an
+ * illustrative figure (loan terms, lease pricing) must never read as a quote.
+ */
 function SourceBadge({ source }: { source: MetricSource }) {
-  const styles: Record<MetricSource, string> = {
-    "solar-api": "border-cyan-200/18 bg-cyan-200/10 text-cyan-100",
-    manufacturer: "border-sky-200/18 bg-sky-200/10 text-sky-100",
-    modeled: "border-amber-200/18 bg-amber-200/10 text-amber-100",
-    "user-adjusted": "border-emerald-200/18 bg-emerald-200/10 text-emerald-100",
-    illustrative: "border-slate-200/18 bg-white/8 text-slate-200",
-    estimated: "border-fuchsia-200/18 bg-fuchsia-200/10 text-fuchsia-100",
-  };
-  const labels: Record<MetricSource, string> = {
-    "solar-api": "Solar API",
-    manufacturer: "Manufacturer",
-    modeled: "Modeled",
-    "user-adjusted": "User-adjusted",
-    illustrative: "Illustrative",
-    estimated: "Estimated",
-  };
-  const descriptions: Record<MetricSource, string> = {
-    "solar-api": "Based on available Google Solar API roof and sunlight data",
-    manufacturer: "Published by the named panel manufacturer",
-    modeled: "Calculated from stated assumptions and available report data",
-    "user-adjusted": "Updates when you change the bill or panel settings",
-    illustrative: "Example scenario only; not a quote or offer",
-    estimated: "Preliminary estimate requiring installer verification",
-  };
+  if (source !== "illustrative") {
+    return null;
+  }
 
   return (
-    <span
-      aria-label={`${labels[source]}: ${descriptions[source]}`}
-      title={descriptions[source]}
-      className={`shrink-0 rounded-full border px-2.5 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.12em] ${styles[source]}`}
-    >
-      {labels[source]}
+    <span title="Example scenario only; not a quote or offer" className="tag shrink-0">
+      Example
     </span>
-  );
-}
-
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function KeyMetric({
-  icon: Icon,
-  label,
-  source,
-  value,
-  tone = "cyan",
-}: {
-  icon: LucideIcon;
-  label: string;
-  source: MetricSource;
-  value: string;
-  tone?: "cyan" | "gold";
-}) {
-  const accent =
-    tone === "gold"
-      ? "bg-amber-200/12 text-amber-100"
-      : "bg-cyan-200/12 text-cyan-100";
-
-  return (
-    <div className="liquid-glass rounded-[1.2rem] p-3">
-      <div className="flex items-center gap-2">
-        <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-full ${accent}`}>
-          <Icon className="h-4 w-4" aria-hidden="true" />
-        </span>
-        <span className="text-[0.58rem] font-semibold uppercase tracking-[0.18em] text-white/70">
-          {label}
-        </span>
-      </div>
-      <div className="mt-2">
-        <SourceBadge source={source} />
-      </div>
-      <p className="mt-3 text-xl font-semibold text-white">{value}</p>
-    </div>
-  );
-}
-
-function CompactInfo({
-  icon: Icon,
-  source,
-  title,
-  body,
-  tone = "cyan",
-}: {
-  icon: LucideIcon;
-  source: MetricSource;
-  title: string;
-  body: string;
-  tone?: "cyan" | "gold";
-}) {
-  const accent =
-    tone === "gold"
-      ? "bg-amber-200/12 text-amber-100"
-      : "bg-cyan-200/12 text-cyan-100";
-
-  return (
-    <article className="min-w-0 rounded-[1rem] border border-white/10 bg-black/20 p-3 sm:p-4">
-      <span className={`grid h-9 w-9 place-items-center rounded-full ${accent}`}>
-        <Icon className="h-4 w-4" aria-hidden="true" />
-      </span>
-      <div className="mt-3">
-        <SourceBadge source={source} />
-      </div>
-      <h3 className="mt-3 break-words text-lg font-semibold text-white sm:mt-4 sm:text-xl">{title}</h3>
-      <p className="mt-2 text-xs leading-5 text-white/60 sm:text-sm sm:leading-6">{body}</p>
-    </article>
   );
 }
 
@@ -2166,15 +1869,13 @@ function MiniReadout({
   value: string;
 }) {
   return (
-    <div className="rounded-[0.9rem] border border-white/10 bg-black/22 px-3 py-3">
+    <div className="rounded-control bg-night/60 px-3 py-2.5">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-[0.62rem] font-semibold uppercase tracking-[0.18em] text-white/70">
-          {label}
-        </p>
+        <p className="text-sm text-ink-muted">{label}</p>
         <SourceBadge source={source} />
       </div>
-      <p className="mt-1 text-base font-semibold text-white">{value}</p>
-      {note ? <p className="mt-1 text-xs leading-5 text-white/60">{note}</p> : null}
+      <p className="mt-1 text-base font-semibold text-ink">{value}</p>
+      {note ? <p className="mt-1 text-xs leading-5 text-ink-dim">{note}</p> : null}
     </div>
   );
 }
@@ -2185,17 +1886,17 @@ function EstimateTable({
   rows: Array<{ label: string; source: MetricSource; value: number }>;
 }) {
   return (
-    <div className="overflow-hidden rounded-[1rem] border border-white/10 bg-black/20">
+    <div className="overflow-hidden rounded-card border border-white/10 bg-black/20">
       {rows.map((row) => (
         <div
           key={row.label}
           className="grid gap-1 border-b border-white/8 px-4 py-3 last:border-b-0 sm:grid-cols-[1fr_auto] sm:items-center"
         >
-          <span className="flex flex-wrap items-center gap-2 text-sm text-white/58">
+          <span className="flex flex-wrap items-center gap-2 text-sm text-ink-dim">
             {row.label}
             <SourceBadge source={row.source} />
           </span>
-          <span className="text-base font-semibold text-white">
+          <span className="text-base font-semibold text-ink">
             {formatMoney(row.value)}
           </span>
         </div>
@@ -2210,9 +1911,9 @@ function AssumptionTable({
   rows: Array<{ label: string; value: string }>;
 }) {
   return (
-    <div className="mt-4 overflow-hidden rounded-[0.9rem] border border-white/10 bg-black/20">
+    <div className="mt-4 overflow-hidden rounded-card border border-white/10 bg-black/20">
       <div className="border-b border-white/8 px-3 py-2">
-        <p className="text-[0.58rem] font-semibold uppercase tracking-[0.22em] text-white/70">
+        <p className="text-xs font-semibold text-ink-muted">
           Estimate assumptions
         </p>
       </div>
@@ -2221,8 +1922,8 @@ function AssumptionTable({
           key={row.label}
           className="grid gap-1 border-b border-white/8 px-3 py-2.5 last:border-b-0 sm:grid-cols-[1fr_auto]"
         >
-          <span className="text-xs text-white/54">{row.label}</span>
-          <span className="text-xs font-semibold text-white">{row.value}</span>
+          <span className="text-xs text-ink-dim">{row.label}</span>
+          <span className="text-xs font-semibold text-ink">{row.value}</span>
         </div>
       ))}
     </div>
@@ -2325,6 +2026,7 @@ function buildDashboardValues(
     advisor,
     annualKwh,
     annualSavings,
+    costPerWatt: selectedPanel.installedCostPerWatt + inverterCostAdderPerWatt,
     carbonMetricTons,
     carsRemoved,
     financingRows: [
@@ -2335,7 +2037,7 @@ function buildDashboardValues(
       { label: "Total 20-year savings", source: "illustrative" as const, value: financingCosts.totalSavings },
     ],
     financingAssumptions: [
-      { label: "Arizona electricity rate", value: `$${azRatePerKwh.toFixed(2)}/kWh` },
+      { label: "Arizona electricity rate", value: `${azRatePerKwh.toFixed(3)}/kWh` },
       {
         label: "Installed cost basis",
         value: `$${(selectedPanel.installedCostPerWatt + inverterCostAdderPerWatt).toFixed(2)}/W${
@@ -2350,9 +2052,9 @@ function buildDashboardValues(
             ? `${Math.round(federalCreditRate * 100)}% (eligibility not guaranteed)`
             : "0% for new 2026 expenditures under current IRS guidance",
       },
-      { label: "Remaining utility charges", value: "Not fully modeled; fixed and demand charges may remain" },
+      { label: "Fixed monthly charge", value: `${ARIZONA_FIXED_MONTHLY_CHARGE}/mo stays on the bill; demand charges are not modeled` },
       { label: "Production degradation", value: "Not modeled; installer production warranty required" },
-      { label: "Export compensation", value: "Not modeled; verify the applicable utility tariff" },
+      { label: "Export credit", value: `${ARIZONA_EXPORT_CREDIT_PER_KWH.toFixed(4)}/kWh (${ARIZONA_EXPORT_CREDIT_SOURCE.label})` },
       { label: "Dealer or origination fees", value: "Not modeled; confirm with the lender or installer" },
       { label: "Maintenance and replacement reserve", value: "Not modeled; verify warranty and long-term service terms" },
     ],
@@ -2434,6 +2136,15 @@ function calculateMonthlyLoanPayment(
   return Math.round(
     (principal * monthlyRate) / (1 - (1 + monthlyRate) ** -payments)
   );
+}
+
+/** "Good Candidate" -> "Good candidate", to match the sentence-case labels around it. */
+function toSentenceCase(value: string) {
+  return value ? value.charAt(0).toUpperCase() + value.slice(1).toLowerCase() : value;
+}
+
+function capitalize(value: string) {
+  return value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
 }
 
 function clamp(value: number, min: number, max: number) {

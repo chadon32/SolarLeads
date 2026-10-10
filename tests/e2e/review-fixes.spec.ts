@@ -45,8 +45,9 @@ test("web scenario sharing sends only the redacted allow-listed card", async ({ 
   await page.goto(`/estimate?address=${encodeURIComponent(TEST_ADDRESS)}`);
   await expect(page.locator("#report-dashboard")).toBeVisible();
 
+  await page.getByText("Share a privacy-safe summary").click();
   const card = page.getByTestId("redacted-scenario-share-card");
-  await expect(card).toContainText("Address-free by design");
+  await expect(card).toContainText("never includes your address");
   await card.getByRole("button", { name: "Share from this device" }).click();
   await expect.poll(() => page.evaluate(() => Boolean((window as Window & { __sharedScenarioPayload?: unknown }).__sharedScenarioPayload))).toBe(true);
 
@@ -65,7 +66,7 @@ test("unfavorable financing visibly reports a loss instead of zero savings", asy
   await page.goto(`/estimate?address=${encodeURIComponent(TEST_ADDRESS)}&bill=50&panels=19`);
   await expect(page.locator("#report-dashboard")).toBeVisible();
   await page.getByRole("tab", { name: "Financing", exact: true }).click();
-  await page.getByRole("button", { name: "buy", exact: true }).click();
+  await page.getByRole("button", { name: "Buy", exact: true }).click();
   await expect(page.getByText("20-year net loss", { exact: true })).toBeVisible();
   await expect(page.getByText(/This option costs more than utility-only power/)).toBeVisible();
   await page.getByText("20-year net loss", { exact: true }).scrollIntoViewIfNeeded();

@@ -16,7 +16,7 @@ test("Maya and Daniel can revise assumptions and compare financing modes", async
 
   await page.getByRole("tab", { name: "Financing" }).click();
   await expect(page.getByText("Not a loan offer", { exact: true })).toBeVisible();
-  for (const mode of ["buy", "Lease", "loan"]) {
+  for (const mode of ["Buy", "Lease", "Loan"]) {
     await page.getByRole("button", { name: mode, exact: true }).click();
   }
   await expect(page.getByText(/estimate|illustrative/i).first()).toBeVisible();

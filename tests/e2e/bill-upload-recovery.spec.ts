@@ -14,7 +14,7 @@ test("an oversized bill is rejected before transmitting the file", async ({ page
   });
   await expect(page.getByRole("alert").filter({ hasText: "4MB or smaller" })).toBeVisible();
   expect(uploads).toBe(0);
-  await expect(page.getByRole("button", { name: "Send My Full Report", exact: true }).last()).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Send my full report", exact: true }).last()).toBeEnabled();
 });
 
 test("the same file can be retried after a failed upload", async ({ page }) => {

@@ -6,10 +6,11 @@ import dynamic from "next/dynamic";
 
 import {
   ArrowRight,
-  ShieldCheck,
   Sparkles,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { billOptionsIncluding } from "@/lib/monthly-bill-options";
+import { createPortal } from "react-dom";
 import { AddressSearch } from "@/components/address-search";
 import { AnalysisSequence } from "@/components/analysis-sequence";
 import { SampleSolarReport } from "@/components/sample-solar-report";
@@ -21,7 +22,6 @@ import { faqItems } from "@/lib/faq";
 import {
   APP_NAME,
   APP_PRIVACY_COPY,
-  APP_TAGLINE,
 } from "@/lib/brand";
 import {
   DEFAULT_BATTERY_OPTION_ID,
@@ -35,7 +35,6 @@ import {
   DEFAULT_SOLAR_PANEL_ID,
   getInverterOption,
   getPanelById,
-  getShortPanelName,
   type InverterType,
 } from "@/lib/solarPanels";
 
@@ -72,7 +71,7 @@ const SolarReportDashboard = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="rounded-[1.5rem] border border-cyan-200/14 bg-slate-950/78 p-6 text-sm text-slate-300 shadow-[0_22px_75px_rgba(0,0,0,0.38)]">
+      <div className="rounded-card border border-sky-200/14 bg-slate-950/78 p-6 text-sm text-slate-300">
         Preparing your report workspace...
       </div>
     ),
@@ -87,27 +86,12 @@ const LeadCaptureForm = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div role="status" className="flex min-h-48 items-center justify-center rounded-3xl border border-white/10 bg-slate-950/80 p-6 text-center text-sm text-slate-300">
+      <div role="status" className="flex min-h-48 items-center justify-center rounded-card border border-white/10 bg-slate-950/80 p-6 text-center text-sm text-slate-300">
         Preparing your report form...
       </div>
     ),
   }
 );
-
-const featureCards = [
-  {
-    title: "Address-driven preview",
-    copy: "Choose a real Arizona property and we'll load the roof story that goes with that home.",
-  },
-  {
-    title: "Roof-aware placement",
-    copy: "Preview where panels may fit before deciding whether to request installer verification.",
-  },
-  {
-    title: "Fast homeowner estimate",
-    copy: "Your roof analysis, panel layout, and savings estimate all stay in one place.",
-  },
-] as const;
 
 type HomeClientProps = {
   initialAddress?: string;
@@ -235,6 +219,8 @@ export function HomeClient({
     useState<RoofAnalysisProof | null>(null);
   const [activePanelCount, setActivePanelCount] = useState(initialPanelCount);
   const [monthlyBill, setMonthlyBill] = useState(startingMonthlyBill);
+  const [backgroundControlSlot, setBackgroundControlSlot] = useState<HTMLDivElement | null>(null);
+  const reportHeadingRef = useRef<HTMLHeadingElement | null>(null);
   const [monthlyBillInput, setMonthlyBillInput] = useState(
     String(startingMonthlyBill)
   );
@@ -252,9 +238,6 @@ export function HomeClient({
   const [totalEstimateCount, setTotalEstimateCount] = useState<number | null>(
     null
   );
-  const [showProgressNav, setShowProgressNav] = useState(false);
-  const [activeProgressSection, setActiveProgressSection] =
-    useState("rooftop-analysis");
   const selectedLocation = useMemo(
     () =>
       Number.isFinite(initialLatitude) && Number.isFinite(initialLongitude) && initialAddress
@@ -427,46 +410,6 @@ export function HomeClient({
     solarData,
   ]);
 
-  useEffect(() => {
-    const sectionIds = [
-      "rooftop-analysis",
-      "panel-selection",
-      "financing-calculator",
-      "generate-report",
-    ];
-
-    const onScroll = () => {
-      setShowProgressNav(window.scrollY > 420);
-    };
-
-    onScroll();
-    window.addEventListener("scroll", onScroll, { passive: true });
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const visible = entries
-          .filter((entry) => entry.isIntersecting)
-          .sort((left, right) => right.intersectionRatio - left.intersectionRatio)[0];
-
-        if (visible?.target.id) {
-          setActiveProgressSection(visible.target.id);
-        }
-      },
-      { rootMargin: "-18% 0px -62% 0px", threshold: [0.1, 0.25, 0.5] }
-    );
-
-    sectionIds.forEach((id) => {
-      const element = document.getElementById(id);
-      if (element) {
-        observer.observe(element);
-      }
-    });
-
-    return () => {
-      window.removeEventListener("scroll", onScroll);
-      observer.disconnect();
-    };
-  }, [hasValidAnalysis, reportTab]);
 
   const reportMetrics = useMemo(() => {
     if (!solarData?.validSite) {
@@ -612,29 +555,20 @@ export function HomeClient({
     setShowReturnBanner(false);
   };
 
+  // When the estimate finishes loading, its heading takes focus so keyboard and
+  // screen-reader users start at the results, unless they have already moved on.
+  useEffect(() => {
+    if (!hasValidAnalysis) return;
+    const active = document.activeElement;
+    if (active && active !== document.body) return;
+    reportHeadingRef.current?.focus({ preventScroll: true });
+  }, [hasValidAnalysis]);
+
   const openSendReportTab = () => {
     setReportTab("send");
     window.requestAnimationFrame(() => {
       document
         .getElementById("report-dashboard")
-        ?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
-  };
-
-  const handleProgressNavClick = (sectionId: string) => {
-    if (sectionId === "panel-selection") {
-      setReportTab("panels");
-    } else if (sectionId === "financing-calculator") {
-      setReportTab("financing");
-    } else if (sectionId === "generate-report") {
-      setReportTab("send");
-    } else {
-      setReportTab("overview");
-    }
-
-    window.requestAnimationFrame(() => {
-      document
-        .getElementById(sectionId)
         ?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
   };
@@ -649,6 +583,10 @@ export function HomeClient({
     trackEvent("scenario_share_opened", { surface: "overview" });
     window.requestAnimationFrame(() => {
       window.requestAnimationFrame(() => {
+        const disclosure = document.getElementById("scenario-share-disclosure");
+        if (disclosure instanceof HTMLDetailsElement) {
+          disclosure.open = true;
+        }
         document
           .getElementById("scenario-share")
           ?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -729,24 +667,17 @@ export function HomeClient({
       : "#address-estimate";
   return (
     <main
-      className={`relative isolate min-h-screen overflow-x-hidden bg-black text-white ${
+      className={`relative isolate min-h-screen overflow-x-hidden bg-night text-ink ${
         nativeApp ? "native-app-estimate" : ""
       }`}
       data-native-app={nativeApp ? "ios" : undefined}
     >
-      {nativeApp ? null : <CinematicVideoBackground />}
-      {nativeApp ? null : (
+      {nativeApp || showAnalysis ? null : <CinematicVideoBackground controlSlot={backgroundControlSlot} />}
+      {nativeApp || showAnalysis ? null : (
         <>
-          <div className="pointer-events-none fixed inset-0 z-[1] bg-[radial-gradient(circle_at_22%_20%,rgba(103,232,249,0.16),transparent_34%),linear-gradient(90deg,rgba(0,0,0,0.78)_0%,rgba(0,0,0,0.34)_45%,rgba(0,0,0,0.72)_100%)]" />
-          <div className="pointer-events-none fixed inset-x-0 bottom-0 z-[1] h-1/2 bg-gradient-to-t from-black via-black/58 to-transparent" />
+          <div className="pointer-events-none fixed inset-0 z-[1] bg-[radial-gradient(circle_at_70%_12%,rgba(242,181,68,0.12),transparent_40%),linear-gradient(90deg,rgba(12,21,34,0.8)_0%,rgba(12,21,34,0.36)_45%,rgba(12,21,34,0.74)_100%)]" />
+          <div className="pointer-events-none fixed inset-x-0 bottom-0 z-[1] h-1/2 bg-gradient-to-t from-night via-night/60 to-transparent" />
         </>
-      )}
-      {nativeApp ? null : (
-        <ProgressNav
-          activeSection={activeProgressSection}
-          show={showProgressNav && hasValidAnalysis}
-          onNavigate={handleProgressNavClick}
-        />
       )}
       {!nativeApp && showReturnBanner && savedProgress ? (
         <ReturnBanner
@@ -763,61 +694,48 @@ export function HomeClient({
       >
         <nav className="liquid-glass relative z-20 mx-auto flex w-full max-w-6xl items-center justify-between gap-4 rounded-full px-4 py-3 sm:px-6 sm:py-4">
           <Link href="/" className="flex min-h-11 min-w-0 items-center gap-0 sm:gap-3">
-            <span className="hidden h-9 w-9 shrink-0 place-items-center rounded-full bg-cyan-200/14 text-cyan-100 shadow-[0_0_34px_rgba(103,232,249,0.22)] sm:grid">
+            <span className="hidden h-9 w-9 shrink-0 place-items-center rounded-full bg-sky-200/14 text-sky-100 sm:grid">
               <Sparkles className="h-4 w-4" aria-hidden="true" />
             </span>
-            <span className="min-w-0">
-              <span className="block truncate text-[0.64rem] font-semibold uppercase tracking-[0.18em] text-white sm:text-[0.68rem] sm:tracking-[0.34em]">
-                {APP_NAME}
-              </span>
-              <span className="hidden text-xs text-white/52 sm:block">
-                {APP_TAGLINE}
-              </span>
-            </span>
+            <span className="min-w-0 truncate text-base font-semibold text-ink">{APP_NAME}</span>
           </Link>
 
-          <div className="hidden items-center gap-7 text-sm font-medium text-white/68 lg:flex">
-            <a className="transition hover:text-white" href="#how-it-works">
-              How It Works
+          <div className="hidden items-center gap-6 whitespace-nowrap text-sm font-medium text-ink-muted lg:flex">
+            <a className="inline-flex min-h-11 items-center transition-colors hover:text-ink" href="#how-it-works">
+              How it works
             </a>
-            <a className="transition hover:text-white" href="#faq">
+            <a className="inline-flex min-h-11 items-center transition-colors hover:text-ink" href="#faq">
               FAQ
             </a>
-            <Link className="transition hover:text-white" href="/solar-guide">
+            <Link className="inline-flex min-h-11 items-center transition-colors hover:text-ink" href="/solar-guide">
               Solar guide
             </Link>
-            <a
-              className="transition hover:text-white"
-              href={hasValidAnalysis ? "#solar-workspace" : "#address-estimate"}
-            >
-              Analysis
-            </a>
+            <Link className="inline-flex min-h-11 items-center transition-colors hover:text-ink" href="/about">
+              About
+            </Link>
           </div>
 
           <div className="flex shrink-0 items-center gap-2">
             <details className="relative lg:hidden">
               <summary
                 aria-label="Open site navigation"
-                className="grid h-11 w-11 cursor-pointer list-none place-items-center rounded-full border border-white/10 bg-white/[0.06] text-sm font-semibold text-white"
+                className="grid h-11 w-11 cursor-pointer list-none place-items-center rounded-full border border-white/10 bg-white/[0.06] text-sm font-semibold text-ink"
               >
                 Menu
               </summary>
-              <div className="absolute right-0 top-14 z-30 grid min-w-48 gap-1 rounded-[1rem] border border-white/10 bg-slate-950/92 p-2 text-left text-sm text-white shadow-[0_18px_55px_rgba(0,0,0,0.4)] backdrop-blur-xl">
-                <a className="flex min-h-11 items-center rounded-[0.8rem] px-3 py-2 hover:bg-white/[0.06]" href="#how-it-works">
-                  How It Works
+              <div className="absolute right-0 top-14 z-30 grid min-w-48 gap-1 rounded-card border border-ridge bg-dusk p-2 shadow-overlay text-left text-sm text-ink backdrop-blur-xl">
+                <a className="flex min-h-11 items-center rounded-card px-3 py-2 hover:bg-white/[0.06]" href="#how-it-works">
+                  How it works
                 </a>
-                <a className="flex min-h-11 items-center rounded-[0.8rem] px-3 py-2 hover:bg-white/[0.06]" href="#faq">
+                <a className="flex min-h-11 items-center rounded-card px-3 py-2 hover:bg-white/[0.06]" href="#faq">
                   FAQ
                 </a>
-                <Link className="flex min-h-11 items-center rounded-[0.8rem] px-3 py-2 hover:bg-white/[0.06]" href="/solar-guide">
+                <Link className="flex min-h-11 items-center rounded-card px-3 py-2 hover:bg-white/[0.06]" href="/solar-guide">
                   Solar guide
                 </Link>
-                <a
-                  className="flex min-h-11 items-center rounded-[0.8rem] px-3 py-2 hover:bg-white/[0.06]"
-                  href={hasValidAnalysis ? "#solar-workspace" : "#address-estimate"}
-                >
-                  Analysis
-                </a>
+                <Link className="flex min-h-11 items-center rounded-card px-3 py-2 hover:bg-white/[0.06]" href="/about">
+                  About
+                </Link>
               </div>
             </details>
             <a
@@ -828,12 +746,12 @@ export function HomeClient({
                   openSendReportTab();
                 }
               }}
-              className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-3 text-sm font-semibold text-slate-950 shadow-[0_18px_55px_rgba(255,255,255,0.18)] transition hover:-translate-y-0.5 hover:bg-cyan-100 sm:px-5"
+              className="btn btn-primary gap-2 px-4 py-3 sm:px-5"
             >
               <span className="hidden sm:inline">
-                {hasValidAnalysis ? "Send My Full Report" : "Analyze My Roof"}
+                {hasValidAnalysis ? "Send my full report" : "Analyze my roof"}
               </span>
-              <span className="sm:hidden">{hasValidAnalysis ? "Send" : "Analyze"}</span>
+              <span className="sm:hidden">{hasValidAnalysis ? "Send report" : "Analyze"}</span>
             </a>
           </div>
         </nav>
@@ -841,95 +759,100 @@ export function HomeClient({
         <div className={`flex flex-1 items-center ${heroCompact ? "py-5" : "py-7 sm:py-10 lg:py-14"}`}>
           <div className={`mx-auto text-center ${heroCompact ? "max-w-5xl" : "max-w-4xl"}`}>
             {heroCompact ? (
-              <div className="mx-auto mb-4 grid gap-3 rounded-[1.5rem] border border-cyan-200/12 bg-slate-950/58 px-4 py-4 text-left shadow-[0_18px_60px_rgba(2,8,20,0.36)] backdrop-blur-xl md:grid-cols-[1fr_auto] md:items-center md:px-5">
-                <div className="min-w-0">
-                  <p className="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-100/82">
-                    {hasValidAnalysis ? "Report model ready" : "Generating roof model"}
-                  </p>
-                  <h1 className="mt-2 line-clamp-2 break-words text-xl font-semibold text-white md:text-2xl">
-                    {formatDisplayAddress(selectedAddress)}
-                  </h1>
-                  <p className="mt-1 text-sm leading-6 text-white/64">
-                    {hasValidAnalysis
-                      ? "Review the roof workspace below, then send the full PDF report."
-                      : "Satellite imagery and Solar API roof data are loading."}
-                  </p>
-                  {reportMetrics ? (
-                    <div
-                      data-testid="report-kpi-grid"
-                      className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4"
+              <div className="mx-auto mb-4 rounded-card border border-ridge bg-dusk px-4 py-4 text-left sm:px-6 sm:py-5">
+                <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between lg:gap-6">
+                  <div className="min-w-0">
+                    <p className="text-sm text-ink-dim">
+                      {hasValidAnalysis ? "Preliminary solar estimate" : "Building your roof model…"}
+                    </p>
+                    <h1
+                      ref={reportHeadingRef}
+                      tabIndex={-1}
+                      className="mt-1 line-clamp-2 break-words text-xl font-semibold text-ink outline-none sm:text-2xl md:text-3xl"
                     >
-                      <ReportMiniMetric label="Solar readiness" value={`${reportMetrics.score}/100`} />
-                      <ReportMiniMetric label="Panels" value={`${reportMetrics.panelCount}`} />
-                      <ReportMiniMetric label="Annual savings" value={formatMoney(reportMetrics.annualSavings)} />
-                      <ReportMiniMetric label="System size" value={`${reportMetrics.systemKw.toFixed(1)} kW`} />
+                      {formatDisplayAddress(selectedAddress)}
+                    </h1>
+                  </div>
+                  {hasValidAnalysis ? (
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 lg:shrink-0 lg:justify-end">
+                      <button type="button" onClick={openSendReportTab} className="btn btn-primary hidden sm:inline-flex">
+                        Send my full report
+                      </button>
+                      <button
+                        type="button"
+                        onClick={openScenarioShare}
+                        className="btn btn-quiet"
+                      >
+                        Share estimate
+                      </button>
+                      <button type="button" onClick={handleNewAddress} className="btn btn-quiet">
+                        Try another address
+                      </button>
                     </div>
                   ) : null}
                 </div>
-                {hasValidAnalysis ? (
-                  <button
-                    type="button"
-                    onClick={openSendReportTab}
-                    className="inline-flex min-h-11 w-full items-center justify-center rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 shadow-[0_16px_45px_rgba(255,255,255,0.14)] transition hover:-translate-y-0.5 hover:bg-cyan-100 md:w-auto"
-                  >
-                    Send My Full Report
-                  </button>
+                {reportMetrics ? (
+                  <div className="mt-3 grid gap-4 border-t border-ridge pt-4 md:grid-cols-[1fr_auto] md:items-end md:gap-8">
+                    <dl data-testid="report-kpi-grid" className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4">
+                      <ReportMiniMetric label="Solar readiness" value={`${reportMetrics.score}/100`} />
+                      <ReportMiniMetric label="Panels" value={`${reportMetrics.panelCount}`} />
+                      <ReportMiniMetric label="Annual savings" value={formatMoney(reportMetrics.annualSavings)} highlight />
+                      <ReportMiniMetric label="System size" value={`${reportMetrics.systemKw.toFixed(1)} kW`} />
+                    </dl>
+                    <div className="flex items-center gap-3 md:justify-end">
+                      <label htmlFor="estimate-monthly-bill" className="text-sm text-ink-muted">
+                        Monthly electric bill
+                      </label>
+                      <select
+                        id="estimate-monthly-bill"
+                        value={monthlyBill}
+                        onChange={(event) => applyMonthlyBill(Number(event.target.value))}
+                        className="field-input w-auto min-w-28 font-semibold"
+                      >
+                        {billOptionsIncluding(monthlyBill).map((value) => (
+                          <option key={value} value={value} className="bg-night">
+                            {formatMoney(value)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
                 ) : null}
               </div>
             ) : (
               <>
-            <div className="liquid-glass mx-auto inline-flex items-center gap-3 rounded-full px-4 py-2 text-sm font-medium text-white/78">
-              <span className="h-2 w-2 rounded-full bg-cyan-300 shadow-[0_0_20px_rgba(103,232,249,0.85)]" />
+            <div className="liquid-glass mx-auto inline-flex items-center gap-3 rounded-full px-4 py-2 text-sm font-medium text-ink-muted">
+              <span aria-hidden="true" className="h-2 w-2 rounded-full bg-sun" />
               Free Arizona solar calculator
             </div>
 
             <h1
-              className="mt-5 max-w-5xl text-[2.6rem] leading-[0.9] tracking-[-0.05em] text-white drop-shadow-[0_14px_50px_rgba(0,0,0,0.48)] sm:mt-6 sm:text-5xl md:text-6xl lg:text-7xl"
-              style={{ fontFamily: "var(--font-editorial), serif" }}
+              className="font-editorial mt-5 max-w-5xl text-[2.6rem] leading-[0.9] tracking-[-0.05em] text-ink drop-shadow-[0_14px_50px_rgba(0,0,0,0.48)] sm:mt-6 sm:text-5xl md:text-6xl lg:text-7xl"
             >
-              See your roof&rsquo;s solar potential{" "}
-              <span className="block italic text-white/90">
-                in 3D.
-              </span>
+              See your roof&rsquo;s solar potential in 3D.
             </h1>
 
-            <p className="mx-auto mt-4 max-w-2xl text-[0.95rem] leading-6 text-white/68 sm:mt-5 sm:text-lg sm:leading-7">
-              Enter your Arizona address to explore a preliminary panel layout,
-              sunlight, and estimated savings. 3D roof detail depends on available
-              data. Free to use, with installer contact only if you request it.
+            <p className="mx-auto mt-4 max-w-2xl text-[0.95rem] leading-6 text-ink-muted sm:mt-5 sm:text-lg sm:leading-7">
+              See where panels fit, how much sun your roof gets, and what you could
+              save. Free, and an installer contacts you only if you ask.
             </p>
               </>
             )}
 
             {!hasValidAnalysis ? (
               <>
-            {!heroCompact && !nativeApp ? <SampleSolarReport /> : null}
             <div
               id="address-estimate"
-              className={`liquid-glass liquid-glass-unclipped rounded-[1.75rem] p-4 shadow-[0_24px_80px_rgba(0,0,0,0.34)] sm:p-5 ${
+              className={`liquid-glass liquid-glass-unclipped rounded-card p-4 sm:p-5 ${
                 heroCompact ? "mt-0" : "mt-5 sm:mt-7"
               }`}
             >
-              <AddressSearch
-                selectedAddress={selectedAddress}
-                onSelect={handleAddressSelect}
-              />
-              {totalEstimateCount && totalEstimateCount >= 10 ? (
-                <div className="mt-3 hidden rounded-[1.15rem] border border-emerald-300/12 bg-emerald-300/[0.055] px-4 py-3 text-sm text-emerald-50 sm:block">
-                  Join{" "}
-                  <span className="font-semibold">
-                    {formatNumber(Math.floor(totalEstimateCount / 10) * 10)}+
-                  </span>{" "}
-                  Arizona homeowners who have requested a solar report through
-                  Solartelligence.
-                </div>
-              ) : null}
-              <label className="mt-4 block rounded-[1.35rem] border border-white/10 bg-black/18 px-4 py-3 text-left">
-                <span className="block text-[0.62rem] font-semibold uppercase tracking-[0.26em] text-cyan-100/78">
+              <label className="mb-4 block rounded-card border border-ridge bg-raised/80 px-4 py-3 text-left">
+                <span className="block text-sm font-semibold text-ink">
                   What is your monthly electric bill?
                 </span>
                 <span className="mt-2 flex items-center gap-3">
-                  <span className="text-sm font-semibold text-white/70">$</span>
+                  <span className="text-sm font-semibold text-ink-muted">$</span>
                   <input
                     id="monthly-bill-input"
                     type="number"
@@ -939,13 +862,13 @@ export function HomeClient({
                     value={monthlyBillInput}
                     onChange={(event) => updateMonthlyBill(event.target.value)}
                     placeholder="200"
-                    className="min-h-11 min-w-0 flex-1 bg-transparent text-lg font-semibold text-white outline-none placeholder:text-white/35"
+                    className="min-h-11 min-w-0 flex-1 bg-transparent text-lg font-semibold text-ink outline-none placeholder:text-ink-dim"
                     inputMode="numeric"
-                    aria-describedby={`monthly-bill-help${monthlyBillError ? " monthly-bill-error" : ""}`}
+                    aria-describedby={`monthly-bill-help${monthlyBillError ?" monthly-bill-error" : ""}`}
                     aria-invalid={Boolean(monthlyBillError)}
                   />
                 </span>
-                <span id="monthly-bill-help" className="mt-1 block text-xs leading-5 text-white/58">
+                <span id="monthly-bill-help" className="mt-1 block text-xs leading-5 text-ink-dim">
                   Enter a whole-dollar average from $1 to $5,000. Used to personalize savings.
                 </span>
               </label>
@@ -953,17 +876,31 @@ export function HomeClient({
                 <div
                   id="monthly-bill-error"
                   role="alert"
-                  className="mt-3 rounded-[1.05rem] border border-amber-200/28 bg-amber-200/10 px-4 py-3 text-left text-sm leading-6 text-amber-100"
+                  className="mb-4 rounded-card border border-amber-200/28 bg-amber-200/10 px-4 py-3 text-left text-sm leading-6 text-amber-100"
                 >
                   <p className="font-semibold text-amber-50">Check your monthly bill before continuing.</p>
                   <p>{monthlyBillError}</p>
                 </div>
               ) : null}
+              <AddressSearch
+                selectedAddress={selectedAddress}
+                onSelect={handleAddressSelect}
+              />
+              {totalEstimateCount && totalEstimateCount >= 10 ? (
+                <div className="mt-3 hidden rounded-card border border-emerald-300/12 bg-emerald-300/[0.055] px-4 py-3 text-sm text-emerald-50 sm:block">
+                  Join{" "}
+                  <span className="font-semibold">
+                    {formatNumber(Math.floor(totalEstimateCount / 10) * 10)}+
+                  </span>{" "}
+                  Arizona homeowners who have requested a solar report through
+                  Solartelligence.
+                </div>
+              ) : null}
               {selectedAddress ? (
                 <>
-                  <div className="liquid-glass mt-4 rounded-[1.35rem] px-4 py-3 text-sm text-white/72">
+                  <div className="liquid-glass mt-4 rounded-card px-4 py-3 text-sm text-ink-muted">
                     Selected property:{" "}
-                    <span className="font-semibold text-white">
+                    <span className="font-semibold text-ink">
                       {formatDisplayAddress(selectedAddress)}
                     </span>
                   </div>
@@ -974,28 +911,14 @@ export function HomeClient({
               ) : null}
             </div>
 
+            {!heroCompact && !nativeApp ? <SampleSolarReport /> : null}
             {!heroCompact ? (
               <>
-            <div className="mt-5 flex flex-col items-center justify-center gap-3 sm:flex-row">
-              <a
-                href={reportCtaHref}
-                className="liquid-glass inline-flex w-full items-center justify-center gap-2 rounded-full px-6 py-4 text-sm font-semibold text-white shadow-[0_22px_70px_rgba(103,232,249,0.18)] transition hover:-translate-y-0.5 sm:w-auto"
-              >
-                Analyze My Roof
+            <div className="mt-6 flex justify-center">
+              <a href={reportCtaHref} className="btn btn-primary w-full px-6 sm:w-auto">
+                Analyze my roof
                 <ArrowRight className="h-4 w-4" aria-hidden="true" />
               </a>
-            </div>
-
-            <p className="mt-3 text-center text-xs font-semibold text-amber-200/90 sm:text-sm">
-              Check current Arizona incentives and modeled solar savings
-            </p>
-
-            <div className="mt-5 hidden flex-wrap justify-center gap-2 text-[0.68rem] font-semibold uppercase tracking-[0.28em] text-white/70 sm:flex">
-              {["Free", "No account needed", "Optional installer contact", "Arizona only"].map((pill) => (
-                <span key={pill} className="liquid-glass rounded-full px-3 py-2">
-                  {pill}
-                </span>
-              ))}
             </div>
               </>
             ) : null}
@@ -1019,7 +942,7 @@ export function HomeClient({
             <div
               id="monthly-bill-error"
               role="alert"
-              className="mb-4 rounded-[1.05rem] border border-amber-200/28 bg-amber-200/10 px-4 py-3 text-left text-sm leading-6 text-amber-100"
+              className="mb-4 rounded-card border border-amber-200/28 bg-amber-200/10 px-4 py-3 text-left text-sm leading-6 text-amber-100"
             >
               <p className="font-semibold text-amber-50">Check your monthly bill before continuing.</p>
               <p>
@@ -1027,59 +950,9 @@ export function HomeClient({
               </p>
             </div>
           ) : null}
-          {nativeApp ? null : (
-          <div className="mb-4 flex flex-col justify-between gap-4 rounded-[1.4rem] border border-white/10 bg-slate-950/62 px-4 py-4 shadow-[0_16px_50px_rgba(2,8,20,0.3)] backdrop-blur-xl sm:px-5 sm:flex-row sm:items-end">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-100/82">
-                {hasValidAnalysis ? "Preliminary roof model ready" : "Solar report loading"}
-              </p>
-              <h2
-                className="mt-2 text-2xl leading-none tracking-[-0.035em] text-white md:text-4xl"
-                style={{ fontFamily: "var(--font-editorial), serif" }}
-              >
-                Roof analysis workspace
-              </h2>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-white/68">
-                {formatDisplayAddress(selectedAddress)}
-              </p>
-              {hasValidAnalysis ? (
-                <p className="mt-1 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-100/70">
-                  Panel: {getShortPanelName(selectedPanel)}
-                </p>
-              ) : null}
-            </div>
-            <div className="flex flex-col gap-2 sm:flex-row">
-              {hasValidAnalysis ? (
-                <button
-                  type="button"
-                  onClick={openScenarioShare}
-                  aria-controls="scenario-share"
-                  aria-expanded={reportTab === "overview"}
-                  className="inline-flex min-h-11 items-center justify-center rounded-full border border-white/12 bg-white/[0.06] px-5 py-3 text-sm font-semibold text-white transition hover:-translate-y-0.5 hover:bg-white/[0.1]"
-                >
-                  Share estimate
-                </button>
-              ) : null}
-              <button
-                type="button"
-                onClick={handleNewAddress}
-                className="inline-flex min-h-11 items-center justify-center rounded-full border border-white/12 bg-white/[0.06] px-5 py-3 text-sm font-semibold text-white transition hover:-translate-y-0.5 hover:bg-white/[0.1]"
-              >
-                Try another address
-              </button>
-            </div>
-          </div>
-          )}
-
           <div className="grid w-full min-w-0 max-w-full grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-12">
-            <div id="rooftop-analysis" className={`${hasValidAnalysis ? "lg:col-span-7" : "lg:col-span-12"} w-full min-w-0 max-w-full scroll-mt-24`}>
-              <div
-                className={`min-w-0 overflow-hidden border border-cyan-200/14 bg-slate-950/78 shadow-[0_22px_75px_rgba(0,0,0,0.38)] backdrop-blur-xl ${
-                  nativeApp
-                    ? "rounded-[1.15rem] p-1"
-                    : "rounded-[1.5rem] p-2 sm:p-3"
-                }`}
-              >
+            <div id="rooftop-analysis" className="w-full min-w-0 max-w-full scroll-mt-24 lg:col-span-12">
+              <div className="min-w-0">
                 <SolarAnalysis
                   key={selectedAddress}
                   address={selectedAddress}
@@ -1107,8 +980,7 @@ export function HomeClient({
                 analysis={roofAnalysis}
                 activePanelCount={activePanelCount}
                 monthlyBill={monthlyBill}
-                onActivePanelCountChange={setActivePanelCount}
-                onMonthlyBillChange={applyMonthlyBill}
+                onMonthlyBillChange={nativeApp ? applyMonthlyBill : undefined}
                 onTabChange={setReportTab}
                 selectedInverterType={selectedInverterType}
                 selectedPanelId={selectedPanelId}
@@ -1140,14 +1012,11 @@ export function HomeClient({
         </section>
       ) : null}
 
-      {nativeApp ? null : <OptionalTrustSections />}
+      {nativeApp || hasValidAnalysis ? null : <OptionalTrustSections />}
 
       {nativeApp ? null : (
-      <footer className="relative z-10 mx-auto flex w-full max-w-7xl flex-col items-center justify-center gap-3 px-5 pb-10 text-center text-sm text-white/64 sm:px-7 md:px-10 lg:px-12">
-        <div className="liquid-glass inline-flex max-w-3xl items-center gap-3 rounded-full px-5 py-3">
-          <ShieldCheck className="h-4 w-4 text-cyan-100" aria-hidden="true" />
-          <span>{APP_PRIVACY_COPY}</span>
-        </div>
+      <footer className="relative z-10 mx-auto flex w-full max-w-7xl flex-col items-center justify-center gap-3 px-5 pb-10 text-center text-sm text-ink-muted sm:px-7 md:px-10 lg:px-12">
+        <p className="max-w-2xl text-sm leading-6 text-ink-dim">{APP_PRIVACY_COPY}</p>
         <nav aria-label="Legal information" className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-xs">
           <Link className="inline-flex min-h-11 items-center underline-offset-4 hover:underline" href="/solar-guide">
             Arizona solar guide
@@ -1158,17 +1027,21 @@ export function HomeClient({
           <Link className="inline-flex min-h-11 items-center underline-offset-4 hover:underline" href="/terms">
             Estimate terms
           </Link>
+          <Link className="inline-flex min-h-11 items-center underline-offset-4 hover:underline" href="/about">
+            About
+          </Link>
           <a className="inline-flex min-h-11 items-center underline-offset-4 hover:underline" href="mailto:reports@solartelligence.com">
             Support
           </a>
         </nav>
+        <div ref={setBackgroundControlSlot} />
       </footer>
       )}
     </main>
   );
 }
 
-function CinematicVideoBackground() {
+function CinematicVideoBackground({ controlSlot }: { controlSlot: HTMLElement | null }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const restartTimeoutRef = useRef<number | null>(null);
@@ -1382,68 +1255,24 @@ function CinematicVideoBackground() {
         onPlaying={handlePlaying}
         onTimeUpdate={handleTimeUpdate}
         onEnded={handleEnded}
-        className={`h-full w-full translate-y-[17%] object-cover ${
+        className={`h-full w-full object-cover object-[50%_80%] ${
           videoSourceReady ? "opacity-0" : "opacity-100"
         }`}
       />
     </div>
-    {!videoFailed ? (
-      <button
-        type="button"
-        onClick={togglePlayback}
-        className={`print-static-ui fixed bottom-[max(0.75rem,env(safe-area-inset-bottom))] right-3 z-40 min-h-11 rounded-full border border-white/20 bg-slate-950/95 px-4 py-2 text-xs font-semibold text-white shadow-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-200 ${videoSourceReady ? "" : "md:hidden motion-reduce:hidden"}`}
-      >
-        {!videoSourceReady ? "Play background" : userPaused ? "Resume background" : "Pause background"}
-      </button>
-    ) : null}
-    </>
-  );
-}
-
-function ProgressNav({
-  activeSection,
-  onNavigate,
-  show,
-}: {
-  activeSection: string;
-  onNavigate: (sectionId: string) => void;
-  show: boolean;
-}) {
-  const items = [
-    { id: "rooftop-analysis", label: "Roof Analysis" },
-    { id: "panel-selection", label: "Panel Selection" },
-    { id: "financing-calculator", label: "Financing" },
-    { id: "generate-report", label: "Get Report" },
-  ];
-
-  return (
-    <div
-      // Safe-area padding keeps this bar clear of the Dynamic Island in the iOS
-      // app: it is `fixed`, so the safe-area padding on #main-content does not
-      // reach it.
-      inert={!show}
-      aria-hidden={!show}
-      className={`print-static-ui fixed inset-x-0 top-0 z-50 hidden border-b border-white/10 bg-slate-950/88 px-5 py-2 pt-[max(0.5rem,env(safe-area-inset-top))] shadow-[0_14px_42px_rgba(0,0,0,0.26)] backdrop-blur-xl transition-opacity duration-300 md:block ${
-        show ? "opacity-100" : "pointer-events-none opacity-0"
-      }`}
-    >
-      <div className="mx-auto flex max-w-7xl items-center justify-center gap-2">
-        {items.map((item) => (
+    {!videoFailed && controlSlot
+      ? createPortal(
           <button
-            key={item.id}
             type="button"
-            onClick={() => onNavigate(item.id)}
-            className={`rounded-full px-4 py-2 text-[0.68rem] font-semibold uppercase tracking-[0.18em] transition ${
-              activeSection === item.id
-                ? "bg-[#a5f3fc] text-[#07111d]"
-                : "bg-white/[0.055] text-white/62 hover:bg-white/[0.1] hover:text-white"
-            }`}
+            onClick={togglePlayback}
+            className={`print-static-ui inline-flex min-h-11 items-center rounded-full border border-white/15 px-4 text-xs font-semibold text-ink-muted hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-200 ${videoSourceReady ? "" : "md:hidden motion-reduce:hidden"}`}
           >
-            {item.label}
-          </button>
-        ))}
-      </div>
-    </div>
+            {!videoSourceReady ? "Play background" : userPaused ? "Resume background" : "Pause background"}
+          </button>,
+          controlSlot
+        )
+      : null}
+    </>
   );
 }
 
@@ -1457,10 +1286,10 @@ function ReturnBanner({
   onRestore: () => void;
 }) {
   return (
-    <div className="print-static-ui relative z-[70] mx-4 mt-4 flex max-w-5xl flex-col gap-3 rounded-[1.3rem] border border-cyan-200/18 bg-slate-950/92 px-4 py-3 text-sm text-white shadow-[0_24px_80px_rgba(0,0,0,0.42)] backdrop-blur-xl sm:fixed sm:inset-x-4 sm:bottom-[max(1rem,env(safe-area-inset-bottom))] sm:mx-auto sm:mt-0 sm:flex-row sm:items-center sm:justify-between">
-      <p className="leading-6 text-white/72">
+    <div className="print-static-ui relative z-[70] mx-4 mt-4 flex max-w-5xl flex-col gap-3 rounded-card border border-sky-200/18 bg-slate-950/92 px-4 py-3 text-sm text-ink backdrop-blur-xl sm:fixed sm:inset-x-4 sm:bottom-[max(1rem,env(safe-area-inset-bottom))] sm:mx-auto sm:mt-0 sm:flex-row sm:items-center sm:justify-between">
+      <p className="leading-6 text-ink-muted">
         Welcome back. Your estimate for{" "}
-        <span className="font-semibold text-white">
+        <span className="font-semibold text-ink">
           {formatDisplayAddress(address)}
         </span>{" "}
         is saved.
@@ -1469,14 +1298,14 @@ function ReturnBanner({
         <button
           type="button"
           onClick={onRestore}
-          className="min-h-11 rounded-full bg-cyan-200 px-4 py-2 text-xs font-semibold text-slate-950 transition hover:bg-white"
+          className="btn btn-primary min-h-11 px-4 py-2 text-xs"
         >
           Continue my estimate
         </button>
         <button
           type="button"
           onClick={onDismiss}
-          className="min-h-11 rounded-full border border-white/10 bg-white/[0.055] px-4 py-2 text-xs font-semibold text-white/72 transition hover:bg-white/[0.1] hover:text-white"
+          className="min-h-11 rounded-full border border-white/10 bg-white/[0.055] px-4 py-2 text-xs font-semibold text-ink-muted transition hover:bg-white/[0.1] hover:text-ink"
         >
           Start fresh
         </button>
@@ -1485,126 +1314,73 @@ function ReturnBanner({
   );
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function SectionIntro({
-  eyebrow,
-  title,
-  copy,
-}: {
-  eyebrow: string;
-  title: string;
-  copy: string;
-}) {
-  const displayTitle =
-    eyebrow === "Generate report"
-      ? "Send your full solar report."
-      : title;
-  const displayCopy =
-    eyebrow === "Generate report"
-      ? "Enter your details once and we will email the full PDF report for this roof model."
-      : copy;
-
-  return (
-    <div className="mx-auto max-w-4xl text-center">
-      <span className="liquid-glass inline-flex rounded-full px-4 py-2 text-xs font-semibold uppercase tracking-[0.34em] text-cyan-100/82">
-        {eyebrow}
-      </span>
-      <h2
-        className="mt-4 text-3xl leading-[0.98] tracking-[-0.04em] text-white md:text-5xl"
-        style={{ fontFamily: "var(--font-editorial), serif" }}
-      >
-        {displayTitle}
-      </h2>
-      <p className="mx-auto mt-3 max-w-2xl text-sm leading-6 text-white/62 sm:text-base">
-        {displayCopy}
-      </p>
-    </div>
-  );
-}
-
 function OptionalTrustSections() {
   return (
-    <section className="relative z-10 mx-auto w-full max-w-7xl px-5 pb-8 sm:px-7 md:px-10 lg:px-12">
-      <div className="liquid-glass rounded-[1.5rem] p-4 shadow-[0_18px_60px_rgba(0,0,0,0.3)] sm:p-5">
-        <div id="how-it-works" className="border-b border-white/10 pb-5">
-          <div className="rounded-[1rem] px-2 py-3 text-left sm:px-3">
-            <span className="block text-xs font-semibold uppercase tracking-[0.28em] text-cyan-100/82">
-              Why it works
-            </span>
-            <h2 className="mt-2 block text-xl font-semibold text-white">
-              What your Arizona solar estimate includes
-            </h2>
-          </div>
-          <div className="grid gap-3 px-2 pt-2 sm:px-3 lg:grid-cols-3">
-            {featureCards.map((card) => (
-              <FeatureCard key={card.title} title={card.title} copy={card.copy} />
-            ))}
-          </div>
-        </div>
-
-        <TrustIndicatorRow />
-
-        <div className="mx-2 mt-5 rounded-[1rem] border border-cyan-200/15 bg-slate-950/65 p-4 text-sm leading-6 text-slate-300 sm:mx-3">
-          <p>
-            Solartelligence provides preliminary analysis, not an installation
-            quote or engineering plan. Start with your address and average monthly
-            bill, compare the available panel and financing scenarios, then request
-            an emailed report. Installer follow-up is a separate, optional choice.
-          </p>
-          <Link href="/solar-guide" className="mt-2 inline-flex min-h-11 items-center font-semibold text-cyan-100 underline decoration-cyan-200/40 underline-offset-4 hover:text-white">
-            How to read your roof and savings estimate
+    <section className="relative z-10 mx-auto w-full max-w-4xl px-5 pb-12 pt-6 sm:px-7">
+      <div id="how-it-works" className="scroll-mt-24">
+        <h2 className="font-editorial text-3xl text-ink md:text-4xl">How it works</h2>
+        <ol className="mt-5 grid gap-3 sm:grid-cols-3">
+          {howItWorksSteps.map((step, index) => (
+            <li key={step.title} className="card">
+              <span
+                aria-hidden="true"
+                className="grid h-8 w-8 place-items-center rounded-full bg-sun text-sm font-bold text-on-sun"
+              >
+                {index + 1}
+              </span>
+              <h3 className="mt-3 text-lg font-semibold text-ink">{step.title}</h3>
+              <p className="mt-1 text-sm leading-6 text-ink-muted">{step.copy}</p>
+            </li>
+          ))}
+        </ol>
+        <p className="mt-5 text-sm leading-6 text-ink-muted">
+          It&rsquo;s a preliminary estimate, not an installation quote. Roof shape and sunlight come from
+          Google&rsquo;s Solar data; savings use Arizona utility rates.{" "}
+          <Link
+            href="/solar-guide"
+            className="font-semibold text-sky-200 underline decoration-sky-200/40 underline-offset-4 hover:text-ink"
+          >
+            How to read your estimate
           </Link>
-        </div>
-
-        <FaqSection />
+        </p>
       </div>
+
+      <FaqSection />
     </section>
   );
 }
 
-function TrustIndicatorRow() {
-  return (
-    <div className="mx-2 mt-5 flex flex-wrap items-center justify-center gap-3 rounded-[1rem] border border-white/8 bg-white/[0.04] px-4 py-3 text-xs font-semibold text-white/62 sm:mx-3">
-      <span>Roof data via</span>
-      <span className="rounded-full border border-cyan-200/18 bg-cyan-300/10 px-3 py-1 text-cyan-100">
-        Google Solar API
-      </span>
-      <span className="hidden text-white/25 sm:inline">•</span>
-      <span>SSL secured</span>
-      <span className="hidden text-white/25 sm:inline">•</span>
-      <span>Installer contact is optional</span>
-      <span className="hidden text-white/25 sm:inline">•</span>
-      <span>Preliminary estimates</span>
-    </div>
-  );
-}
+const howItWorksSteps = [
+  {
+    title: "Enter your bill and address",
+    copy: "Your average monthly electric bill and an Arizona address. No account needed.",
+  },
+  {
+    title: "See your roof in 3D",
+    copy: "We model your roof from aerial data, place panels where they fit, and estimate your savings.",
+  },
+  {
+    title: "Get the full report",
+    copy: "We email you a PDF. An installer contacts you only if you ask.",
+  },
+];
 
 function FaqSection() {
   return (
-    <div
-      id="faq"
-      className="mx-2 mt-5 scroll-mt-24 rounded-[1.15rem] border border-white/8 bg-slate-950/40 p-3 sm:mx-3"
-    >
-      <div className="px-2 py-2">
-        <h2 className="text-xs font-semibold uppercase tracking-[0.28em] text-cyan-100/82">
-          Common questions
-        </h2>
-      </div>
-      <div className="grid gap-2">
+    <div id="faq" className="mt-12 scroll-mt-24">
+      <h2 className="font-editorial text-3xl text-ink md:text-4xl">Common questions</h2>
+      <div className="mt-5 grid gap-2">
         {faqItems.map((item) => (
-          <details
-            key={item.question}
-            className="group rounded-[0.95rem] border border-white/8 bg-white/[0.035]"
-          >
+          <details key={item.question} className="group rounded-card border border-ridge bg-dusk">
             {/* Padding lives on the summary, not the details wrapper: only the
                 summary toggles the disclosure, so padding on the parent looked
                 tappable but wasn't, leaving a ~20px target on touch screens. */}
-            <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-semibold text-white">
+            <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-base font-semibold text-ink">
               {item.question}
-              <span className="text-cyan-100 group-open:hidden">+</span>
-              <span className="hidden text-cyan-100 group-open:inline">-</span>
+              <span aria-hidden="true" className="text-lg text-sun group-open:hidden">+</span>
+              <span aria-hidden="true" className="hidden text-lg text-sun group-open:inline">−</span>
             </summary>
-            <p className="px-4 pb-3 text-sm leading-6 text-white/66">{item.answer}</p>
+            <p className="px-4 pb-4 text-[0.9375rem] leading-7 text-ink-muted">{item.answer}</p>
           </details>
         ))}
       </div>
@@ -1612,13 +1388,19 @@ function FaqSection() {
   );
 }
 
-function ReportMiniMetric({ label, value }: { label: string; value: string }) {
+function ReportMiniMetric({
+  highlight = false,
+  label,
+  value,
+}: {
+  highlight?: boolean;
+  label: string;
+  value: string;
+}) {
   return (
-    <div className="rounded-[0.85rem] border border-white/10 bg-black/28 px-3 py-2">
-      <p className="text-[0.62rem] font-semibold uppercase tracking-[0.16em] text-white/55">
-        {label}
-      </p>
-      <p className="mt-1 font-semibold text-white">{value}</p>
+    <div className="min-w-0">
+      <dt className="text-sm text-ink-dim">{label}</dt>
+      <dd className={`mt-0.5 text-xl font-semibold tabular-nums ${highlight ? "text-sun" : "text-ink"}`}>{value}</dd>
     </div>
   );
 }
@@ -1635,14 +1417,4 @@ function formatNumber(value: number) {
   return new Intl.NumberFormat("en-US", {
     maximumFractionDigits: 0,
   }).format(value);
-}
-
-function FeatureCard({ title, copy }: { title: string; copy: string }) {
-  return (
-    <article className="liquid-glass h-full rounded-[1.35rem] p-5 shadow-[0_18px_60px_rgba(0,0,0,0.3)]">
-      <div className="mb-5 h-px w-20 bg-gradient-to-r from-cyan-200/80 to-transparent" />
-      <h3 className="text-xl font-semibold tracking-tight text-white">{title}</h3>
-      <p className="mt-3 text-sm leading-6 text-white/62">{copy}</p>
-    </article>
-  );
 }

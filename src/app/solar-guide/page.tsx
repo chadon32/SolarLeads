@@ -24,7 +24,7 @@ const REVIEWED_DATE = "September 23, 2026";
 
 export default function SolarGuidePage() {
   return (
-    <main className="solar-guide-page min-h-screen bg-[radial-gradient(ellipse_at_top_left,rgba(34,211,238,0.12),transparent_50%),#05070b] px-5 py-8 text-slate-100 sm:px-8 sm:py-12">
+    <main className="solar-guide-page min-h-screen bg-[radial-gradient(ellipse_at_top_left,rgba(124,203,230,0.12),transparent_50%),#0c1522] px-5 py-8 text-ink sm:px-8 sm:py-12">
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify({
         "@context": "https://schema.org",
         "@type": "BreadcrumbList",
@@ -34,28 +34,28 @@ export default function SolarGuidePage() {
         ],
       }) }} />
       <article className="mx-auto max-w-4xl">
-        <nav aria-label="Breadcrumb" className="mb-8 flex flex-wrap items-center gap-2 text-sm text-slate-300">
-          <Link href="/" className="inline-flex min-h-11 items-center underline underline-offset-4 hover:text-white">Home</Link>
+        <nav aria-label="Breadcrumb" className="mb-8 flex flex-wrap items-center gap-2 text-sm text-ink-muted">
+          <Link href="/" className="inline-flex min-h-11 items-center underline underline-offset-4 hover:text-ink">Home</Link>
           <span aria-hidden="true">/</span>
           <span aria-current="page">Arizona solar guide</span>
         </nav>
         <header>
-          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-cyan-200">{APP_NAME} / Homeowner guide</p>
-          <h1 className="mt-4 max-w-3xl text-4xl leading-tight tracking-tight sm:text-6xl" style={{ fontFamily: "var(--font-editorial), serif" }}>
+          <p className="text-xs font-semibold text-sky-200">{APP_NAME} / Homeowner guide</p>
+          <h1 className="font-editorial mt-4 max-w-3xl text-4xl leading-tight tracking-tight sm:text-6xl">
             Is your Arizona home a good fit for solar?
           </h1>
-          <p className="mt-5 max-w-2xl text-lg leading-8 text-slate-300">
+          <p className="mt-5 max-w-2xl text-lg leading-8 text-ink-muted">
             Start with the roof. Then check the numbers. This guide explains what
             a preliminary solar estimate can tell you, what it cannot, and what
             to verify before choosing an installer.
           </p>
-          <p className="mt-3 text-sm text-slate-400">Reviewed {REVIEWED_DATE}. Educational guidance, not an installation quote.</p>
-          <Link href="/#address-estimate" className="mt-6 inline-flex min-h-12 items-center justify-center rounded-full bg-cyan-200 px-6 py-3 font-semibold text-slate-950 transition hover:bg-white">
+          <p className="mt-3 text-sm text-ink-dim">Reviewed {REVIEWED_DATE}. Educational guidance, not an installation quote.</p>
+          <Link href="/#address-estimate" className="btn btn-primary mt-6 min-h-12 px-6 py-3">
             Check my roof with the free calculator
           </Link>
         </header>
         <nav aria-label="On this page" className="my-9 flex flex-wrap gap-2 border-y border-white/10 py-5">
-          {topics.map(([id, label]) => <a key={id} href={`#${id}`} className="inline-flex min-h-11 items-center rounded-full border border-white/15 px-4 py-2 text-sm text-cyan-100 hover:bg-white/5">{label}</a>)}
+          {topics.map(([id, label]) => <a key={id} href={`#${id}`} className="inline-flex min-h-11 items-center rounded-full border border-white/15 px-4 py-2 text-sm text-sky-100 hover:bg-white/5">{label}</a>)}
         </nav>
         <GuideSection id="start" title="1. Start with your address and electricity use">
           <p>Use the calculator on the homepage, select a suggested Arizona address, and enter your average monthly electric bill. If you have a full year of bills, use the average rather than only a high summer month.</p>
@@ -73,7 +73,7 @@ export default function SolarGuidePage() {
               ["kWh: energy", "An amount of electricity used or generated over time. Compare the same time periods."],
               ["Bill savings", "Modeled utility-cost reduction. Check remaining utility charges and any loan payments separately."],
               ["Payback", "A modeled recovery period based on costs and savings assumptions, not a guaranteed return."],
-            ].map(([term, definition]) => <div key={term} className="rounded-2xl border border-white/10 bg-white/[0.035] p-4"><dt className="font-semibold text-white">{term}</dt><dd className="mt-2">{definition}</dd></div>)}
+            ].map(([term, definition]) => <div key={term} className="rounded-card border border-white/10 bg-white/[0.035] p-4"><dt className="font-semibold text-ink">{term}</dt><dd className="mt-2">{definition}</dd></div>)}
           </dl>
           <p>Compare the same panel count, equipment, battery choice, and payment method across scenarios. Request an itemized installed quote and verify current incentives and eligibility rather than treating a calculator assumption as a promised discount.</p>
         </GuideSection>
@@ -93,7 +93,7 @@ export default function SolarGuidePage() {
               Cost values are market planning inputs, not panel prices, bids, financing approvals, or an installer quote. Compare itemized proposals with the same equipment and scope.
             </AssumptionCard>
           </div>
-          <div className="rounded-2xl border border-amber-200/20 bg-amber-200/[0.06] p-5 text-sm leading-7 text-amber-50">
+          <div className="rounded-card border border-amber-200/20 bg-amber-200/[0.06] p-5 text-sm leading-7 text-amber-50">
             <p className="font-semibold">Policy-sensitive numbers need a fresh check.</p>
             <p className="mt-2">This guide does not promise a current federal or state incentive. Confirm eligibility, timing, and tax treatment with current government and utility sources before using an incentive in your decision.</p>
           </div>
@@ -101,8 +101,8 @@ export default function SolarGuidePage() {
         <GuideSection id="utilities" title="5. Check your actual utility plan">
           <p>Do not choose a utility based only on your city. Check your bill. Solar production, energy used in the home, and exported energy are different inputs to the final bill.</p>
           <div className="grid gap-4 sm:grid-cols-2">
-            <div className="rounded-2xl border border-cyan-200/15 bg-cyan-200/[0.035] p-5"><h3 className="mb-2 font-semibold text-white">APS customers</h3><p>APS says grid-connected solar customers continue to receive a monthly bill. Confirm the applicable plan, export credits, and remaining charges using <Source href="https://www.aps.com/solar">APS rooftop solar guidance</Source>.</p></div>
-            <div className="rounded-2xl border border-cyan-200/15 bg-cyan-200/[0.035] p-5"><h3 className="mb-2 font-semibold text-white">SRP customers</h3><p>SRP provides solar-plan information and a calculator through My Account. Review your options in <Source href="https://www.srpnet.com/energy-savings-rebates/home/residential-solar/rooftop-solar">SRP&apos;s homeowner solar guide</Source>.</p></div>
+            <div className="rounded-card border border-sky-200/15 bg-sky-200/[0.035] p-5"><h3 className="mb-2 font-semibold text-ink">APS customers</h3><p>APS says grid-connected solar customers continue to receive a monthly bill. Confirm the applicable plan, export credits, and remaining charges using <Source href="https://www.aps.com/solar">APS rooftop solar guidance</Source>.</p></div>
+            <div className="rounded-card border border-sky-200/15 bg-sky-200/[0.035] p-5"><h3 className="mb-2 font-semibold text-ink">SRP customers</h3><p>SRP provides solar-plan information and a calculator through My Account. Review your options in <Source href="https://www.srpnet.com/energy-savings-rebates/home/residential-solar/rooftop-solar">SRP&apos;s homeowner solar guide</Source>.</p></div>
           </div>
           <p>For another utility, use its current solar and interconnection guidance. These links take you to the utilities&apos; own resources, not an installation quote from Solartelligence.</p>
         </GuideSection>
@@ -114,14 +114,14 @@ export default function SolarGuidePage() {
             <li>What is included in the installed price, warranty, and financing cost?</li>
             <li>What remains on the utility bill after solar?</li>
           </ul>
-          <p>Read the <Link href="/terms" className="text-cyan-100 underline underline-offset-4">estimate limitations</Link> and <Link href="/privacy" className="text-cyan-100 underline underline-offset-4">privacy notice</Link> before sharing your information.</p>
+          <p>Read the <Link href="/terms" className="text-sky-100 underline underline-offset-4">estimate limitations</Link> and <Link href="/privacy" className="text-sky-100 underline underline-offset-4">privacy notice</Link> before sharing your information.</p>
         </GuideSection>
-        <section id="worksheet" className="print-sheet scroll-mt-8 rounded-3xl border border-cyan-200/20 bg-slate-950/80 p-6 sm:p-8">
+        <section id="worksheet" className="print-sheet scroll-mt-8 rounded-card border border-sky-200/20 bg-slate-950/80 p-6 sm:p-8">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-cyan-200">Printable worksheet</p>
-              <h2 className="mt-3 text-2xl font-semibold tracking-tight text-white">Questions to take to an installer</h2>
-              <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-300">Use this after reviewing your preliminary report. It helps you compare a site visit and itemized proposals without putting your address, bill, or report ID into a public link.</p>
+              <p className="text-xs font-semibold text-sky-200">Printable worksheet</p>
+              <h2 className="mt-3 text-2xl font-semibold tracking-tight text-ink">Questions to take to an installer</h2>
+              <p className="mt-3 max-w-2xl text-sm leading-7 text-ink-muted">Use this after reviewing your preliminary report. It helps you compare a site visit and itemized proposals without putting your address, bill, or report ID into a public link.</p>
             </div>
             <PrintWorksheetButton />
           </div>
@@ -141,21 +141,21 @@ export default function SolarGuidePage() {
               "Cash price, loan APR and term, lease or PPA escalation, and fees",
               "Current incentive eligibility confirmed with a current source",
             ]} />
-            <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
-              <h3 className="font-semibold text-white">Notes for my next conversation</h3>
-              <div className="mt-4 space-y-5 text-sm text-slate-400">
+            <div className="rounded-card border border-white/10 bg-white/[0.035] p-4">
+              <h3 className="font-semibold text-ink">Notes for my next conversation</h3>
+              <div className="mt-4 space-y-5 text-sm text-ink-dim">
                 <div className="border-b border-dashed border-white/20 pb-2">Utility plan:</div>
                 <div className="border-b border-dashed border-white/20 pb-2">Installer question:</div>
                 <div className="border-b border-dashed border-white/20 pb-2">Follow-up date:</div>
               </div>
             </div>
           </div>
-          <p className="mt-6 text-xs leading-6 text-slate-400">Last reviewed {REVIEWED_DATE}. Sources: <Source href="https://developers.google.com/maps/documentation/solar/overview">Google Solar API</Source>, <Source href="https://pvwatts.nrel.gov/">NREL PVWatts</Source>, and your utility&apos;s current customer guidance. Planning worksheet only; final design, pricing, incentives, and savings require verification.</p>
+          <p className="mt-6 text-xs leading-6 text-ink-dim">Last reviewed {REVIEWED_DATE}. Sources: <Source href="https://developers.google.com/maps/documentation/solar/overview">Google Solar API</Source>, <Source href="https://pvwatts.nrel.gov/">NREL PVWatts</Source>, and your utility&apos;s current customer guidance. Planning worksheet only; final design, pricing, incentives, and savings require verification.</p>
         </section>
-        <footer className="mt-9 rounded-3xl border border-cyan-200/20 bg-slate-950/80 p-6 sm:p-8">
+        <footer className="mt-9 rounded-card border border-sky-200/20 bg-slate-950/80 p-6 sm:p-8">
           <h2 className="text-2xl font-semibold">Explore your own roof, without a sales call.</h2>
-          <p className="mt-3 text-slate-300">Free preliminary analysis for Arizona homeowners. Final design and savings require verification.</p>
-          <Link href="/#address-estimate" className="mt-5 inline-flex min-h-12 items-center justify-center rounded-full bg-cyan-200 px-6 py-3 font-semibold text-slate-950 hover:bg-white">Start my solar estimate</Link>
+          <p className="mt-3 text-ink-muted">Free preliminary analysis for Arizona homeowners. Final design and savings require verification.</p>
+          <Link href="/#address-estimate" className="btn btn-primary mt-5 min-h-12 px-6 py-3">Start my solar estimate</Link>
         </footer>
       </article>
     </main>
@@ -174,22 +174,22 @@ function AssumptionCard({
   title: string;
 }) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
-      <h3 className="font-semibold text-white">{title}</h3>
+    <div className="rounded-card border border-white/10 bg-white/[0.035] p-4">
+      <h3 className="font-semibold text-ink">{title}</h3>
       <p className="mt-2 text-sm leading-6">{children}</p>
-      <p className="mt-3 text-xs text-slate-400">Source: <Source href={href}>{source}</Source></p>
+      <p className="mt-3 text-xs text-ink-dim">Source: <Source href={href}>{source}</Source></p>
     </div>
   );
 }
 
 function WorksheetGroup({ title, items }: { title: string; items: string[] }) {
   return (
-    <fieldset className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
-      <legend className="px-1 font-semibold text-white">{title}</legend>
+    <fieldset className="rounded-card border border-white/10 bg-white/[0.035] p-4">
+      <legend className="px-1 font-semibold text-ink">{title}</legend>
       <div className="mt-3 space-y-3">
         {items.map((item) => (
-          <label key={item} className="flex items-start gap-3 text-sm leading-6 text-slate-300">
-            <input type="checkbox" className="mt-1 h-4 w-4 shrink-0 accent-cyan-300" aria-label={item} />
+          <label key={item} className="flex items-start gap-3 text-sm leading-6 text-ink-muted">
+            <input type="checkbox" className="mt-1 h-4 w-4 shrink-0 accent-sky-300" aria-label={item} />
             <span>{item}</span>
           </label>
         ))}
@@ -199,9 +199,9 @@ function WorksheetGroup({ title, items }: { title: string; items: string[] }) {
 }
 
 function Source({ href, children }: { href: string; children: React.ReactNode }) {
-  return <a href={href} className="text-cyan-100 underline decoration-cyan-200/50 underline-offset-4 hover:text-white">{children}</a>;
+  return <a href={href} className="text-sky-100 underline decoration-sky-200/50 underline-offset-4 hover:text-ink">{children}</a>;
 }
 
 function GuideSection({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
-  return <section id={id} className="scroll-mt-8 border-b border-white/10 py-7"><h2 className="text-2xl font-semibold tracking-tight text-white">{title}</h2><div className="mt-4 space-y-4 text-base leading-7 text-slate-300">{children}</div></section>;
+  return <section id={id} className="scroll-mt-8 border-b border-white/10 py-7"><h2 className="text-2xl font-semibold tracking-tight text-ink">{title}</h2><div className="mt-4 space-y-4 text-base leading-7 text-ink-muted">{children}</div></section>;
 }

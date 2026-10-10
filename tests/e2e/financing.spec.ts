@@ -11,7 +11,7 @@ test("financing stays explicitly illustrative and exposes buy, lease, and loan",
   await home.openReadyEstimate();
   await page.getByRole("tab", { name: "Financing" }).click();
 
-  await expect(page.getByRole("button", { name: "buy", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Buy", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Lease", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Loan" })).toBeVisible();
   await expect(
@@ -19,7 +19,7 @@ test("financing stays explicitly illustrative and exposes buy, lease, and loan",
   ).toBeVisible();
   await expect(page.getByText("Not a loan offer", { exact: true })).toBeVisible();
   await expect(page.locator('[aria-pressed="true"]')).toHaveCount(1);
-  const buyButton = page.getByRole("button", { name: "buy", exact: true });
+  const buyButton = page.getByRole("button", { name: "Buy", exact: true });
   await buyButton.click();
   await expect(buyButton).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByText(/financing values are illustrative only/i)).toBeVisible();
@@ -87,21 +87,15 @@ test("overview and savings explain the modeled homeowner metrics", async ({ page
   const home = new HomeEstimatePage(page);
   await home.openReadyEstimate();
 
+  await page.getByText("Share a privacy-safe summary").click();
+  await expect(page.getByRole("button", { name: "Copy redacted card", exact: true })).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Copy homeowner summary", exact: true })
-  ).toBeVisible();
-  await expect(
-    page.getByText(/Estimated system power rating\. One kW equals 1,000 watts/i)
-  ).toBeVisible();
-  await expect(
-    page.getByText(/Modeled net comparison of utility and solar costs over 20 years/i)
+    page.getByText(/Utility costs minus solar costs over 20 years\. It isn't the yearly savings times 20/i)
   ).toBeVisible();
 
   await page.getByRole("tab", { name: "Savings" }).click();
+  await expect(page.getByText(/Annual savings is a first-year estimate/i)).toBeVisible();
   await expect(
-    page.getByText(/Annual savings is a modeled first-year estimate/i)
-  ).toBeVisible();
-  await expect(
-    page.getByText(/Payback is the estimated time for modeled savings to cover/i)
+    page.getByText(/Payback is the\s+time for savings to cover the system.s net cost, not a loan term/i)
   ).toBeVisible();
 });

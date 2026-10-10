@@ -18,13 +18,13 @@ import {
   looksLikeArizonaAddress,
 } from "@/lib/arizona-address";
 import {
-  ARIZONA_AVG_RATE_PER_KWH,
   getRecommendedPanelCountForTarget,
   getTargetAnnualUsageKwh,
 } from "@/lib/solar-metrics";
 import { selectPrimaryBuildingSegments } from "@/lib/building-filter";
 import { buildPanelPolygonPath, normalizeDegrees } from "@/lib/panel-geometry";
 import { regularizeSolarPanels } from "@/lib/panel-layout";
+import { estimateAnnualSolarSavings } from "@/lib/solar-savings";
 
 const GOOGLE_MAPS_KEY = process.env.GOOGLE_MAPS_API_KEY;
 const GOOGLE_SOLAR_KEY =
@@ -62,6 +62,7 @@ export type SolarBuildingInsights = {
     latitude?: number;
     longitude?: number;
   };
+  imageryDate?: { year?: number; month?: number; day?: number };
   imageryQuality?: string;
   solarPotential?: SolarPotential;
 };
@@ -605,9 +606,7 @@ export function buildSolarRoofAnalysis(params: {
             .reduce((sum, panel) => sum + Math.max(panel.yearlyEnergyDcKwh, 0), 0)
         : panelCount * energyPerPanelKwh
   );
-  const annualSavingsUSD = Math.round(
-    annualKwh * ARIZONA_AVG_RATE_PER_KWH
-  );
+  const annualSavingsUSD = estimateAnnualSolarSavings({ annualKwh });
   const roofSegmentsOut = buildRoofSegmentOutlines(
     roofSegments,
     primarySegmentIndices,
@@ -705,6 +704,7 @@ export function buildSolarRoofAnalysis(params: {
       solarPanels: trimmedSolarPanels,
       solarPanelConfigs,
       confidence,
+      imageryDate: formatImageryDate(params.insights.imageryDate),
       confidenceNote: buildConfidenceNote(
         params.insights.imageryQuality ?? "UNKNOWN",
         keptRoofSegments.length
@@ -903,6 +903,14 @@ function unionSegmentBoxes(
       longitude: Math.min(...boxes.map((box) => box.west)),
     },
   };
+}
+
+/** Google's imagery date as YYYY-MM-DD (or YYYY-MM when the day is missing). */
+function formatImageryDate(date: SolarBuildingInsights["imageryDate"]) {
+  const { year, month, day } = date ?? {};
+  if (!year || !month || year < 2000 || month < 1 || month > 12) return null;
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return day ? `${year}-${pad(month)}-${pad(day)}` : `${year}-${pad(month)}`;
 }
 
 function buildConfidenceNote(imageryQuality: string, segmentCount: number) {

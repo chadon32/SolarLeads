@@ -214,21 +214,16 @@ function scoreSystemSize(systemSizeKw: number | null) {
 }
 
 function scoreElectricBill(range: string | null | undefined, monthlyBill: number | null) {
+  // "$300–$399" and the earlier "$300-$400" both normalise to plain digits.
   const normalized = (range?.trim().toLowerCase() ?? "")
     .replace(/[–—]/g, "-")
-    .replace(/\s+/g, "");
+    .replace(/[\s$]+/g, "");
 
-  if (normalized.includes("400+") || normalized.includes("over_600")) return 10;
-  if (normalized.includes("$300-$400") || normalized.includes("300-400")) return 8;
-  if (
-    normalized.includes("$200-$300") ||
-    normalized.includes("200-300") ||
-    normalized.includes("150_250")
-  ) {
-    return 6;
-  }
-  if (normalized.includes("$100-$200") || normalized.includes("100-200")) return 3;
-  if (normalized.includes("under$100") || normalized.includes("under100")) return 1;
+  if (normalized.includes("400+") || normalized.includes("400ormore") || normalized.includes("over_600")) return 10;
+  if (normalized.includes("300-400") || normalized.includes("300-399")) return 8;
+  if (normalized.includes("200-300") || normalized.includes("200-299") || normalized.includes("150_250")) return 6;
+  if (normalized.includes("100-200") || normalized.includes("100-199")) return 3;
+  if (normalized.includes("under100")) return 1;
 
   if (monthlyBill === null) return 0;
   if (monthlyBill >= 400) return 10;

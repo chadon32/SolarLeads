@@ -43,22 +43,21 @@ test("renders a ready 3D roof analysis with panels and sunlight enabled", async 
 test("every solar readiness score on the estimate agrees, including after layout changes", async ({ page }) => {
   const home = new HomeEstimatePage(page);
   await home.openReadyEstimate();
-  // Each "Solar readiness" label sits in a card with its NN/100 value.
-  const readinessScores = () =>
-    page.getByText("Solar readiness", { exact: true }).evaluateAll((labels) =>
-      labels.map((label) => {
-        let card = label.parentElement;
-        while (card && !/\d+\/100/.test(card.textContent ?? "")) card = card.parentElement;
-        return card?.textContent?.match(/(\d+)\/100/)?.[1] ?? "missing";
-      })
-    );
+  // The header metric and the Overview's "Why the readiness score is NN/100" heading.
+  const tabs = page.getByRole("tablist", { name: "Solar report detail sections" });
+  const readinessScores = async () => {
+    const header = await page.getByTestId("report-kpi-grid").getByText(/^\d+\/100$/).textContent();
+    await tabs.getByRole("tab", { name: "Overview", exact: true }).click();
+    const overview = await page.getByRole("heading", { name: /Why the readiness score is \d+\/100/ }).textContent();
+    return [header, overview].map((text) => text?.match(/(\d+)\/100/)?.[1] ?? "missing");
+  };
   const initial = await readinessScores();
   expect(initial.length, "header and report both show a readiness score").toBeGreaterThanOrEqual(2);
   expect(new Set(initial).size, `scores on screen: ${initial.join(", ")}`).toBe(1);
 
   await page.getByRole("tablist", { name: "Solar report detail sections" }).getByRole("tab", { name: "Panels", exact: true }).click();
   await page.locator('input[type="range"]').first().fill("6");
-  await expect(page.getByText(/^Solar panels: 6 of \d+$/)).toBeVisible();
+  await expect(page.getByText(/^Panels: 6 of \d+$/)).toBeVisible();
   await expect.poll(async () => new Set(await readinessScores()).size).toBe(1);
   expect((await readinessScores())[0], "fewer panels lower the readiness score").not.toBe(initial[0]);
 });
@@ -70,7 +69,7 @@ test("roof analysis view tabs expose complete tab semantics", async ({ page }) =
   const rooftopTabs = page.getByRole("tablist", {
     name: "Rooftop analysis views",
   });
-  const tab = rooftopTabs.getByRole("tab", { name: "3D Model" });
+  const tab = rooftopTabs.getByRole("tab", { name: "3D model" });
   await expect(tab).toHaveAttribute("aria-selected", "true");
   await expect(tab).toHaveAttribute("aria-controls", /.+/);
   const panelId = await tab.getAttribute("aria-controls");
@@ -84,7 +83,7 @@ test("3D model renders the selected module footprint and accepted panel count", 
   const home = new HomeEstimatePage(page);
   await home.openReadyEstimate();
 
-  await page.getByRole("tab", { name: "3D Model" }).click();
+  await page.getByRole("tab", { name: "3D model" }).click();
   const scene = page.getByTestId("roof-scene-3d");
   await expect(scene).toBeVisible({ timeout: 20_000 });
   await expect(scene).toHaveAttribute("data-rendered-panel-count", "19");
@@ -159,7 +158,7 @@ test("camera controls work without changing panels, support keyboard, and leave 
   await page.getByRole("tab", { name: "Sunlight", exact: true }).click();
   await expect(page.getByTestId("mock-satellite-map")).toBeVisible();
   await expect(scene).toHaveCount(0);
-  await page.getByRole("tab", { name: "3D Model", exact: true }).click();
+  await page.getByRole("tab", { name: "3D model", exact: true }).click();
   await expect(scene.locator("canvas")).toBeVisible();
   await expect(page.getByTestId("mock-satellite-map")).toBeHidden();
   await expect(page.getByRole("checkbox", { name: "Sunlight quality" }).first()).toBeChecked();

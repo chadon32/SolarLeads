@@ -93,8 +93,8 @@ export default async function ReportViewerPage({
   if (!lead) {
     return (
       <ReportShell>
-        <section className="rounded-[1.4rem] border border-white/10 bg-white/[0.055] p-6 text-center shadow-[0_18px_70px_rgba(2,8,20,0.32)] backdrop-blur-xl">
-          <p className="text-xs font-semibold uppercase tracking-[0.32em] text-cyan-300">
+        <section className="rounded-card border border-white/10 bg-white/[0.055] p-6 text-center backdrop-blur-xl">
+          <p className="text-xs font-semibold text-sky-300">
             Report unavailable
           </p>
           <h1 className="mt-3 text-3xl font-semibold tracking-tight">
@@ -105,7 +105,7 @@ export default async function ReportViewerPage({
           </p>
           <Link
             href={access.dashboardAccess ? "/dashboard" : "/"}
-            className="mt-6 inline-flex rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100"
+            className="btn btn-primary mt-6 px-5 py-3"
           >
             Back to {access.dashboardAccess ? "dashboard" : APP_NAME}
           </Link>
@@ -125,9 +125,9 @@ export default async function ReportViewerPage({
 
   return (
     <ReportShell>
-      <header className="flex flex-col justify-between gap-4 rounded-[1.4rem] border border-white/10 bg-white/[0.055] px-5 py-4 shadow-[0_18px_70px_rgba(2,8,20,0.32)] backdrop-blur-xl lg:flex-row lg:items-center">
+      <header className="flex flex-col justify-between gap-4 rounded-card border border-white/10 bg-white/[0.055] px-5 py-4 backdrop-blur-xl lg:flex-row lg:items-center">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.32em] text-cyan-300">
+          <p className="text-xs font-semibold text-sky-300">
             {APP_NAME}
           </p>
           <h1 className="mt-2 text-3xl font-semibold tracking-tight">
@@ -141,20 +141,20 @@ export default async function ReportViewerPage({
           {access.dashboardAccess ? (
             <Link
               href="/dashboard"
-              className="inline-flex items-center justify-center rounded-full border border-white/10 bg-white/[0.06] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-white/[0.1]"
+              className="inline-flex items-center justify-center rounded-full border border-white/10 bg-white/[0.06] px-4 py-2.5 text-sm font-semibold text-ink transition hover:bg-white/[0.1]"
             >
               Back to dashboard
             </Link>
           ) : null}
           <a
             href={rawPdfPath}
-            className="inline-flex items-center justify-center rounded-full border border-cyan-200/20 bg-cyan-300/10 px-4 py-2.5 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-300/16"
+            className="inline-flex items-center justify-center rounded-full border border-sky-200/20 bg-sky-300/10 px-4 py-2.5 text-sm font-semibold text-sky-100 transition hover:bg-sky-300/16"
           >
             Open PDF file
           </a>
           <a
             href={downloadPdfPath}
-            className="inline-flex items-center justify-center rounded-full bg-white px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100"
+            className="btn btn-primary px-4 py-2.5"
           >
             Download PDF file
           </a>
@@ -162,15 +162,15 @@ export default async function ReportViewerPage({
       </header>
 
       <section className="grid gap-4 lg:grid-cols-[1.05fr_0.95fr]">
-        <article className="rounded-[1.4rem] border border-white/10 bg-white/[0.055] p-5 shadow-[0_18px_70px_rgba(2,8,20,0.28)] backdrop-blur-xl">
+        <article className="rounded-card border border-white/10 bg-white/[0.055] p-5 backdrop-blur-xl">
           <div className="flex flex-col justify-between gap-3 border-b border-white/10 pb-4 sm:flex-row sm:items-start">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.28em] text-cyan-300">
+              <p className="text-xs font-semibold text-sky-300">
                 Report summary
               </p>
               <h2 className="mt-2 text-2xl font-semibold">Preliminary solar estimate</h2>
             </div>
-            <span className="rounded-full border border-amber-200/20 bg-amber-300/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-amber-100">
+            <span className="rounded-full border border-amber-200/20 bg-amber-300/10 px-3 py-1 text-xs font-semibold text-amber-100">
               Installer verification required
             </span>
           </div>
@@ -180,7 +180,7 @@ export default async function ReportViewerPage({
             <Metric label="System size" value={formatSavedReportValue(systemSizeKw, "kw")} source="Modeled" />
             <Metric label="Panel count" value={formatSavedReportValue(panelCount, "panels")} source="Solar API" />
             <Metric label="Estimated Payback" value={formatSavedReportValue(roiYears, "years")} source="Modeled" />
-            <Metric label="Estimated annual bill covered" value={formatSavedReportValue(energyOffset, "percent")} source="Modeled" />
+            <Metric label="Electricity use covered by solar" value={formatSavedReportValue(energyOffset, "percent")} source="Modeled" />
             <Metric
               label="Solar Readiness Score"
               value={
@@ -193,27 +193,27 @@ export default async function ReportViewerPage({
           </div>
         </article>
 
-        <article className="rounded-[1.4rem] border border-white/10 bg-slate-950/50 p-5 shadow-[0_18px_70px_rgba(2,8,20,0.28)]">
-          <p className="text-xs font-semibold uppercase tracking-[0.28em] text-cyan-300">
+        <article className="rounded-card border border-white/10 bg-slate-950/50 p-5">
+          <p className="text-xs font-semibold text-sky-300">
             PDF actions
           </p>
           <h2 className="mt-2 text-2xl font-semibold">Open or save the full proposal</h2>
           <p className="mt-3 text-sm leading-6 text-slate-400">
             Some embedded browsers do not render raw PDF files. This page gives you a readable report summary first, plus direct PDF links for normal browsers.
           </p>
-          <p className="mt-3 rounded-[1rem] border border-amber-200/15 bg-amber-300/10 px-4 py-3 text-xs leading-5 text-amber-100">
+          <p className="mt-3 rounded-card border border-amber-200/15 bg-amber-300/10 px-4 py-3 text-xs leading-5 text-amber-100">
             If the PDF file opens as a blank screen in the in-app browser, open this page in Chrome, Edge, or Safari to save the PDF. The report summary on this page is still available immediately.
           </p>
           <div className="mt-5 grid gap-3">
             <a
               href={rawPdfPath}
-              className="inline-flex items-center justify-center rounded-full border border-white/10 bg-white/[0.06] px-4 py-3 text-sm font-semibold text-white transition hover:bg-white/[0.1]"
+              className="inline-flex items-center justify-center rounded-full border border-white/10 bg-white/[0.06] px-4 py-3 text-sm font-semibold text-ink transition hover:bg-white/[0.1]"
             >
               Open PDF file
             </a>
             <a
               href={downloadPdfPath}
-              className="inline-flex items-center justify-center rounded-full bg-cyan-100 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-white"
+              className="btn btn-primary px-4 py-3"
             >
               Download PDF file
             </a>
@@ -297,8 +297,8 @@ function ReportUnavailable({
   title: string;
 }) {
   return (
-    <section className="rounded-[1.4rem] border border-white/10 bg-white/[0.055] p-6 text-center shadow-[0_18px_70px_rgba(2,8,20,0.32)] backdrop-blur-xl">
-      <p className="text-xs font-semibold uppercase tracking-[0.32em] text-cyan-300">
+    <section className="rounded-card border border-white/10 bg-white/[0.055] p-6 text-center backdrop-blur-xl">
+      <p className="text-xs font-semibold text-sky-300">
         Report unavailable
       </p>
       <h1 className="mt-3 text-3xl font-semibold tracking-tight">{title}</h1>
@@ -307,7 +307,7 @@ function ReportUnavailable({
       </p>
       <Link
         href="/"
-        className="mt-6 inline-flex rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100"
+        className="btn btn-primary mt-6 px-5 py-3"
       >
         Back to {APP_NAME}
       </Link>
@@ -365,7 +365,7 @@ function shouldRetryLegacySelect(message: string) {
 
 function ReportShell({ children }: { children: React.ReactNode }) {
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(34,211,238,0.18),_transparent_34%),linear-gradient(180deg,#05070d_0%,#07111d_68%,#06070b_100%)] px-4 py-5 text-white sm:px-6 lg:px-8">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(124,203,230,0.18),_transparent_34%),linear-gradient(180deg,#05070d_0%,#07111d_68%,#06070b_100%)] px-4 py-5 text-ink sm:px-6 lg:px-8">
       <div className="mx-auto flex max-w-6xl flex-col gap-4">{children}</div>
     </main>
   );
@@ -381,12 +381,12 @@ function Metric({
   value: string;
 }) {
   return (
-    <div className="rounded-[1rem] border border-white/10 bg-slate-950/48 p-4">
+    <div className="rounded-card border border-white/10 bg-slate-950/48 p-4">
       <div className="flex items-start justify-between gap-3">
-        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+        <p className="text-xs font-semibold text-slate-500">
           {label}
         </p>
-        <span className="rounded-full border border-cyan-200/15 bg-cyan-300/10 px-2 py-1 text-[0.58rem] font-bold uppercase tracking-[0.14em] text-cyan-100">
+        <span className="rounded-full border border-sky-200/15 bg-sky-300/10 px-2 py-1 text-xs font-bold text-sky-100">
           {source}
         </span>
       </div>

@@ -1,13 +1,11 @@
 import { calculateFederalResidentialSolarCredit } from "@/lib/financial-model";
 import { getUsableAreaM2, type RoofAnalysis } from "@/lib/roof-analysis";
-import {
-  ARIZONA_AVG_RATE_PER_KWH,
-  INSTALLED_COST_PER_WATT,
-} from "@/lib/solar-assumptions";
+import { INSTALLED_COST_PER_WATT } from "@/lib/solar-assumptions";
 import { getMaxPanelCount } from "@/lib/solar-metrics";
 
 import { getSelectedPanelEnergy } from "@/lib/selected-panel-energy";
 import type { ModuleFaceLayout } from "@/lib/module-face";
+import { estimateAnnualSolarSavings } from "@/lib/solar-savings";
 
 export type SolarPanelTier = "premium" | "mid" | "value";
 
@@ -343,11 +341,7 @@ export function getPanelFit(
   );
   const annualBill =
     input.monthlyBill && input.monthlyBill > 0 ? input.monthlyBill * 12 : null;
-  const annualSavings = Math.round(
-    annualBill
-      ? Math.min(annualKwh * ARIZONA_AVG_RATE_PER_KWH, annualBill)
-      : annualKwh * ARIZONA_AVG_RATE_PER_KWH
-  );
+  const annualSavings = estimateAnnualSolarSavings({ annualKwh, monthlyBill: annualBill ? annualBill / 12 : null });
   const installedCostPerWatt =
     panel.installedCostPerWatt + (input.inverterCostAdderPerWatt ?? 0);
   const systemCost = Math.round(

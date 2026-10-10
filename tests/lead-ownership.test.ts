@@ -3,6 +3,7 @@ import test from "node:test";
 import { TEST_ADDRESS, TEST_ROOF_ANALYSIS } from "./fixtures/test-data";
 import type { RoofAnalysis } from "../src/lib/roof-analysis";
 import { buildSolarReportSnapshot } from "../src/lib/report-snapshot";
+import { estimateAnnualSolarSavings } from "../src/lib/solar-savings";
 
 test("anonymous lead submission cannot read or overwrite an existing homeowner", async (t) => {
   const environment = {
@@ -64,7 +65,7 @@ test("anonymous lead submission cannot read or overwrite an existing homeowner",
   const response = await POST(request({ ...body, email: "different@example.test" }));
   assert.equal(response.status, 200, await response.clone().text());
   assert.equal(inserted.annual_energy_kwh, 6800);
-  assert.equal(inserted.annual_savings, 1054);
+  assert.equal(inserted.annual_savings, estimateAnnualSolarSavings({ annualKwh: 6800, monthlyBill: 200 }));
   assert.deepEqual(original, originalCopy);
   assert.equal(requests.some((item) => item.path === "/rest/v1/leads" && item.method === "GET"), false);
 });

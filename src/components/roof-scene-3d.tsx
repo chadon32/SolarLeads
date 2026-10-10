@@ -200,7 +200,7 @@ export default function RoofScene3D({
   if (state.status === "loading") {
     return (
       <SceneMessage>
-        <span className="inline-flex h-10 w-10 animate-spin rounded-full border-2 border-cyan-300/70 border-t-transparent" />
+        <span className="inline-flex h-10 w-10 animate-spin rounded-full border-2 border-sky-300/70 border-t-transparent" />
         <p className="text-sm text-slate-200">Building the 3D roof model…</p>
       </SceneMessage>
     );
@@ -219,13 +219,13 @@ export default function RoofScene3D({
                 setState({ status: "loading" });
                 setModelKey((value) => value + 1);
               }}
-              className="min-h-11 rounded-full border border-cyan-200/30 px-5 text-sm text-cyan-100 focus-visible:outline-2 focus-visible:outline-cyan-200"
+              className="min-h-11 rounded-full border border-sky-200/30 px-5 text-sm text-sky-100 focus-visible:outline-2 focus-visible:outline-sky-200"
             >
               Retry 3D model
             </button>
           ) : null}
           {onRequestMapView ? (
-            <button type="button" onClick={onRequestMapView} className="min-h-11 rounded-full border border-white/20 px-5 text-sm text-slate-100 focus-visible:outline-2 focus-visible:outline-cyan-200">
+            <button type="button" onClick={onRequestMapView} className="min-h-11 rounded-full border border-white/20 px-5 text-sm text-slate-100 focus-visible:outline-2 focus-visible:outline-sky-200">
               Switch to map view
             </button>
           ) : null}
@@ -256,10 +256,10 @@ export default function RoofScene3D({
       aria-pressed={showSurroundings}
       title="Trees and nearby roofs from the elevation scan"
       onClick={() => setShowSurroundings((value) => !value)}
-      className={`flex h-11 w-11 flex-col items-center justify-center gap-0.5 rounded-xl focus-visible:outline-2 focus-visible:outline-cyan-200 ${showSurroundings ? "bg-white/10" : "hover:bg-white/10"}`}
+      className={`flex h-11 w-11 flex-col items-center justify-center gap-0.5 rounded-card focus-visible:outline-2 focus-visible:outline-sky-200 ${showSurroundings ? "bg-white/10" : "hover:bg-white/10"}`}
     >
       <Trees className="h-4 w-4" aria-hidden="true" />
-      <span aria-hidden="true" className="text-[9px] font-medium">Trees</span>
+      <span aria-hidden="true" className="text-xs font-medium">Trees</span>
     </button>
   );
   const doneButton = (
@@ -267,7 +267,7 @@ export default function RoofScene3D({
       type="button"
       aria-label="Stop exploring the 3D model"
       onClick={() => setExploring(false)}
-      className="min-h-11 rounded-xl px-3 text-xs font-semibold text-cyan-100 hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-cyan-200"
+      className="min-h-11 rounded-card px-3 text-xs font-semibold text-sky-100 hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-sky-200"
     >
       Done
     </button>
@@ -276,7 +276,7 @@ export default function RoofScene3D({
   return (
     <div
       ref={setRegion}
-      className="absolute inset-0 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-cyan-200"
+      className="absolute inset-0 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-sky-200"
       data-panel-height-meters={panelHeightMeters}
       data-panel-width-meters={panelWidthMeters}
       data-rendered-panel-count={visiblePanels.length}
@@ -347,7 +347,7 @@ export default function RoofScene3D({
           type="button"
           onClick={() => setExploring(true)}
           aria-label="Explore the 3D model"
-          className="absolute inset-0 z-10 flex items-end justify-center bg-transparent pb-[5.25rem] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-cyan-200"
+          className="absolute inset-0 z-10 flex items-end justify-center bg-transparent pb-[5.25rem] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-sky-200"
         >
           <span className="inline-flex min-h-11 items-center gap-2 rounded-full border border-white/20 bg-slate-950/80 px-4 text-sm font-medium text-slate-100 shadow-lg backdrop-blur">
             <Hand className="h-4 w-4" aria-hidden="true" />
@@ -360,7 +360,7 @@ export default function RoofScene3D({
         // Centred at the top of the overlay-free area the camera frames into, so it never lands on a panel.
         <div
           role="status"
-          className="absolute z-20 mx-auto max-w-[20rem] rounded-2xl border border-white/15 bg-slate-950/90 px-3.5 py-2.5 text-slate-100 shadow-lg backdrop-blur"
+          className="absolute z-20 mx-auto max-w-[20rem] rounded-card border border-white/15 bg-slate-950/90 px-3.5 py-2.5 text-slate-100 shadow-lg backdrop-blur"
           style={{ top: safeInsets.top + 8, left: safeInsets.left + 12, right: safeInsets.right + 12 }}
         >
           <div className="flex items-start justify-between gap-3">
@@ -372,7 +372,7 @@ export default function RoofScene3D({
               type="button"
               aria-label="Close roof face details"
               onClick={() => setSelectedFace(null)}
-              className="grid h-9 w-9 shrink-0 place-items-center rounded-full hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-cyan-200"
+              className="grid h-9 w-9 shrink-0 place-items-center rounded-full hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-sky-200"
             >
               <X className="h-4 w-4" aria-hidden="true" />
             </button>
@@ -382,7 +382,7 @@ export default function RoofScene3D({
 
       {/* Phones: secondary controls sit in the free top-right corner so the camera row stays on one line. */}
       {hasSurroundings || (coarsePointer && exploring) ? (
-        <div {...{ [VIEWER_OVERLAY_ATTRIBUTE]: "" }} className="absolute right-3 top-3 z-20 flex gap-1 rounded-2xl border border-white/15 bg-slate-950/90 p-1 text-slate-100 shadow-lg backdrop-blur sm:hidden">
+        <div {...{ [VIEWER_OVERLAY_ATTRIBUTE]: "" }} className="absolute right-3 top-3 z-20 flex gap-1 rounded-card border border-white/15 bg-slate-950/90 p-1 text-slate-100 shadow-lg backdrop-blur sm:hidden">
           {coarsePointer && exploring ? doneButton : null}
           {hasSurroundings ? surroundingsToggle : null}
         </div>
@@ -390,7 +390,7 @@ export default function RoofScene3D({
 
       <div
         {...{ [VIEWER_OVERLAY_ATTRIBUTE]: "" }}
-        className="absolute bottom-3 left-3 z-20 max-w-[calc(100%-1.5rem)] rounded-2xl border border-white/15 bg-slate-950/90 p-1.5 text-slate-100 shadow-lg backdrop-blur"
+        className="absolute bottom-3 left-3 z-20 max-w-[calc(100%-1.5rem)] rounded-card border border-white/15 bg-slate-950/90 p-1.5 text-slate-100 shadow-lg backdrop-blur"
       >
         {showFlux ? (
           // On phones the legend lives in the map controls panel below the canvas.
@@ -413,10 +413,10 @@ export default function RoofScene3D({
                 aria-label={label}
                 title={label}
                 onClick={() => sendCameraCommand(action)}
-                className="flex h-11 w-11 flex-col items-center justify-center gap-0.5 rounded-xl hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-cyan-200"
+                className="flex h-11 w-11 flex-col items-center justify-center gap-0.5 rounded-card hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-sky-200"
               >
                 <Icon className="h-4 w-4" aria-hidden="true" />
-                {caption ? <span aria-hidden="true" className="text-[9px] font-medium">{caption}</span> : null}
+                {caption ? <span aria-hidden="true" className="text-xs font-medium">{caption}</span> : null}
               </button>
             ))}
           </div>
@@ -424,9 +424,9 @@ export default function RoofScene3D({
           {coarsePointer && exploring ? <div className="hidden sm:flex">{doneButton}</div> : null}
         </div>
         {/* w-0 + min-w-full: the hint wraps to the controls' width instead of widening the card under neighbouring panels. */}
-        <p className="hidden w-0 min-w-full px-1.5 pb-0.5 pt-1 text-[10px] leading-snug text-slate-300 sm:block">
+        <p className="hidden w-0 min-w-full px-1.5 pb-0.5 pt-1 text-xs leading-snug text-slate-300 sm:block">
           {locked ? "Swipe to scroll. Tap the model to explore." : "Drag to orbit. Pinch or use + / - to zoom. Tap a roof face for details."}
-          {data.obstructions.length ? " Grey blocks are raised features in the elevation scan." : ""}
+          {data.obstructions.length ?" Grey blocks are raised features in the elevation scan." : ""}
         </p>
       </div>
     </div>

@@ -6,7 +6,6 @@ import {
   type RoofPoint,
 } from "@/lib/roof-analysis";
 import {
-  ARIZONA_AVG_RATE_PER_KWH,
   buildSolarMetrics,
   calculateEnergyOffsetPct,
   INSTALLED_COST_PER_WATT,
@@ -28,6 +27,7 @@ import { getSelectedPanelEnergy } from "@/lib/selected-panel-energy";
 import { buildActiveSolarEstimate } from "@/lib/active-solar-estimate";
 import { getPanelDimensionsMeters, type SolarPanel } from "@/lib/solarPanels";
 import { calculateSolarReadinessScore } from "@/lib/solar-advisor";
+import { estimateAnnualSolarSavings } from "@/lib/solar-savings";
 
 export type ReportSnapshotMetrics = Pick<
   SharedSolarMetrics,
@@ -316,11 +316,7 @@ export function rebuildTrustedSolarReportSnapshot(
     baseMetrics.annualKwh * (panelWatts / providerPanelWatts)
   );
   const annualBill = monthlyBill && monthlyBill > 0 ? monthlyBill * 12 : null;
-  const annualSavings = Math.round(
-    annualBill
-      ? Math.min(annualKwh * ARIZONA_AVG_RATE_PER_KWH, annualBill)
-      : annualKwh * ARIZONA_AVG_RATE_PER_KWH
-  );
+  const annualSavings = estimateAnnualSolarSavings({ annualKwh, monthlyBill: annualBill ? annualBill / 12 : null });
   const systemKw = roundTo((baseMetrics.panelCount * panelWatts) / 1000, 2);
   const installedCostPerWatt =
     positiveNumber(options.installedCostPerWatt) ?? INSTALLED_COST_PER_WATT;
@@ -405,7 +401,7 @@ export function buildAcceptedPanelAnalysisForReport(
     ...analysis,
     acceptedPanelCount,
     annualKwh,
-    annualSavingsUSD: Math.round(annualKwh * ARIZONA_AVG_RATE_PER_KWH),
+    annualSavingsUSD: estimateAnnualSolarSavings({ annualKwh }),
     originalPanelCandidateCount,
     panelCount: acceptedPanelCount,
     panelHeightMeters,

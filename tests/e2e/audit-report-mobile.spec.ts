@@ -46,7 +46,7 @@ test("393px homeowner can upload a bill and submit its claim with the report", a
   await expect(page.getByText("Bill uploaded - estimate ready for review", { exact: true })).toBeVisible();
   expect(uploadCount).toBe(1);
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
-  const submit = page.getByRole("button", { name: "Send My Full Report", exact: true }).last();
+  const submit = page.getByRole("button", { name: "Send my full report", exact: true }).last();
   await submit.scrollIntoViewIfNeeded();
   const bounds = await submit.boundingBox();
   expect(bounds?.height).toBeGreaterThanOrEqual(44);

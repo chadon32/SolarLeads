@@ -1,4 +1,4 @@
-import { ARIZONA_AVG_RATE_PER_KWH } from "@/lib/solar-assumptions";
+import { estimateAnnualSolarSavings } from "@/lib/solar-savings";
 
 export type RoofViewport = {
   northeast: {
@@ -114,6 +114,8 @@ export type RoofAnalysis = {
   confidence: AnalysisConfidence;
   confidenceNote: string;
   source: "solar-api" | "vision-api" | "modeled";
+  /** Date of the aerial imagery behind the roof model (YYYY-MM-DD or YYYY-MM), when known. */
+  imageryDate?: string | null;
 };
 
 export function buildFallbackRoofAnalysis(params: {
@@ -138,7 +140,7 @@ export function buildFallbackRoofAnalysis(params: {
   const panelCount = clamp(Math.floor((usableAreaM2 / 2.2) * 0.85), 12, 26);
   const systemKw = roundTo(panelCount * 0.4, 1);
   const annualKwh = Math.round(systemKw * 1706);
-  const annualSavingsUSD = Math.round(annualKwh * ARIZONA_AVG_RATE_PER_KWH);
+  const annualSavingsUSD = estimateAnnualSolarSavings({ annualKwh });
 
   const roofShape: RoofShape =
     widthM > 15 ? "complex" : widthM > 13.4 ? "hip" : "gable";
@@ -361,7 +363,7 @@ export function normalizeRoofAnalysis(
     Math.round(
       numberOrFallback(
         input.annualSavingsUSD,
-        Math.round(annualKwh * ARIZONA_AVG_RATE_PER_KWH)
+        estimateAnnualSolarSavings({ annualKwh })
       )
     )
   );
@@ -485,6 +487,10 @@ export function normalizeRoofAnalysis(
       fallback.confidenceNote
     ),
     source,
+    // Only carried when the imagery date is known, so older cached analyses keep their shape.
+    ...(typeof input.imageryDate === "string" && /^\d{4}-\d{2}(-\d{2})?$/.test(input.imageryDate)
+      ? { imageryDate: input.imageryDate }
+      : {}),
   };
 }
 

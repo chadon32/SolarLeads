@@ -1,7 +1,7 @@
 "use client";
 
 import type { ChangeEvent, FormEvent, InputHTMLAttributes } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import Script from "next/script";
@@ -12,7 +12,6 @@ import { trackEvent } from "@/lib/analytics";
 import { normalizeFourfoldAttributionKey } from "@/lib/attribution";
 import {
   APP_LEAD_DISCLOSURE_COPY,
-  APP_PRIVACY_COPY,
   REPORT_DELIVERY_DISCLOSURE,
 } from "@/lib/brand";
 import type { BatteryOption } from "@/lib/batteries";
@@ -35,7 +34,6 @@ import {
   isValidUsPhoneNumber,
   normalizePhoneNumber,
 } from "@/lib/phone";
-import { formatCurrency } from "@/lib/number-format";
 import {
   getReportEmailDeliveryCopy,
   normalizeReportEmailDeliveryStatus,
@@ -300,31 +298,6 @@ export function LeadCaptureForm({
 
     return () => window.cancelAnimationFrame(handle);
   }, [initialAddress, initialMonthlyBill]);
-
-  const estimatedSavings = useMemo(() => {
-    if (analysis?.validSite) {
-      const monthlyBill = Number(values.monthlyBill);
-      return buildActiveSolarEstimate({
-        analysis,
-        batteryCost: addBattery && selectedBattery ? selectedBattery.cost : 0,
-        inverterCostAdderPerWatt: getInverterOption(selectedInverterType)
-          .costAdderPerWatt,
-        monthlyBill: Number.isFinite(monthlyBill) ? monthlyBill : undefined,
-        selectedPanel: selectedPanel ?? getPanelById(),
-        selectedPanelCount: activePanelCount,
-      }).annualSavings;
-    }
-
-    return 0;
-  }, [
-    activePanelCount,
-    addBattery,
-    analysis,
-    selectedBattery,
-    selectedInverterType,
-    selectedPanel,
-    values.monthlyBill,
-  ]);
 
   const validate = () => {
     const nextErrors: Partial<Record<keyof FormValues, string>> = {};
@@ -758,29 +731,23 @@ export function LeadCaptureForm({
           strategy="afterInteractive"
         />
       ) : null}
-      <div className="grid gap-5 lg:grid-cols-[1.05fr_0.95fr] lg:items-stretch">
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] lg:items-start">
         <form
           ref={formRef}
           onSubmit={handleSubmit}
           noValidate
-          className="glass-panel h-full rounded-[1.6rem] p-4 shadow-[0_24px_80px_rgba(2,8,20,0.4)] sm:p-6"
+          className="rounded-card border border-ridge bg-night/50 p-4 sm:p-6"
         >
-          <div className="flex items-start justify-between gap-4">
+          <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.34em] text-cyan-300">
-                Full report
-              </p>
-              <h3 className="mt-3 text-2xl font-semibold tracking-tight text-white">
-                Send my full solar report.
-              </h3>
-              <p className="mt-3 max-w-xl text-sm leading-7 text-slate-300">
-                Enter your details and we will email the full PDF report for this
-                preliminary roof model.
+              <h3 className="text-2xl font-semibold text-ink">Send my full solar report</h3>
+              <p className="mt-2 max-w-xl text-[0.9375rem] leading-7 text-ink-muted">
+                We&rsquo;ll email you the full PDF report for this estimate.
               </p>
             </div>
-            <div className="hidden rounded-full border border-cyan-300/15 bg-cyan-300/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.3em] text-cyan-200 sm:inline-flex">
-              Protected submission
-            </div>
+            <p className="text-sm text-ink-dim">
+              <span aria-hidden="true" className="text-sun">*</span> Required
+            </p>
           </div>
 
           {activeErrors.length > 0 ? (
@@ -789,7 +756,7 @@ export function LeadCaptureForm({
               id="lead-form-errors"
               tabIndex={-1}
               role="alert"
-              className="mt-5 rounded-[1.05rem] border border-rose-300/25 bg-rose-300/10 px-4 py-3 text-left outline-none focus:ring-2 focus:ring-rose-200"
+              className="mt-5 rounded-card border border-rose-300/25 bg-rose-300/10 px-4 py-3 text-left outline-none focus:ring-2 focus:ring-rose-200"
             >
               <p className="font-semibold text-rose-100">
                 Please review {activeErrors.length} highlighted field
@@ -800,7 +767,7 @@ export function LeadCaptureForm({
                   error ? (
                     <li key={field}>
                       <a
-                        className="underline underline-offset-2 hover:text-white"
+                        className="underline underline-offset-2 hover:text-ink"
                         href={`#${leadFieldIds[field]}`}
                         onClick={(event) => {
                           const target = document.getElementById(leadFieldIds[field] ?? "");
@@ -833,6 +800,7 @@ export function LeadCaptureForm({
             </div>
             <Field
               label="Name"
+              required
               value={values.name}
               onChange={(value) => updateField("name", value)}
               error={errors.name}
@@ -841,6 +809,7 @@ export function LeadCaptureForm({
             />
             <Field
               label="Email"
+              required
               value={values.email}
               onChange={(value) => updateField("email", value)}
               error={errors.email}
@@ -860,6 +829,7 @@ export function LeadCaptureForm({
             />
             <SelectField
               label="Average monthly electric bill"
+              required
               value={values.electricBillRange}
               onChange={(value) => {
                 updateField("electricBillRange", value);
@@ -873,6 +843,7 @@ export function LeadCaptureForm({
             <div className="sm:col-span-2">
               <Field
                 label="Address"
+              required
                 value={values.address}
                 onChange={(value) => updateField("address", value)}
                 error={errors.address}
@@ -885,6 +856,7 @@ export function LeadCaptureForm({
           <div className="mt-4 grid gap-4 sm:grid-cols-2">
             <SelectField
               label="Owns home or rents"
+              required
               value={values.ownsHome}
               onChange={(value) => updateField("ownsHome", value)}
               options={HOME_OWNERSHIP_OPTIONS}
@@ -892,6 +864,7 @@ export function LeadCaptureForm({
             />
             <SelectField
               label="Solar timeline"
+              required
               value={values.solarTimeline}
               onChange={(value) => updateField("solarTimeline", value)}
               options={SOLAR_TIMELINE_OPTIONS}
@@ -900,6 +873,7 @@ export function LeadCaptureForm({
             {values.installerContactConsent ? (
               <SelectField
                 label="Preferred contact method"
+              required
                 value={values.preferredContactMethod}
                 onChange={(value) =>
                   updateField("preferredContactMethod", value)
@@ -912,6 +886,7 @@ export function LeadCaptureForm({
             values.preferredContactMethod === "Phone" ? (
               <SelectField
                 label="Best time to contact"
+              required
                 value={values.bestTimeToContact}
                 onChange={(value) => updateField("bestTimeToContact", value)}
                 options={BEST_TIME_OPTIONS}
@@ -923,7 +898,7 @@ export function LeadCaptureForm({
                 visible weight to the form for the majority who skip it. The
                 value is still submitted normally once opened. */}
             <details className="group sm:col-span-2">
-              <summary className="inline-flex cursor-pointer list-none items-center gap-2 text-sm font-semibold text-cyan-100/85 transition hover:text-cyan-100 [&::-webkit-details-marker]:hidden">
+              <summary className="inline-flex cursor-pointer list-none items-center gap-2 text-sm font-semibold text-sky-100/85 transition hover:text-sky-100 [&::-webkit-details-marker]:hidden">
                 <span
                   aria-hidden="true"
                   className="text-base leading-none transition-transform group-open:rotate-45"
@@ -949,7 +924,7 @@ export function LeadCaptureForm({
             onRemove={handleUtilityBillRemove}
           />
 
-          <label className="mt-5 flex cursor-pointer items-start gap-3 rounded-[1.15rem] border border-white/10 bg-slate-950/34 px-4 py-4 text-left">
+          <label className="mt-5 flex cursor-pointer items-start gap-3 rounded-card border border-white/10 bg-slate-950/34 px-4 py-4 text-left">
             <input
               type="checkbox"
               checked={values.installerContactConsent}
@@ -962,10 +937,10 @@ export function LeadCaptureForm({
                   updateField("bestTimeToContact", "");
                 }
               }}
-              className="mt-0.5 h-5 w-5 shrink-0 accent-cyan-200"
+              className="mt-0.5 h-5 w-5 shrink-0 accent-sky-200"
             />
             <span>
-              <span className="block text-sm font-semibold text-white">
+              <span className="block text-sm font-semibold text-ink">
                 Optional installer follow-up
               </span>
               <span className="mt-1 block text-sm leading-6 text-slate-400">
@@ -985,117 +960,65 @@ export function LeadCaptureForm({
             </div>
           ) : null}
 
-          <p className="mt-6 text-center text-sm leading-6 text-slate-300">
-            Your roof settings stay on this device for up to 48 hours. Submitting
-            emails a secure report link; installer contact stays off unless you
-            select the option above.
-          </p>
-          <p className="mt-3 text-center text-sm leading-6 text-slate-400">
-            {APP_PRIVACY_COPY}
-          </p>
-          <p className="mt-2 text-center text-[0.8rem] leading-6 text-slate-400">
-            {REPORT_DELIVERY_DISCLOSURE}
-          </p>
-          <p className="mt-2 text-center text-xs leading-5 text-slate-400">
-            Review our{" "}
-            <Link className="underline underline-offset-2" href="/privacy">
+          <p className="mt-6 text-sm leading-6 text-ink-dim">
+            Your roof settings stay on this device for up to 48 hours. {REPORT_DELIVERY_DISCLOSURE} Installer
+            contact stays off unless you tick the box above. See our{" "}
+            <Link className="text-sky-200 underline underline-offset-4 hover:text-ink" href="/privacy">
               privacy notice
             </Link>{" "}
             and{" "}
-            <Link className="underline underline-offset-2" href="/terms">
+            <Link className="text-sky-200 underline underline-offset-4 hover:text-ink" href="/terms">
               estimate terms
             </Link>
             .
           </p>
 
-          <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-center">
-            <div className="rounded-[1rem] border border-white/8 bg-slate-950/28 px-4 py-3 text-sm text-slate-300">
-              Estimated annual savings:{" "}
-              <span className="font-semibold text-white">
-                {estimatedSavings > 0 ? formatCurrency(estimatedSavings) : "Run roof analysis first"}
-              </span>
-            </div>
-            <Button type="submit" disabled={status === "submitting"} className="min-h-12 w-full px-6 py-3.5 sm:w-auto">
+          <div className="mt-5">
+            <Button type="submit" disabled={status === "submitting"} className="min-h-12 w-full px-6 sm:w-auto">
               {status === "submitting" ? (
                 <span className="inline-flex items-center gap-2">
-                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-950/20 border-t-slate-950" />
-                  Sending full report...
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-on-sun/20 border-t-on-sun" />
+                  Sending your report…
                 </span>
               ) : (
-                "Send My Full Report"
+                "Send my full report"
               )}
             </Button>
           </div>
 
-          <div
-            className="mt-5 min-h-[3.25rem] rounded-[1.05rem] border border-white/8 bg-slate-950/35 px-4 py-3"
+          <p
             aria-live="polite"
+            className={`mt-3 text-sm font-medium ${status === "error" ? "text-rose-300" : "text-ink-muted"}`}
           >
-            <p
-              className={`text-sm font-medium ${
-                status === "error"
-                    ? "text-rose-300"
-                    : "text-slate-300"
-              }`}
-            >
-              {message}
-            </p>
-          </div>
+            {status === "idle" ? "" : message}
+          </p>
         </form>
 
-        <div className="relative h-full overflow-hidden rounded-[2rem] border border-white/10 bg-[linear-gradient(135deg,rgba(255,255,255,0.08),rgba(255,255,255,0.03))] p-6 shadow-[0_24px_80px_rgba(2,8,20,0.35)] backdrop-blur-xl">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(103,232,249,0.16),transparent_26%),radial-gradient(circle_at_bottom_left,rgba(59,130,246,0.12),transparent_24%)]" />
-          <div className="relative">
-            <p className="text-xs font-semibold uppercase tracking-[0.34em] text-cyan-300">
-              What happens next
-            </p>
-            <h4 className="mt-3 text-2xl font-semibold tracking-tight text-white">
-              What happens next
-            </h4>
-            <div className="mt-6 grid gap-3">
-              {[
-                "Validate report details",
-                "Email your full solar report",
-                "Prepare your report for installer review",
-              ].map((item, index) => (
-                <div
-                  key={item}
-                  className={`flex items-center gap-3 rounded-[1.1rem] border px-4 py-3 text-sm ${
-                    index === 0
-                      ? "border-white/8 bg-white/5 text-slate-100"
-                      : "border-white/6 bg-slate-950/20 text-slate-300"
-                  }`}
+        <aside aria-labelledby="report-next-steps-heading" className="h-fit rounded-card border border-ridge bg-night/50 p-5 sm:p-6">
+          <h4 id="report-next-steps-heading" className="text-lg font-semibold text-ink">
+            What happens next
+          </h4>
+          <ol className="mt-4 grid gap-4">
+            {[
+              ["We check your details", "So the report matches this address and bill."],
+              ["Your report arrives by email", "A PDF with your roof layout, savings and assumptions."],
+              ["An installer follows up, only if you asked", "Leave the box unticked and nobody calls."],
+            ].map(([title, detail], index) => (
+              <li key={title} className="flex gap-3">
+                <span
+                  aria-hidden="true"
+                  className="grid h-7 w-7 shrink-0 place-items-center rounded-full border border-ridge text-sm font-semibold text-ink"
                 >
-                  <span className="h-2.5 w-2.5 rounded-full bg-cyan-300 shadow-[0_0_18px_rgba(103,232,249,0.85)]" />
-                  {item}
-                </div>
-              ))}
-            </div>
-
-            <div
-              className={`mt-6 rounded-[1.5rem] border px-5 py-5 shadow-[0_18px_50px_rgba(2,8,20,0.25)] transition-all duration-500 ${
-                status === "submitting"
-                    ? "border-cyan-300/16 bg-slate-950/42"
-                    : "border-cyan-300/10 bg-slate-950/35"
-              }`}
-            >
-              <p className="text-[0.62rem] font-semibold uppercase tracking-[0.34em] text-cyan-300">
-                Report status
-              </p>
-              <p className="mt-3 text-lg font-semibold tracking-tight text-white">
-                {status === "submitting"
-                  ? "Sending your full report"
-                  : "Ready to generate your report"}
-              </p>
-              <p className="mt-2 text-sm leading-6 text-slate-300">
-                {status === "submitting"
-                  ? "Saving your preferences and preparing the PDF report."
-                  : "Complete the form once, then receive your homeowner PDF report by email."}
-              </p>
-              {status === "submitting" ? <StatusSkeleton /> : null}
-            </div>
-          </div>
-        </div>
+                  {index + 1}
+                </span>
+                <span>
+                  <span className="block text-sm font-semibold text-ink">{title}</span>
+                  <span className="mt-0.5 block text-sm leading-6 text-ink-muted">{detail}</span>
+                </span>
+              </li>
+            ))}
+          </ol>
+        </aside>
       </div>
 
     </div>
@@ -1122,16 +1045,16 @@ function SavedReportConfirmation({
   return (
     <section
       aria-labelledby="report-save-confirmation"
-      className="rounded-[1.6rem] border border-emerald-300/20 bg-emerald-300/[0.06] p-5 shadow-[0_24px_80px_rgba(2,8,20,0.35)] sm:p-6"
+      className="rounded-card border border-emerald-300/20 bg-emerald-300/[0.06] p-5 sm:p-6"
     >
-      <p className="text-xs font-semibold uppercase tracking-[0.34em] text-emerald-200">
+      <p className="text-xs font-semibold text-emerald-200">
         Report saved
       </p>
       <h3
         id="report-save-confirmation"
         ref={confirmationHeadingRef}
         tabIndex={-1}
-        className="mt-3 text-2xl font-semibold tracking-tight text-white"
+        className="mt-3 text-2xl font-semibold tracking-tight text-ink"
       >
         Your solar report is ready.
       </h3>
@@ -1144,7 +1067,7 @@ function SavedReportConfirmation({
         <p
           role="status"
           aria-live="polite"
-          className="mt-4 rounded-[1rem] border border-amber-200/20 bg-amber-200/10 px-4 py-3 text-sm leading-6 text-amber-50"
+          className="mt-4 rounded-card border border-amber-200/20 bg-amber-200/10 px-4 py-3 text-sm leading-6 text-amber-50"
         >
           Browser storage was unavailable, but your report was saved. This
           confirmation is kept on this page and no second request is needed.
@@ -1155,7 +1078,7 @@ function SavedReportConfirmation({
           href={lead.reportUrl}
           target="_blank"
           rel="noreferrer"
-          className="inline-flex min-h-12 items-center justify-center rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100"
+          className="btn btn-primary min-h-12 px-5 py-3"
         >
           Open PDF report
         </a>
@@ -1185,7 +1108,42 @@ type FieldProps = {
   prefix?: string;
   autoComplete?: string;
   helperText?: string;
+  required?: boolean;
 };
+
+const fieldInputBase =
+  "min-h-12 w-full rounded-control border px-4 py-3 text-base text-ink outline-none transition-colors";
+const fieldInputNormal =
+  "border-ridge bg-raised placeholder:text-ink-dim focus:border-sky-300";
+const fieldInputError =
+  "border-rose-300/80 bg-rose-950/25 placeholder:text-rose-100/60 focus:border-rose-200";
+
+function FieldLabel({
+  error,
+  htmlFor,
+  label,
+  required,
+}: {
+  error?: string;
+  htmlFor: string;
+  label: string;
+  required?: boolean;
+}) {
+  // The star is a sibling of the <label>, so the field's name stays exactly the label text;
+  // aria-required on the control tells assistive tech it is required.
+  return (
+    <span className="mb-2 flex items-baseline gap-1 text-sm font-semibold">
+      <label htmlFor={htmlFor} className={error ? "text-rose-100" : "text-ink"}>
+        {label}
+      </label>
+      {required ? (
+        <span aria-hidden="true" className="text-sun">
+          *
+        </span>
+      ) : null}
+    </span>
+  );
+}
 
 function Field({
   label,
@@ -1198,19 +1156,14 @@ function Field({
   prefix,
   autoComplete,
   helperText,
+  required = false,
 }: FieldProps) {
   const inputId = toFieldId(label);
   const descriptionId = `${inputId}-${error ? "error" : "help"}`;
 
   return (
-    <label className="block" htmlFor={inputId}>
-      <span
-        className={`mb-2 block text-xs font-semibold uppercase tracking-[0.22em] ${
-          error ? "text-rose-100" : "text-slate-300"
-        }`}
-      >
-        {label}
-      </span>
+    <div className="block">
+      <FieldLabel error={error} htmlFor={inputId} label={label} required={required} />
       <div className="relative">
         {prefix ? (
           <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-sm text-slate-400">
@@ -1226,14 +1179,9 @@ function Field({
           inputMode={inputMode}
           autoComplete={autoComplete}
           aria-invalid={Boolean(error)}
+          aria-required={required || undefined}
           aria-describedby={error || helperText ? descriptionId : undefined}
-          className={`min-h-12 w-full rounded-[1.05rem] border px-4 py-3 text-base text-white outline-none transition ${
-            prefix ? "pl-8" : ""
-          } ${
-            error
-              ? "border-rose-300/80 bg-rose-950/25 shadow-[0_0_0_1px_rgba(251,113,133,0.15),0_0_24px_rgba(244,63,94,0.12)] placeholder:text-rose-100/60 focus:border-rose-200 focus:bg-rose-950/35 focus:ring-2 focus:ring-rose-300/60 focus:ring-offset-2 focus:ring-offset-slate-950"
-              : "border-white/10 bg-slate-950/46 placeholder:text-slate-500 focus:border-cyan-300/45 focus:bg-slate-950/68"
-          }`}
+          className={`${fieldInputBase} ${prefix ? "pl-8" : ""} ${error ? fieldInputError : fieldInputNormal}`}
         />
       </div>
       {error ? (
@@ -1242,11 +1190,11 @@ function Field({
         </p>
       ) : null}
       {!error && helperText ? (
-        <p id={descriptionId} className="mt-2 text-sm leading-6 text-slate-400">
+        <p id={descriptionId} className="mt-2 text-sm leading-6 text-ink-dim">
           {helperText}
         </p>
       ) : null}
-    </label>
+    </div>
   );
 }
 
@@ -1256,6 +1204,7 @@ function SelectField({
   label,
   onChange,
   options,
+  required = false,
   value,
 }: {
   error?: string;
@@ -1263,31 +1212,23 @@ function SelectField({
   label: string;
   onChange: (value: string) => void;
   options: readonly string[];
+  required?: boolean;
   value: string;
 }) {
   const inputId = toFieldId(label);
   const descriptionId = `${inputId}-${error ? "error" : "help"}`;
 
   return (
-    <label className="block" htmlFor={inputId}>
-      <span
-        className={`mb-2 block text-xs font-semibold uppercase tracking-[0.22em] ${
-          error ? "text-rose-100" : "text-slate-300"
-        }`}
-      >
-        {label}
-      </span>
+    <div className="block">
+      <FieldLabel error={error} htmlFor={inputId} label={label} required={required} />
       <select
         id={inputId}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         aria-invalid={Boolean(error)}
+        aria-required={required || undefined}
         aria-describedby={error || helperText ? descriptionId : undefined}
-        className={`min-h-12 w-full rounded-[1.05rem] border px-4 py-3 text-base text-white outline-none transition ${
-          error
-            ? "border-rose-300/80 bg-rose-950/25 shadow-[0_0_0_1px_rgba(251,113,133,0.15),0_0_24px_rgba(244,63,94,0.12)] focus:border-rose-200 focus:bg-rose-950/35 focus:ring-2 focus:ring-rose-300/60 focus:ring-offset-2 focus:ring-offset-slate-950"
-            : "border-white/10 bg-slate-950/46 focus:border-cyan-300/45 focus:bg-slate-950/68"
-        }`}
+        className={`${fieldInputBase} ${error ? fieldInputError : fieldInputNormal}`}
       >
         <option value="" disabled className="bg-slate-950">
           Select an option
@@ -1304,11 +1245,11 @@ function SelectField({
         </p>
       ) : null}
       {!error && helperText ? (
-        <p id={descriptionId} className="mt-2 text-sm leading-6 text-slate-400">
+        <p id={descriptionId} className="mt-2 text-sm leading-6 text-ink-dim">
           {helperText}
         </p>
       ) : null}
-    </label>
+    </div>
   );
 }
 
@@ -1326,18 +1267,16 @@ function TextAreaField({
   const inputId = toFieldId(label);
 
   return (
-    <label className="block" htmlFor={inputId}>
-      <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.22em] text-slate-300">
-        {label}
-      </span>
+    <div className="block">
+      <FieldLabel htmlFor={inputId} label={label} />
       <textarea
         id={inputId}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
-        className="min-h-28 w-full resize-y rounded-[1.05rem] border border-white/10 bg-slate-950/46 px-4 py-3 text-base leading-7 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/45 focus:bg-slate-950/68"
+        className={`${fieldInputBase} ${fieldInputNormal} min-h-28 resize-y leading-7`}
       />
-    </label>
+    </div>
   );
 }
 
@@ -1361,11 +1300,11 @@ function UtilityBillUploadCard({
   return (
     <section
       aria-busy={isUploading}
-      className="mt-5 rounded-[1.35rem] border border-cyan-300/14 bg-cyan-300/[0.055] p-4"
+      className="mt-5 rounded-card border border-sky-300/14 bg-sky-300/[0.055] p-4"
     >
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex gap-3">
-          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-cyan-200/18 bg-cyan-300/10 text-cyan-100">
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-sky-200/18 bg-sky-300/10 text-sky-100">
             {isUploaded ? (
               <FileCheck2 className="h-5 w-5" aria-hidden="true" />
             ) : (
@@ -1373,7 +1312,7 @@ function UtilityBillUploadCard({
             )}
           </span>
           <div>
-            <p className="text-sm font-semibold text-white">
+            <p className="text-sm font-semibold text-ink">
               Make this estimate more accurate
             </p>
             <p className="mt-1 text-sm leading-6 text-slate-300">
@@ -1389,7 +1328,7 @@ function UtilityBillUploadCard({
         </div>
         <label
           htmlFor="utility-bill-upload"
-          className="inline-flex min-h-11 shrink-0 cursor-pointer items-center justify-center rounded-full border border-white/10 bg-white px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100 focus-within:ring-2 focus-within:ring-cyan-200 focus-within:ring-offset-2 focus-within:ring-offset-slate-950"
+          className="btn btn-secondary min-h-11 shrink-0 cursor-pointer px-4 py-2.5 focus-within:ring-2 focus-within:ring-sky-200 focus-within:ring-offset-2 focus-within:ring-offset-slate-950"
         >
           {isUploading
             ? "Choose another bill"
@@ -1412,7 +1351,7 @@ function UtilityBillUploadCard({
           <button
             type="button"
             onClick={onRemove}
-            className="inline-flex min-h-11 items-center justify-center rounded-full border border-white/12 bg-slate-950/45 px-4 py-2 text-xs font-semibold text-cyan-100 transition hover:border-cyan-200/35 hover:bg-slate-950/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200"
+            className="inline-flex min-h-11 items-center justify-center rounded-full border border-white/12 bg-slate-950/45 px-4 py-2 text-xs font-semibold text-sky-100 transition hover:border-sky-200/35 hover:bg-slate-950/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-200"
           >
             {isUploading ? "Continue without bill" : "Remove bill"}
           </button>
@@ -1434,7 +1373,7 @@ function UtilityBillUploadCard({
       ) : null}
       {state.error ? (
         <p
-          className="mt-3 rounded-[0.9rem] border border-rose-300/18 bg-rose-300/10 px-3 py-2 text-sm text-rose-100"
+          className="mt-3 rounded-card border border-rose-300/18 bg-rose-300/10 px-3 py-2 text-sm text-rose-100"
           role="alert"
           aria-atomic="true"
         >
@@ -1442,15 +1381,5 @@ function UtilityBillUploadCard({
         </p>
       ) : null}
     </section>
-  );
-}
-
-function StatusSkeleton() {
-  return (
-    <div className="mt-4 grid gap-2">
-      <div className="h-2.5 w-3/4 animate-pulse rounded-full bg-white/8" />
-      <div className="h-2.5 w-1/2 animate-pulse rounded-full bg-white/8 [animation-delay:140ms]" />
-      <div className="h-2.5 w-2/3 animate-pulse rounded-full bg-white/8 [animation-delay:280ms]" />
-    </div>
   );
 }

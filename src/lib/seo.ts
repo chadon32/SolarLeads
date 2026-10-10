@@ -32,7 +32,7 @@ export function publicPageMetadata({ title, description, path }: {
 
 // A deployment previously set NEXT_PUBLIC_SITE_URL to a Vercel dashboard URL.
 // Keep public SEO URLs independent of environment-specific application links.
-export const INDEXABLE_PATHS = ["/", "/solar-guide", "/privacy", "/terms"] as const;
+export const INDEXABLE_PATHS = ["/", "/solar-guide", "/about", "/privacy", "/terms"] as const;
 
 export function isPreviewDeployment() {
   return Boolean(process.env.VERCEL_ENV && process.env.VERCEL_ENV !== "production");

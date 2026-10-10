@@ -18,7 +18,7 @@ test("validates lead fields without transmitting a request", async ({ page }) =>
     if (request.url().includes("/api/leads")) leadRequests += 1;
   });
 
-  await page.getByRole("button", { name: "Send My Full Report" }).last().click();
+  await page.getByRole("button", { name: "Send my full report" }).last().click();
   await expect(page.locator("#lead-name-error")).toBeVisible();
   await expect(page.locator("#lead-email-error")).toBeVisible();
   expect(leadRequests).toBe(0);
@@ -30,7 +30,7 @@ test("moves keyboard focus to the report error summary", async ({ page }) => {
   await home.openReadyEstimate();
   await home.openReportForm();
 
-  await page.getByRole("button", { name: "Send My Full Report" }).last().click();
+  await page.getByRole("button", { name: "Send my full report" }).last().click();
 
   const summary = page
     .getByRole("alert")
@@ -50,7 +50,7 @@ test("highlights invalid fields and clears corrected entries on mobile", async (
   const home = new HomeEstimatePage(page);
   await home.openReadyEstimate();
   await home.openReportForm();
-  await page.getByRole("button", { name: "Send My Full Report" }).last().click();
+  await page.getByRole("button", { name: "Send my full report" }).last().click();
 
   const name = page.locator("#lead-name");
   const ownership = page.locator("#lead-owns-home-or-rents");
@@ -86,7 +86,7 @@ test("submits one mocked report request and preserves displayed report values", 
     }
   });
 
-  await page.getByLabel("Average monthly electric bill").selectOption("$200-$300");
+  await page.getByLabel("Average monthly electric bill").selectOption("$200–$299");
   await page.getByLabel("Owns home or rents").selectOption("Own");
   await page.getByLabel("Solar timeline").selectOption("Just researching");
   await page.getByLabel("Name").fill("Test Homeowner");
@@ -94,7 +94,7 @@ test("submits one mocked report request and preserves displayed report values", 
   await page.getByLabel("Phone (optional)").fill(TEST_PHONE);
   await expect(page.getByLabel("Name")).toHaveValue("Test Homeowner");
   await expect(page.getByLabel("Email")).toHaveValue(TEST_EMAIL);
-  const submit = page.getByRole("button", { name: "Send My Full Report" }).last();
+  const submit = page.getByRole("button", { name: "Send my full report" }).last();
   await submit.click();
 
   await expect(page).toHaveURL(/\/thank-you$/, { timeout: 15_000 });
@@ -120,13 +120,13 @@ test("shows a clear recovery path when report email delivery fails", async ({
   await home.openReadyEstimate();
   await home.openReportForm();
 
-  await page.getByLabel("Average monthly electric bill").selectOption("$200-$300");
+  await page.getByLabel("Average monthly electric bill").selectOption("$200–$299");
   await page.getByLabel("Owns home or rents").selectOption("Own");
   await page.getByLabel("Solar timeline").selectOption("Just researching");
   await page.getByLabel("Name").fill("Test Homeowner");
   await page.getByLabel("Email").fill(TEST_EMAIL);
   await page.getByLabel("Phone (optional)").fill(TEST_PHONE);
-  await page.getByRole("button", { name: "Send My Full Report" }).last().click();
+  await page.getByRole("button", { name: "Send my full report" }).last().click();
 
   await expect(page).toHaveURL(/\/thank-you$/, { timeout: 15_000 });
   await expect(page.getByText(/couldn't send your report email/i)).toBeVisible();
@@ -147,7 +147,7 @@ test("changing the report bill range preserves contact details", async ({ page }
   await page.getByLabel("Name").fill("Test Homeowner");
   await page.getByLabel("Email").fill(TEST_EMAIL);
   await page.getByLabel("Phone (optional)").fill(TEST_PHONE);
-  await page.getByLabel("Average monthly electric bill").selectOption("$200-$300");
+  await page.getByLabel("Average monthly electric bill").selectOption("$200–$299");
 
   await expect(page.getByLabel("Name")).toHaveValue("Test Homeowner");
   await expect(page.getByLabel("Email")).toHaveValue(TEST_EMAIL);
@@ -176,7 +176,7 @@ test("keeps an in-flight bill out of normal submit until explicitly removed", as
   await home.openReadyEstimate();
   await home.openReportForm();
 
-  await page.getByLabel("Average monthly electric bill").selectOption("$200-$300");
+  await page.getByLabel("Average monthly electric bill").selectOption("$200–$299");
   await page.getByLabel("Owns home or rents").selectOption("Own");
   await page.getByLabel("Solar timeline").selectOption("Just researching");
   await page.getByLabel("Name").fill("Test Homeowner");
@@ -196,7 +196,7 @@ test("keeps an in-flight bill out of normal submit until explicitly removed", as
     if (request.url().includes("/api/leads")) leadRequests += 1;
   });
 
-  await page.getByRole("button", { name: "Send My Full Report" }).last().click();
+  await page.getByRole("button", { name: "Send my full report" }).last().click();
   await expect(
     page.getByText(/utility bill is still uploading/i).first()
   ).toBeVisible();
@@ -206,7 +206,7 @@ test("keeps an in-flight bill out of normal submit until explicitly removed", as
   releaseUpload();
   await expect(page.getByRole("button", { name: "Upload bill" })).toBeVisible();
 
-  await page.getByRole("button", { name: "Send My Full Report" }).last().click();
+  await page.getByRole("button", { name: "Send my full report" }).last().click();
   await expect(page).toHaveURL(/\/thank-you$/, { timeout: 15_000 });
   expect(leadRequests).toBe(1);
 });

@@ -88,24 +88,16 @@ export function RedactedScenarioShareCard({
     <section
       id="scenario-share"
       aria-labelledby="scenario-share-title"
-      className="mt-5 rounded-[1rem] border border-cyan-200/18 bg-cyan-200/[0.035] p-4"
+      className="mt-1"
       data-testid="redacted-scenario-share-card"
     >
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <p className="text-[0.62rem] font-semibold uppercase tracking-[0.24em] text-cyan-100/80">
-            Privacy-safe share card
-          </p>
-          <h3 id="scenario-share-title" className="mt-2 text-lg font-semibold text-white">
-            Share a broad scenario, without your home details
-          </h3>
-        </div>
-        <span className="shrink-0 rounded-full border border-emerald-200/20 bg-emerald-300/10 px-3 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.16em] text-emerald-100">
-          Address-free by design
-        </span>
-      </div>
-      <p className="mt-2 max-w-2xl text-sm leading-6 text-white/62">
-        Choose a general label and preview the exact text before copying or sharing. This card never includes an address, bill, coordinates, contact details, or report identifier.
+      {/* The disclosure around this card already shows the visible title. */}
+      <h3 id="scenario-share-title" className="sr-only">
+        Share a broad scenario, without your home details
+      </h3>
+      <p className="max-w-2xl text-sm leading-6 text-ink-muted">
+        Pick broad labels, check the preview, then copy or share it. It never includes your address, bill,
+        coordinates, contact details or report link.
       </p>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -115,31 +107,31 @@ export function RedactedScenarioShareCard({
         <SelectField label="System size range" value={system} onChange={setSystem} options={SYSTEM_RANGE_OPTIONS} />
       </div>
 
-      <div className="mt-4 rounded-[0.95rem] border border-white/12 bg-slate-950/68 p-4" aria-live="polite">
+      <div className="mt-4 rounded-card border border-ridge bg-night p-4">
         <div className="flex items-center justify-between gap-3">
-          <p className="text-[0.62rem] font-semibold uppercase tracking-[0.2em] text-cyan-100/75">Preview</p>
-          <p className="text-xs text-white/60">Reviewed {SCENARIO_SHARE_ASSUMPTION_DATE}</p>
+          <p className="text-xs font-semibold text-sky-100/75">Preview</p>
+          <p className="text-xs text-ink-muted">Reviewed {SCENARIO_SHARE_ASSUMPTION_DATE}</p>
         </div>
-        <pre className="mt-3 whitespace-pre-wrap font-[inherit] text-sm leading-6 text-white/82">{shareText}</pre>
+        <pre className="mt-3 whitespace-pre-wrap font-[inherit] text-sm leading-6 text-ink-muted">{shareText}</pre>
       </div>
 
       <div className="mt-4 flex flex-col gap-2 sm:flex-row">
         <button
           type="button"
           onClick={() => void copyShareText()}
-          className="inline-flex min-h-11 flex-1 items-center justify-center rounded-full bg-cyan-200 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:-translate-y-0.5 hover:bg-white"
+          className="btn btn-secondary min-h-11 flex-1 px-5 py-3"
         >
           Copy redacted card
         </button>
         <button
           type="button"
           onClick={() => void shareWithDevice()}
-          className="inline-flex min-h-11 flex-1 items-center justify-center rounded-full border border-white/12 bg-white/[0.06] px-5 py-3 text-sm font-semibold text-white/82 transition hover:bg-white/[0.1] hover:text-white"
+          className="btn btn-secondary min-h-11 flex-1 px-5 py-3"
         >
           Share from this device
         </button>
       </div>
-      <p className="mt-2 text-center text-xs text-cyan-100/72" aria-live="polite">
+      <p className="mt-2 text-center text-xs text-sky-100/72" aria-live="polite">
         {status === "copied"
           ? "Safe scenario text copied or shared."
           : status === "unavailable"
@@ -162,12 +154,12 @@ function SelectField<T extends readonly string[]>({
   value: T[number];
 }) {
   return (
-    <label className="block text-xs text-white/62">
-      <span className="font-semibold uppercase tracking-[0.16em]">{label}</span>
+    <label className="block text-xs text-ink-muted">
+      <span className="font-semibold">{label}</span>
       <select
         value={value}
         onChange={(event) => onChange(event.target.value as T[number])}
-        className="mt-2 min-h-11 w-full rounded-[0.8rem] border border-white/12 bg-black/35 px-3 py-2 text-sm font-semibold text-white outline-none transition focus:border-cyan-200/60"
+        className="mt-2 min-h-11 w-full rounded-card border border-white/12 bg-black/35 px-3 py-2 text-sm font-semibold text-ink outline-none transition focus:border-sky-200/60"
       >
         {options.map((option) => (
           <option key={option} value={option} className="bg-slate-950">
