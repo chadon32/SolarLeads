@@ -27,7 +27,7 @@ test("ready estimate supports keyboard navigation and valid tab relationships", 
     exact: true,
   });
   const roofTab = reportTablist.getByRole("tab", {
-    name: "Roof & Shade",
+    name: "Roof & shade",
     exact: true,
   });
   const panelsTab = reportTablist.getByRole("tab", {

@@ -10,9 +10,9 @@ export default function ReportError({
   reset: () => void;
 }) {
   return (
-    <main className="min-h-screen bg-[#05070d] px-4 py-12 text-white sm:px-6">
-      <section className="mx-auto max-w-xl rounded-[1.5rem] border border-white/10 bg-white/[0.055] p-8 text-center shadow-[0_18px_70px_rgba(2,8,20,0.32)]">
-        <p className="text-xs font-semibold uppercase tracking-[0.32em] text-cyan-300">
+    <main className="min-h-screen bg-[#05070d] px-4 py-12 text-ink sm:px-6">
+      <section className="mx-auto max-w-xl rounded-card border border-white/10 bg-white/[0.055] p-8 text-center">
+        <p className="text-xs font-semibold text-sky-300">
           Report unavailable
         </p>
         <h1 className="mt-3 text-3xl font-semibold tracking-tight">
@@ -26,13 +26,13 @@ export default function ReportError({
           <button
             type="button"
             onClick={() => reset()}
-            className="rounded-full border border-white/10 bg-white/[0.08] px-5 py-3 text-sm font-semibold text-white transition hover:bg-white/[0.14]"
+            className="rounded-full border border-white/10 bg-white/[0.08] px-5 py-3 text-sm font-semibold text-ink transition hover:bg-white/[0.14]"
           >
             Try again
           </button>
           <Link
             href="/"
-            className="rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100"
+            className="btn btn-primary px-5 py-3"
           >
             Back to {APP_NAME}
           </Link>

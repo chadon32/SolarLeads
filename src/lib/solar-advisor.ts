@@ -22,8 +22,14 @@ export type SolarAdvisorQuestion = {
   answer: string;
 };
 
+export type SolarReadinessLabel =
+  | "Strong Candidate"
+  | "Good Candidate"
+  | "Preliminary Estimate"
+  | "Installer Verification Required";
+
 export type SolarAdvisorProfile = {
-  candidateLabel: "strong" | "moderate" | "weak";
+  candidateLabel: SolarReadinessLabel;
   summary: string;
   suitability: SuitabilityExplanation;
   sunlightQuality: {
@@ -63,7 +69,7 @@ const DISCLAIMER =
 export function buildSolarAdvisorProfile(input: SolarAdvisorInput): SolarAdvisorProfile {
   const suitability = generateSuitabilityExplanation(input);
   const sunlightQuality = calculateSunlightQuality(input);
-  const candidateLabel = getCandidateLabel(suitability.score);
+  const candidateLabel = getSolarReadinessLabel(suitability.score);
   const summary = generateSolarAdvisorSummary(input, suitability.score, candidateLabel);
 
   return {
@@ -74,6 +80,29 @@ export function buildSolarAdvisorProfile(input: SolarAdvisorInput): SolarAdvisor
     sunlightQuality,
     summary,
   };
+}
+
+export function calculateSolarReadinessScore(
+  input: Pick<
+    SolarAdvisorInput,
+    "annualSunlightHours" | "coveragePct" | "panelCount" | "usablePctRoof"
+  >
+) {
+  const sunlightScore = clamp((input.annualSunlightHours / 2100) * 100, 0, 100);
+  const areaScore = clamp(input.usablePctRoof, 0, 100);
+  const panelScore = clamp((input.panelCount / 24) * 100, 0, 100);
+  const offsetScore = clamp(input.coveragePct, 0, 100);
+
+  return clamp(
+    Math.round(
+      sunlightScore * 0.28 +
+        areaScore * 0.22 +
+        panelScore * 0.26 +
+        offsetScore * 0.24
+    ),
+    0,
+    100
+  );
 }
 
 export function buildSolarAdvisorInputFromAnalysis(
@@ -93,24 +122,33 @@ export function buildSolarAdvisorInputFromAnalysis(
     rejectedCandidateCount: metrics.rejectedCandidateCount,
     roofSegments: analysis.roofSegments,
     shadingRisk: analysis.shadingRisk,
-    suitabilityScore: analysis.rooftopConfidenceScore,
     systemKw: metrics.systemKw,
     usablePctRoof: metrics.usablePctRoof,
     usableRoofAreaM2: metrics.usableRoofAreaM2,
   };
 }
 
+/** The one readiness scale for every surface: estimate page, saved report and PDF. */
+export function getSolarReadinessLabel(score: number): SolarReadinessLabel {
+  if (score >= 85) return "Strong Candidate";
+  if (score >= 65) return "Good Candidate";
+  if (score >= 45) return "Preliminary Estimate";
+  return "Installer Verification Required";
+}
+
 export function generateSolarAdvisorSummary(
   input: SolarAdvisorInput,
   score = getSuitabilityScore(input),
-  candidateLabel = getCandidateLabel(score)
+  candidateLabel = getSolarReadinessLabel(score)
 ) {
   const candidateCopy =
-    candidateLabel === "strong"
+    candidateLabel === "Strong Candidate"
       ? "strong preliminary"
-      : candidateLabel === "moderate"
-        ? "moderate preliminary"
-        : "limited preliminary";
+      : candidateLabel === "Good Candidate"
+        ? "good preliminary"
+        : candidateLabel === "Preliminary Estimate"
+          ? "moderate preliminary"
+          : "limited preliminary";
   const systemSize =
     input.systemKw > 0 ? `${input.systemKw.toFixed(1)} kW` : "the recommended system";
   const panelCopy =
@@ -120,7 +158,7 @@ export function generateSolarAdvisorSummary(
       ? `$${Math.round(input.annualSavings).toLocaleString()} per year`
       : "the homeowner's bill and utility assumptions";
 
-  if (candidateLabel === "strong") {
+  if (candidateLabel === "Strong Candidate") {
     return `Your home appears to be a ${candidateCopy} solar candidate based on available satellite and solar data. The current roof model supports ${panelCopy}, a modeled ${systemSize} system, and estimated annual savings of ${savingsCopy}. Panels are prioritized on usable roof planes with stronger sunlight, cleaner geometry, and fewer placement conflicts. Savings are modeled using the monthly bill input and Arizona assumptions. ${DISCLAIMER}`;
   }
 
@@ -277,22 +315,7 @@ function getSuitabilityScore(input: SolarAdvisorInput) {
     return clamp(Math.round(input.suitabilityScore), 0, 100);
   }
 
-  const sunlightScore = clamp((input.annualSunlightHours / 2100) * 100, 0, 100);
-  const areaScore = clamp(input.usablePctRoof, 0, 100);
-  const panelScore = clamp((input.panelCount / 24) * 100, 0, 100);
-  const offsetScore = clamp(input.coveragePct, 0, 100);
-
-  return clamp(
-    Math.round(sunlightScore * 0.28 + areaScore * 0.22 + panelScore * 0.26 + offsetScore * 0.24),
-    0,
-    100
-  );
-}
-
-function getCandidateLabel(score: number): SolarAdvisorProfile["candidateLabel"] {
-  if (score >= 80) return "strong";
-  if (score >= 60) return "moderate";
-  return "weak";
+  return calculateSolarReadinessScore(input);
 }
 
 function buildAdvisorQuestions(

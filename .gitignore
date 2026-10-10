@@ -43,6 +43,7 @@ dev-start.log
 /.codex-screenshots/
 /playwright-report/
 /qa-evidence/
+/output/pdf/
 /test-results/
 /videos/**/node_modules/
 /videos/**/out/

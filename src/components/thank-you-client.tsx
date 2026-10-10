@@ -16,6 +16,11 @@ import {
   APP_NAME,
   APP_PRIVACY_COPY,
 } from "@/lib/brand";
+import {
+  getReportEmailDeliveryCopy,
+  normalizeReportEmailDeliveryStatus,
+  type ReportEmailDeliveryStatus,
+} from "@/lib/report-email-status";
 
 type ThankYouPayload = {
   address?: string;
@@ -25,7 +30,7 @@ type ThankYouPayload = {
   batteryCost?: number;
   batteryModel?: string;
   email?: string;
-  emailDeliveryStatus?: "sent" | "delayed";
+  emailDeliveryStatus?: ReportEmailDeliveryStatus;
   firstName?: string;
   panelBrand?: string;
   panelCount?: number;
@@ -49,7 +54,7 @@ const fallbackPayload: Required<Omit<ThankYouPayload, "reportUrl">> & {
   batteryCost: 0,
   batteryModel: "",
   email: "",
-  emailDeliveryStatus: "delayed",
+  emailDeliveryStatus: "unavailable",
   firstName: "there",
   panelBrand: "",
   panelCount: 0,
@@ -94,8 +99,9 @@ export function ThankYouClient() {
       panelBrand: source.panelBrand || "",
       panelModel: source.panelModel || "",
       paybackYears: safeNumber(source.paybackYears),
-      emailDeliveryStatus:
-        source.emailDeliveryStatus === "sent" ? "sent" : "delayed",
+      emailDeliveryStatus: normalizeReportEmailDeliveryStatus(
+        source.emailDeliveryStatus
+      ),
       preferredContactMethod: source.preferredContactMethod || "Not requested",
       quoteRequested: Boolean(source.quoteRequested),
       referralCode: source.referralCode || null,
@@ -104,9 +110,12 @@ export function ThankYouClient() {
     };
   }, [payload]);
   const hasStoredPayload = Boolean(payload && Object.keys(payload).length > 0);
+  const emailDeliveryCopy = getReportEmailDeliveryCopy(
+    summary.emailDeliveryStatus
+  );
   const nameSuffix =
     hasStoredPayload && summary.firstName !== "there"
-      ? `, ${summary.firstName}`
+      ?`, ${summary.firstName}`
       : "";
   const referralUrl =
     summary.referralCode && typeof window !== "undefined"
@@ -124,19 +133,19 @@ export function ThankYouClient() {
     : "";
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-black text-white">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(103,232,249,0.18),transparent_32%),radial-gradient(circle_at_80%_20%,rgba(251,191,36,0.12),transparent_28%),linear-gradient(180deg,#030712_0%,#07111d_52%,#02040a_100%)]" />
+    <main className="relative min-h-screen overflow-hidden bg-black text-ink">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(124,203,230,0.18),transparent_32%),radial-gradient(circle_at_80%_20%,rgba(251,191,36,0.12),transparent_28%),linear-gradient(180deg,#030712_0%,#07111d_52%,#02040a_100%)]" />
       <div className="absolute inset-x-0 bottom-0 h-1/2 bg-[linear-gradient(180deg,transparent,rgba(8,13,22,0.92))]" />
 
       <section className="relative z-10 mx-auto flex min-h-screen w-full max-w-6xl flex-col justify-center px-5 py-10 sm:px-8">
-        <div className="mx-auto w-full max-w-4xl rounded-[2rem] border border-white/12 bg-white/[0.055] p-5 shadow-[0_32px_100px_rgba(0,0,0,0.42)] backdrop-blur-2xl sm:p-8">
+        <div className="mx-auto w-full max-w-4xl rounded-card border border-white/12 bg-white/[0.055] p-5 backdrop-blur-2xl sm:p-8">
           <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
             <div>
-              <span className="inline-flex items-center gap-2 rounded-full border border-emerald-300/20 bg-emerald-300/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.22em] text-emerald-100">
+              <span className="inline-flex items-center gap-2 rounded-full border border-emerald-300/20 bg-emerald-300/10 px-3 py-1 text-xs font-semibold text-emerald-100">
                 <CheckCircle2 className="h-4 w-4" />
                 {summary.quoteRequested ? "Request received" : "Report ready"}
               </span>
-              <h1 className="mt-5 text-4xl font-semibold tracking-tight text-white sm:text-5xl">
+              <h1 className="mt-5 text-4xl font-semibold tracking-tight text-ink sm:text-5xl">
                 {summary.quoteRequested
                   ? `Your quote request was received${nameSuffix}.`
                   : `Your solar report is ready${nameSuffix}.`}
@@ -145,12 +154,14 @@ export function ThankYouClient() {
                 {!hasStoredPayload
                   ? "This page is normally opened after a report request. Return to your estimate to generate or request a report."
                   : summary.quoteRequested
-                  ? "Your report is available and your optional installer follow-up request was recorded."
+                  ? summary.emailDeliveryStatus === "sent"
+                    ? "Your report is ready, your email was sent, and your optional installer follow-up request was recorded."
+                    : `${emailDeliveryCopy.message} Your optional installer follow-up request was recorded.`
                   : summary.emailDeliveryStatus === "sent"
                     ? `We emailed your personalized ${APP_NAME} report. No installer follow-up was requested.`
-                    : `Your personalized ${APP_NAME} report is available now. Email delivery may be delayed, and no installer follow-up was requested.`}
+                    : `${emailDeliveryCopy.message} No installer follow-up was requested.`}
               </p>
-              <p className="mt-4 rounded-[1rem] border border-white/8 bg-slate-950/28 px-4 py-3 text-sm leading-6 text-slate-300">
+              <p className="mt-4 rounded-card border border-white/8 bg-slate-950/28 px-4 py-3 text-sm leading-6 text-slate-300">
                 {APP_PRIVACY_COPY}
               </p>
               {summary.quoteRequested ? (
@@ -166,24 +177,24 @@ export function ThankYouClient() {
             </div>
             <Link
               href="/"
-              className="inline-flex shrink-0 items-center justify-center rounded-full border border-white/12 bg-white/8 px-5 py-3 text-sm font-semibold text-white transition hover:border-cyan-200/35 hover:bg-cyan-200/12"
+              className="inline-flex shrink-0 items-center justify-center rounded-full border border-white/12 bg-white/8 px-5 py-3 text-sm font-semibold text-ink transition hover:border-sky-200/35 hover:bg-sky-200/12"
             >
               Back to my estimate
             </Link>
           </div>
 
           <div className="mt-8 grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
-            <article className="rounded-[1.5rem] border border-white/10 bg-slate-950/42 p-5">
-              <p className="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-200">
+            <article className="rounded-card border border-white/10 bg-slate-950/42 p-5">
+              <p className="text-xs font-semibold text-sky-200">
                 Report summary
               </p>
-              <div className="mt-4 flex items-start gap-3 rounded-[1.1rem] border border-white/8 bg-white/[0.04] p-4">
-                <MapPin className="mt-1 h-5 w-5 shrink-0 text-cyan-200" />
+              <div className="mt-4 flex items-start gap-3 rounded-card border border-white/8 bg-white/[0.04] p-4">
+                <MapPin className="mt-1 h-5 w-5 shrink-0 text-sky-200" />
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
+                  <p className="text-xs font-semibold text-slate-500">
                     Address
                   </p>
-                  <p className="mt-1 text-base font-medium text-white">
+                  <p className="mt-1 text-base font-medium text-ink">
                     {summary.address}
                   </p>
                 </div>
@@ -225,7 +236,7 @@ export function ThankYouClient() {
                   href={summary.reportUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-full bg-white px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100"
+                  className="btn btn-primary mt-5 w-full gap-2 px-5 py-3"
                 >
                   <FileText className="h-4 w-4" />
                   Open PDF report
@@ -233,24 +244,16 @@ export function ThankYouClient() {
               ) : null}
             </article>
 
-            <article className="rounded-[1.5rem] border border-white/10 bg-slate-950/42 p-5">
-              <p className="text-xs font-semibold uppercase tracking-[0.3em] text-cyan-200">
+            <article className="rounded-card border border-white/10 bg-slate-950/42 p-5">
+              <p className="text-xs font-semibold text-sky-200">
                 What happens next
               </p>
               <div className="mt-5 grid gap-3">
                 <NextStep
                   index="1"
                   icon={Mail}
-                  title={
-                    summary.emailDeliveryStatus === "sent"
-                      ? "Your report email was sent"
-                      : "Your report is available now"
-                  }
-                  body={
-                    summary.emailDeliveryStatus === "sent"
-                      ? "A secure report link was sent to the email you entered."
-                      : "Use the report button here while email delivery is retried or reviewed."
-                  }
+                  title={emailDeliveryCopy.title}
+                  body={emailDeliveryCopy.message}
                 />
                 <NextStep
                   index="2"
@@ -276,11 +279,11 @@ export function ThankYouClient() {
             </article>
           </div>
 
-          <section className="mt-5 rounded-[1.5rem] border border-amber-300/14 bg-amber-300/[0.055] p-5">
-            <p className="text-xs font-semibold uppercase tracking-[0.3em] text-amber-100">
+          <section className="mt-5 rounded-card border border-amber-300/14 bg-amber-300/[0.055] p-5">
+            <p className="text-xs font-semibold text-amber-100">
                 Share Your Report
             </p>
-            <h2 className="mt-3 text-2xl font-semibold text-white">
+            <h2 className="mt-3 text-2xl font-semibold text-ink">
               Know someone curious about solar?
             </h2>
             <p className="mt-2 text-sm leading-6 text-slate-300">
@@ -294,13 +297,13 @@ export function ThankYouClient() {
                     href={whatsappUrl}
                     target="_blank"
                     rel="noreferrer"
-                    className="rounded-full border border-white/10 bg-white/[0.06] px-4 py-2.5 text-center text-sm font-semibold text-white transition hover:bg-white/[0.1]"
+                    className="rounded-full border border-white/10 bg-white/[0.06] px-4 py-2.5 text-center text-sm font-semibold text-ink transition hover:bg-white/[0.1]"
                   >
                     Share on WhatsApp
                   </a>
                   <a
                     href={smsUrl}
-                    className="rounded-full border border-white/10 bg-white/[0.06] px-4 py-2.5 text-center text-sm font-semibold text-white transition hover:bg-white/[0.1]"
+                    className="rounded-full border border-white/10 bg-white/[0.06] px-4 py-2.5 text-center text-sm font-semibold text-ink transition hover:bg-white/[0.1]"
                   >
                     Share via text
                   </a>
@@ -309,7 +312,7 @@ export function ThankYouClient() {
                     onClick={() => {
                       void navigator.clipboard?.writeText(referralUrl);
                     }}
-                    className="rounded-full bg-white px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-100"
+                    className="btn btn-secondary px-4 py-2.5"
                   >
                     Copy link
                   </button>
@@ -332,11 +335,11 @@ export function ThankYouClient() {
 
 function SummaryMetric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-[1.05rem] border border-white/8 bg-white/[0.04] p-4">
-      <p className="text-[0.62rem] font-semibold uppercase tracking-[0.22em] text-slate-500">
+    <div className="rounded-card border border-white/8 bg-white/[0.04] p-4">
+      <p className="text-xs font-semibold text-slate-500">
         {label}
       </p>
-      <p className="mt-2 text-xl font-semibold text-white">{value}</p>
+      <p className="mt-2 text-xl font-semibold text-ink">{value}</p>
     </div>
   );
 }
@@ -353,12 +356,12 @@ function NextStep({
   title: string;
 }) {
   return (
-    <div className="flex gap-3 rounded-[1.1rem] border border-white/8 bg-white/[0.04] p-4">
-      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-cyan-300/18 bg-cyan-300/10 text-cyan-100">
+    <div className="flex gap-3 rounded-card border border-white/8 bg-white/[0.04] p-4">
+      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-sky-300/18 bg-sky-300/10 text-sky-100">
         <Icon className="h-4 w-4" />
       </span>
       <div>
-        <p className="text-sm font-semibold text-white">
+        <p className="text-sm font-semibold text-ink">
           {index}. {title}
         </p>
         <p className="mt-1 text-sm leading-6 text-slate-400">{body}</p>

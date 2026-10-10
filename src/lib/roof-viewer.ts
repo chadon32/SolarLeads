@@ -27,14 +27,87 @@ export function buildPanelInstanceMatrices(panel: ViewerPanel) {
   };
 }
 
-export function getRoofCameraPose(bounds: ModelBounds, aspect: number, top = false) {
-  const target = new Vector3().addVectors(new Vector3(...bounds.min), new Vector3(...bounds.max)).multiplyScalar(0.5);
-  const radius = Math.max(2, new Vector3(...bounds.max).distanceTo(new Vector3(...bounds.min)) / 2);
-  const verticalFov = 42 * Math.PI / 180;
+const OUTLINE_LIFT_METERS = 0.004;
+const GLASS_CORNERS = [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]] as const;
+
+/**
+ * Line-segment pairs (xyz, xyz) tracing each module's glass edge, lifted
+ * just above the glass. Module frames are sub-pixel at overview zoom, so the
+ * viewer draws these as one batched fat-line call to keep arrays countable.
+ */
+export function buildPanelOutlineSegments(panels: ViewerPanel[]): Float32Array {
+  const segments = new Float32Array(panels.length * 24);
+  const point = new Vector3();
+  panels.forEach((panel, index) => {
+    const { glass } = buildPanelInstanceMatrices(panel);
+    for (let edge = 0; edge < 4; edge++) {
+      const ends = [GLASS_CORNERS[edge], GLASS_CORNERS[(edge + 1) % 4]];
+      ends.forEach(([x, y], end) => {
+        point.set(x, y, OUTLINE_LIFT_METERS).applyMatrix4(glass);
+        segments.set([point.x, point.y, point.z], index * 24 + edge * 6 + end * 3);
+      });
+    }
+  });
+  return segments;
+}
+
+/** Share of the available half-width/height the framed model may use. */
+const FRAMING_MARGIN = 0.9;
+
+/**
+ * Camera pose that fits the model in the viewport, or in an overlay-free part
+ * of it: `aspect` is that area's width ÷ height and `heightFraction` its share
+ * of the canvas height (the projection is shifted onto it with setViewOffset).
+ */
+export function getRoofCameraPose(bounds: ModelBounds, aspect: number, top = false, heightFraction = 1) {
+  const min = new Vector3(...bounds.min);
+  const max = new Vector3(...bounds.max);
+  const target = new Vector3().addVectors(min, max).multiplyScalar(0.5);
+  const fraction = Number.isFinite(heightFraction) && heightFraction > 0 ? Math.min(1, heightFraction) : 1;
   const safeAspect = Number.isFinite(aspect) && aspect > 0 ? aspect : 1;
-  const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * safeAspect);
-  const distance = radius / Math.sin(Math.min(verticalFov, horizontalFov) / 2) * 1.12;
   // Local -Z is north. Keep north at the top of the overhead view.
-  const direction = top ? new Vector3(0, 1, 0.001) : new Vector3(0.65, 0.9, 0.85).normalize();
+  const direction = (top ? new Vector3(0, 1, 0.001) : new Vector3(0.65, 0.9, 0.85)).normalize();
+  // Camera basis as lookAt builds it (world up = +Y).
+  const right = new Vector3().crossVectors(direction.clone().negate(), new Vector3(0, 1, 0)).normalize();
+  const up = new Vector3().crossVectors(right, direction.clone().negate());
+  // Fit the box corners themselves, with a margin: a bounding sphere leaves a low, wide house small.
+  const tanVertical = Math.tan((21 * Math.PI) / 180) * fraction * FRAMING_MARGIN;
+  const tanHorizontal = tanVertical * safeAspect;
+  let distance = 0;
+  for (const x of [min.x, max.x]) for (const y of [min.y, max.y]) for (const z of [min.z, max.z]) {
+    const offset = new Vector3(x, y, z).sub(target);
+    const toward = offset.dot(direction);
+    distance = Math.max(distance, toward + Math.abs(offset.dot(right)) / tanHorizontal, toward + Math.abs(offset.dot(up)) / tanVertical);
+  }
   return { target, position: target.clone().addScaledVector(direction, distance), distance };
+}
+
+/** Presets reframe the roof; zooms and turns leave the visitor's own view in place. */
+export function cameraCommandKeepsFraming(action: string) {
+  return action === "fit" || action === "top" || action === "perspective";
+}
+
+/**
+ * What the camera does when a command arrives or the layout changes. A new
+ * model is framed at once; commands ease (unless motion is reduced); layout
+ * changes (resize, overlays appearing) re-frame only a view nobody has moved,
+ * in the preset it was left in.
+ */
+export function planCameraUpdate({
+  command,
+  newModel,
+  userMoved,
+  reducedMotion,
+  preset,
+}: {
+  command: string | null;
+  newModel: boolean;
+  userMoved: boolean;
+  reducedMotion: boolean;
+  /** The last framing preset applied ("fit", "top" or "perspective"). */
+  preset: string;
+}): { action: string; animate: boolean } | null {
+  if (newModel) return { action: "fit", animate: false };
+  if (command) return { action: command, animate: !reducedMotion };
+  return userMoved ? null : { action: preset, animate: false };
 }

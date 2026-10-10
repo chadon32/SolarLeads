@@ -73,7 +73,7 @@ test("3D roof model remains usable without horizontal page overflow", async ({
   const home = new HomeEstimatePage(page);
   await home.openReadyEstimate();
 
-  await page.getByRole("tab", { name: "3D Model" }).click();
+  await page.getByRole("tab", { name: "3D model" }).click();
   const scene = page.getByTestId("roof-scene-3d");
   await expect(scene).toBeVisible({ timeout: 20_000 });
   await expect(scene).toHaveAttribute("data-rendered-panel-count", "19");

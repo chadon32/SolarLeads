@@ -1,27 +1,28 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { APP_CANONICAL_URL, APP_NAME } from "@/lib/brand";
+import { APP_NAME } from "@/lib/brand";
+import { publicPageMetadata } from "@/lib/seo";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = publicPageMetadata({
   title: "Privacy Notice",
   description: `How ${APP_NAME} uses information submitted for a solar report.`,
-  alternates: { canonical: `${APP_CANONICAL_URL}/privacy` },
-};
+  path: "/privacy",
+});
 
 export default function PrivacyPage() {
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top,rgba(34,211,238,0.14),transparent_32%),#05070b] px-5 py-12 text-slate-100 sm:px-8">
-      <article className="mx-auto max-w-3xl rounded-[1.5rem] border border-white/10 bg-slate-950/72 p-6 shadow-[0_24px_80px_rgba(0,0,0,0.35)] sm:p-9">
-        <p className="text-xs font-semibold uppercase tracking-[0.28em] text-cyan-300">
+    <main className="min-h-screen bg-night px-5 py-12 text-ink sm:px-8">
+      <article className="mx-auto max-w-3xl rounded-card border border-white/10 bg-slate-950/72 p-6 sm:p-9">
+        <p className="text-xs font-semibold text-sky-300">
           {APP_NAME}
         </p>
         <h1 className="mt-3 text-4xl font-semibold tracking-tight">Privacy notice</h1>
-        <p className="mt-4 text-sm leading-7 text-slate-300">
+        <p className="mt-4 text-sm leading-7 text-ink-muted">
           This notice explains what information Solartelligence uses to prepare
           your report, how service providers help deliver it, and the choices
           available to you.
         </p>
-        <p className="mt-2 text-xs font-medium uppercase tracking-[0.14em] text-slate-500">
+        <p className="mt-2 text-xs font-medium text-ink-dim">
           Last updated August 2, 2026
         </p>
         <NoticeSection title="Information collected">
@@ -64,13 +65,13 @@ export default function PrivacyPage() {
           <div className="mt-4 grid gap-3 sm:grid-cols-3">
             <a
               href="mailto:reports@solartelligence.com?subject=Data%20access%20request"
-              className="inline-flex min-h-11 items-center justify-center rounded-full border border-white/12 bg-white/[0.06] px-4 py-3 text-center text-sm font-semibold text-white transition hover:border-cyan-200/35 hover:bg-cyan-200/10"
+              className="inline-flex min-h-11 items-center justify-center rounded-full border border-white/12 bg-white/[0.06] px-4 py-3 text-center text-sm font-semibold text-ink transition hover:border-sky-200/35 hover:bg-sky-200/10"
             >
               Request my data
             </a>
             <a
               href="mailto:reports@solartelligence.com?subject=Report%20data%20correction"
-              className="inline-flex min-h-11 items-center justify-center rounded-full border border-white/12 bg-white/[0.06] px-4 py-3 text-center text-sm font-semibold text-white transition hover:border-cyan-200/35 hover:bg-cyan-200/10"
+              className="inline-flex min-h-11 items-center justify-center rounded-full border border-white/12 bg-white/[0.06] px-4 py-3 text-center text-sm font-semibold text-ink transition hover:border-sky-200/35 hover:bg-sky-200/10"
             >
               Correct my data
             </a>
@@ -84,7 +85,7 @@ export default function PrivacyPage() {
         </NoticeSection>
         <Link
           href="/"
-          className="mt-9 inline-flex min-h-11 items-center rounded-full bg-cyan-100 px-5 py-3 text-sm font-semibold text-slate-950"
+          className="mt-9 inline-flex min-h-11 items-center btn btn-primary"
         >
           Back to {APP_NAME}
         </Link>
@@ -102,8 +103,8 @@ function NoticeSection({
 }) {
   return (
     <section className="mt-7 border-t border-white/10 pt-6">
-      <h2 className="text-xl font-semibold text-white">{title}</h2>
-      <div className="mt-2 text-sm leading-7 text-slate-300">{children}</div>
+      <h2 className="text-xl font-semibold text-ink">{title}</h2>
+      <div className="mt-2 text-sm leading-7 text-ink-muted">{children}</div>
     </section>
   );
 }

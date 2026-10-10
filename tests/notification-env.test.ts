@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getNotificationEnvStatus } from "../src/lib/notification-env";
+import {
+  getNotificationEnvStatus,
+  getResendFromEmail,
+} from "../src/lib/notification-env";
 
 const envKeys = [
   "RESEND_API_KEY",
@@ -40,3 +43,50 @@ test("notification status treats admin email as optional", () => {
   }
 });
 
+test("Gmail sender configuration falls back to the verified branded sender", () => {
+  const originalFrom = process.env.FROM_EMAIL;
+  const originalResendFrom = process.env.RESEND_FROM_EMAIL;
+
+  try {
+    process.env.FROM_EMAIL = "chadon322@gmail.com";
+    delete process.env.RESEND_FROM_EMAIL;
+
+    assert.equal(getResendFromEmail(), "reports@solartelligence.com");
+  } finally {
+    if (originalFrom === undefined) delete process.env.FROM_EMAIL;
+    else process.env.FROM_EMAIL = originalFrom;
+    if (originalResendFrom === undefined) delete process.env.RESEND_FROM_EMAIL;
+    else process.env.RESEND_FROM_EMAIL = originalResendFrom;
+  }
+});
+
+test("verified configured sender takes precedence over an unverified Gmail sender", () => {
+  const originalFrom = process.env.FROM_EMAIL;
+  const originalResendFrom = process.env.RESEND_FROM_EMAIL;
+
+  try {
+    process.env.FROM_EMAIL = "Chadon <chadon322@gmail.com>";
+    process.env.RESEND_FROM_EMAIL = "reports@solartelligence.com";
+
+    assert.equal(getResendFromEmail(), "reports@solartelligence.com");
+  } finally {
+    if (originalFrom === undefined) delete process.env.FROM_EMAIL;
+    else process.env.FROM_EMAIL = originalFrom;
+    if (originalResendFrom === undefined) delete process.env.RESEND_FROM_EMAIL;
+    else process.env.RESEND_FROM_EMAIL = originalResendFrom;
+  }
+});
+
+test("non-Gmail custom senders remain configurable", () => {
+  const originalFrom = process.env.FROM_EMAIL;
+
+  try {
+    process.env.FROM_EMAIL = "reports@mail.example.com";
+    delete process.env.RESEND_FROM_EMAIL;
+
+    assert.equal(getResendFromEmail(), "reports@mail.example.com");
+  } finally {
+    if (originalFrom === undefined) delete process.env.FROM_EMAIL;
+    else process.env.FROM_EMAIL = originalFrom;
+  }
+});

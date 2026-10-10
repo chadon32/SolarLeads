@@ -19,14 +19,31 @@ import {
 } from "../src/lib/phone";
 
 test("bill range helpers map form ranges to stable monthly estimates", () => {
-  assert.equal(getBillRangeByMonthlyBill(0), "$100-$200");
+  assert.equal(getBillRangeByMonthlyBill(0), "$100–$199");
   assert.equal(getBillRangeByMonthlyBill(99.99), "Under $100");
-  assert.equal(getBillRangeByMonthlyBill(150), "$100-$200");
-  assert.equal(getBillRangeByMonthlyBill(250), "$200-$300");
-  assert.equal(getBillRangeByMonthlyBill(350), "$300-$400");
-  assert.equal(getBillRangeByMonthlyBill(401), "$400+");
-  assert.equal(getMonthlyBillFromRange("$300-$400"), 350);
+  assert.equal(getBillRangeByMonthlyBill(150), "$100–$199");
+  assert.equal(getBillRangeByMonthlyBill(250), "$200–$299");
+  assert.equal(getBillRangeByMonthlyBill(350), "$300–$399");
+  assert.equal(getBillRangeByMonthlyBill(401), "$400 or more");
+  assert.equal(getMonthlyBillFromRange("$300–$399"), 350);
   assert.equal(getMonthlyBillFromRange("not a range"), 200);
+});
+
+test("bill ranges do not overlap: a round-number bill lands in exactly one range", () => {
+  assert.equal(getBillRangeByMonthlyBill(100), "$100–$199");
+  assert.equal(getBillRangeByMonthlyBill(199.99), "$100–$199");
+  assert.equal(getBillRangeByMonthlyBill(200), "$200–$299");
+  assert.equal(getBillRangeByMonthlyBill(300), "$300–$399");
+  assert.equal(getBillRangeByMonthlyBill(400), "$400 or more");
+});
+
+test("leads saved with the earlier overlapping range labels still map and score", () => {
+  assert.equal(getMonthlyBillFromRange("$300-$400"), 350);
+  assert.equal(getMonthlyBillFromRange("$400+"), 450);
+  const base = { monthlyBill: null as number | null };
+  const legacy = calculateLeadScore({ ...base, electricBillRange: "$300-$400" } as Parameters<typeof calculateLeadScore>[0]);
+  const current = calculateLeadScore({ ...base, electricBillRange: "$300–$399" } as Parameters<typeof calculateLeadScore>[0]);
+  assert.equal(current.score, legacy.score);
 });
 
 test("monthly bill validation rejects empty, zero, negative, invalid, and extreme values", () => {
@@ -57,12 +74,12 @@ test("lead scoring uses exact electric bill buckets instead of upper-bound subst
 
   const mid = calculateLeadScore({
     ...base,
-    electricBillRange: "$200-$300",
+    electricBillRange: "$200–$299",
     monthlyBill: 250,
   });
   const high = calculateLeadScore({
     ...base,
-    electricBillRange: "$300-$400",
+    electricBillRange: "$300–$399",
     monthlyBill: 350,
   });
 

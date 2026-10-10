@@ -1,14 +1,9 @@
 import type { Metadata, Viewport } from "next";
-import { Instrument_Serif, Manrope, Space_Grotesk } from "next/font/google";
+import { Instrument_Serif, Manrope } from "next/font/google";
 import { GoogleAnalytics } from "@/components/google-analytics";
-import { StructuredData } from "@/components/structured-data";
 import { APP_CANONICAL_URL, APP_NAME, APP_TAGLINE } from "@/lib/brand";
+import { isPreviewDeployment } from "@/lib/seo";
 import "./globals.css";
-
-const display = Space_Grotesk({
-  variable: "--font-display",
-  subsets: ["latin"],
-});
 
 const body = Manrope({
   variable: "--font-body",
@@ -22,24 +17,12 @@ const editorial = Instrument_Serif({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL(
-    process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"
-  ),
+  metadataBase: new URL(APP_CANONICAL_URL),
   title: {
     default: `${APP_NAME} | Solar Readiness Reports & Roof Analysis`,
     template: `%s | ${APP_NAME}`,
   },
   description: APP_TAGLINE,
-  alternates: {
-    canonical: APP_CANONICAL_URL,
-  },
-  keywords: [
-    "Arizona solar",
-    "solar estimate",
-    "home solar savings",
-    "address autocomplete",
-    "AI solar report",
-  ],
   authors: [{ name: APP_NAME }],
   creator: APP_NAME,
   publisher: APP_NAME,
@@ -63,10 +46,7 @@ export const metadata: Metadata = {
     description: APP_TAGLINE,
     images: ["/opengraph-image"],
   },
-  robots: {
-    index: true,
-    follow: true,
-  },
+  ...(isPreviewDeployment() ? { robots: { index: false, follow: false } } : {}),
   icons: {
     icon: "/icon.svg",
   },
@@ -85,7 +65,7 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  themeColor: "#020617",
+  themeColor: "#0c1522",
   colorScheme: "dark",
 };
 
@@ -98,14 +78,13 @@ export default function RootLayout({
     <html
       lang="en"
       data-scroll-behavior="smooth"
-      className={`${display.variable} ${body.variable} ${editorial.variable} h-full`}
+      className={`${body.variable} ${editorial.variable} h-full`}
     >
       <body className="min-h-full antialiased">
         <a className="skip-link" href="#main-content">
           Skip to main content
         </a>
         <GoogleAnalytics />
-        <StructuredData />
         <div id="main-content" tabIndex={-1}>
           {children}
         </div>

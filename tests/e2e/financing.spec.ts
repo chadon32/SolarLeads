@@ -11,7 +11,7 @@ test("financing stays explicitly illustrative and exposes buy, lease, and loan",
   await home.openReadyEstimate();
   await page.getByRole("tab", { name: "Financing" }).click();
 
-  await expect(page.getByRole("button", { name: "buy", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Buy", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Lease", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Loan" })).toBeVisible();
   await expect(
@@ -19,7 +19,7 @@ test("financing stays explicitly illustrative and exposes buy, lease, and loan",
   ).toBeVisible();
   await expect(page.getByText("Not a loan offer", { exact: true })).toBeVisible();
   await expect(page.locator('[aria-pressed="true"]')).toHaveCount(1);
-  const buyButton = page.getByRole("button", { name: "buy", exact: true });
+  const buyButton = page.getByRole("button", { name: "Buy", exact: true });
   await buyButton.click();
   await expect(buyButton).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByText(/financing values are illustrative only/i)).toBeVisible();
@@ -38,4 +38,64 @@ test("financing stays explicitly illustrative and exposes buy, lease, and loan",
     years: 25,
   });
   expect(Math.round(sample)).toBe(141);
+});
+
+test("loan assumptions and the current scenario follow active controls", async ({
+  page,
+}) => {
+  await installSafeApiMocks(page);
+  const home = new HomeEstimatePage(page);
+  await home.openReadyEstimate();
+  await page.getByRole("tab", { name: "Financing" }).click();
+
+  const downPayment = page.getByRole("slider", {
+    name: "Down payment",
+    exact: true,
+  });
+  await downPayment.focus();
+  for (let step = 0; step < 20; step += 1) {
+    await downPayment.press("ArrowRight");
+  }
+
+  const apr = page.getByRole("slider", { name: "APR", exact: true });
+  await apr.focus();
+  await apr.press("ArrowRight");
+  await page.getByRole("combobox", { name: "Term", exact: true }).selectOption("25");
+
+  const currentScenario = page.locator('[aria-label="Current financing scenario"]');
+  await expect(currentScenario).toContainText("$200/mo bill");
+  await expect(currentScenario).toContainText("19 panels");
+  await expect(currentScenario).toContainText("20% down, 6.6% APR, 25-year term");
+
+  const assumptions = page.locator('button[aria-controls="financing-assumptions"]');
+  await assumptions.click();
+  const assumptionsPanel = page.locator("#financing-assumptions");
+  await expect(assumptionsPanel).toContainText("20% down, 6.6% APR, 25-year term");
+  await expect(assumptionsPanel).toContainText("Scheduled loan payments (25 years)");
+  await expect(assumptionsPanel).toContainText(
+    "Includes the full 25-year loan payment obligation"
+  );
+  await expect(assumptionsPanel).toContainText(
+    "20-year cost with solar (includes full 25-year loan)"
+  );
+  await expect(assumptionsPanel).not.toContainText("Baseline loan scenario");
+  await expect(assumptionsPanel).not.toContainText("6.49% APR / 20 years");
+});
+
+test("overview and savings explain the modeled homeowner metrics", async ({ page }) => {
+  await installSafeApiMocks(page);
+  const home = new HomeEstimatePage(page);
+  await home.openReadyEstimate();
+
+  await page.getByText("Share a privacy-safe summary").click();
+  await expect(page.getByRole("button", { name: "Copy redacted card", exact: true })).toBeVisible();
+  await expect(
+    page.getByText(/Utility costs minus solar costs over 20 years\. It isn't the yearly savings times 20/i)
+  ).toBeVisible();
+
+  await page.getByRole("tab", { name: "Savings" }).click();
+  await expect(page.getByText(/Annual savings is a first-year estimate/i)).toBeVisible();
+  await expect(
+    page.getByText(/Payback is the\s+time for savings to cover the system.s net cost, not a loan term/i)
+  ).toBeVisible();
 });

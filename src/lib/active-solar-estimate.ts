@@ -132,6 +132,24 @@ export function buildActiveSolarEstimate({
   };
 }
 
+/**
+ * The metrics every surface (header, dashboard, saved report) reads for the
+ * chosen layout: the roof metrics with this layout's production, savings and
+ * bill offset.
+ */
+export function getActiveEstimateMetrics(estimate: ActiveSolarEstimate): SharedSolarMetrics {
+  return {
+    ...estimate.baseMetrics,
+    annualKwh: estimate.annualKwh,
+    annualSavings: estimate.annualSavings,
+    coveragePct: estimate.energyOffsetPct,
+    monthlySavings: estimate.monthlySavings,
+    panelCount: estimate.panelCount,
+    paybackYears: estimate.paybackYears,
+    systemKw: estimate.systemKw,
+  };
+}
+
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }

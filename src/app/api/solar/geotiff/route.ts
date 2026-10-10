@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 import {
+  DAY_MS,
   disabledFeatureResponse,
   isKillSwitchEnabled,
   rateLimitResponse,
 } from "@/lib/abuse-protection";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { getSolarImageryLimits } from "@/lib/solar-imagery-limits";
 
 const GOOGLE_SOLAR_KEY =
   process.env.GOOGLE_SOLAR_API_KEY ??
@@ -12,10 +14,12 @@ const GOOGLE_SOLAR_KEY =
 
 export async function GET(request: Request) {
   try {
+    const limits = getSolarImageryLimits(request);
     const rateLimit = await enforceRateLimit({
       request,
+      key: limits.key,
       route: "api:solar-geotiff",
-      limit: 20,
+      limit: limits.hourly,
       windowMs: 60 * 60 * 1000,
     });
 
@@ -23,6 +27,21 @@ export async function GET(request: Request) {
       return rateLimitResponse(
         "Too many Solar GeoTIFF requests. Please try again shortly.",
         rateLimit.retryAfterSeconds
+      );
+    }
+
+    const dailyLimit = await enforceRateLimit({
+      request,
+      key: limits.key,
+      route: "api:solar-geotiff:day",
+      limit: limits.daily,
+      windowMs: DAY_MS,
+    });
+
+    if (!dailyLimit.allowed) {
+      return rateLimitResponse(
+        "Daily roof imagery request limit reached. Please try again tomorrow.",
+        dailyLimit.retryAfterSeconds
       );
     }
 

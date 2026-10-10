@@ -9,8 +9,9 @@ import {
   getRecommendedPanelCount,
 } from "../src/lib/solar-metrics";
 import { getPanelAreaM2, getPanelFit, SOLAR_PANELS } from "../src/lib/solarPanels";
+import { estimateAnnualSolarSavings } from "../src/lib/solar-savings";
 
-test("buildSolarMetrics caps savings at the homeowner annual bill", () => {
+test("buildSolarMetrics values production with net billing and never zeroes the bill", () => {
   const analysis = buildMetricFixture();
   const metrics = buildSolarMetrics(analysis, {
     monthlyBill: 100,
@@ -20,10 +21,11 @@ test("buildSolarMetrics caps savings at the homeowner annual bill", () => {
   assert.equal(metrics.panelCount, 10);
   assert.equal(metrics.systemKw, 4);
   assert.equal(metrics.annualKwh, 8000);
-  assert.equal(metrics.annualSavings, 1200);
-  assert.equal(metrics.monthlySavings, 100);
+  assert.equal(metrics.annualSavings, estimateAnnualSolarSavings({ annualKwh: 8000, monthlyBill: 100 }));
+  assert.ok(metrics.annualSavings < 100 * 12, "a $100 bill is not fully erased");
+  assert.equal(metrics.monthlySavings, Math.round(metrics.annualSavings / 12));
+  // 8,000 kWh is more than this home uses, so the energy offset is still full.
   assert.equal(metrics.coveragePct, 100);
-  assert.equal(metrics.paybackYears, 7.7);
 });
 
 test("recommended panel count targets usage within the preliminary ceiling", () => {

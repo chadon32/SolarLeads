@@ -17,6 +17,8 @@ test("landing page explains the product and exposes legal/support navigation", a
     "href",
     "/"
   );
+  await expect(page.getByTestId("illustrative-sample-report")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "A typical Arizona roof model" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Privacy notice" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Estimate terms" })).toBeVisible();
   await expect(page.getByRole("link", { name: /Analyze My Roof/i }).first()).toBeVisible();

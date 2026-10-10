@@ -1,4 +1,4 @@
-import { ARIZONA_AVG_RATE_PER_KWH } from "@/lib/solar-assumptions";
+import { estimateAnnualSolarSavings } from "@/lib/solar-savings";
 
 export type RoofViewport = {
   northeast: {
@@ -114,6 +114,8 @@ export type RoofAnalysis = {
   confidence: AnalysisConfidence;
   confidenceNote: string;
   source: "solar-api" | "vision-api" | "modeled";
+  /** Date of the aerial imagery behind the roof model (YYYY-MM-DD or YYYY-MM), when known. */
+  imageryDate?: string | null;
 };
 
 export function buildFallbackRoofAnalysis(params: {
@@ -138,7 +140,7 @@ export function buildFallbackRoofAnalysis(params: {
   const panelCount = clamp(Math.floor((usableAreaM2 / 2.2) * 0.85), 12, 26);
   const systemKw = roundTo(panelCount * 0.4, 1);
   const annualKwh = Math.round(systemKw * 1706);
-  const annualSavingsUSD = Math.round(annualKwh * ARIZONA_AVG_RATE_PER_KWH);
+  const annualSavingsUSD = estimateAnnualSolarSavings({ annualKwh });
 
   const roofShape: RoofShape =
     widthM > 15 ? "complex" : widthM > 13.4 ? "hip" : "gable";
@@ -147,7 +149,8 @@ export function buildFallbackRoofAnalysis(params: {
     roofOutline,
     10 - Math.min(usablePctRoof / 25, 3)
   );
-  const obstructionOutlines = buildDefaultObstructionOutlines("low");
+  // The illustrative model has no measured rooftop features to show.
+  const obstructionOutlines: RoofPoint[][] = [];
 
   const garageArea = roundTo(Math.max(usableAreaM2 * 0.28, 10), 1);
   const primaryArea = roundTo(Math.max(usableAreaM2 * 0.52, 18), 1);
@@ -360,7 +363,7 @@ export function normalizeRoofAnalysis(
     Math.round(
       numberOrFallback(
         input.annualSavingsUSD,
-        Math.round(annualKwh * ARIZONA_AVG_RATE_PER_KWH)
+        estimateAnnualSolarSavings({ annualKwh })
       )
     )
   );
@@ -389,12 +392,8 @@ export function normalizeRoofAnalysis(
       ? fallback.usableOutline
       : insetPolygon(roofOutline, 10 - Math.min(usablePctRoof / 25, 3))
   );
-  const obstructionOutlines = normalizeObstructionOutlines(
-    input.obstructionOutlines,
-    fallback.obstructionOutlines.length
-      ? fallback.obstructionOutlines
-      : buildDefaultObstructionOutlines(shadingRiskOrFallback(input.shadingRisk, fallback.shadingRisk))
-  );
+  // Only measured outlines survive; placeholders read as detected obstructions.
+  const obstructionOutlines = normalizeObstructionOutlines(input.obstructionOutlines);
 
   const roofSegments = normalizeRoofSegments(
     input.roofSegments,
@@ -488,6 +487,10 @@ export function normalizeRoofAnalysis(
       fallback.confidenceNote
     ),
     source,
+    // Only carried when the imagery date is known, so older cached analyses keep their shape.
+    ...(typeof input.imageryDate === "string" && /^\d{4}-\d{2}(-\d{2})?$/.test(input.imageryDate)
+      ? { imageryDate: input.imageryDate }
+      : {}),
   };
 }
 
@@ -843,57 +846,6 @@ function getDefaultSegmentOutlines(shape: RoofShape): Record<RoofPlaneLabel, Roo
   };
 }
 
-export function buildDefaultObstructionOutlines(risk: ShadingRisk) {
-  if (risk === "low") {
-    return [
-      [
-        { x: 24, y: 24 },
-        { x: 27, y: 24 },
-        { x: 27, y: 28 },
-        { x: 24, y: 28 },
-      ],
-    ];
-  }
-
-  if (risk === "medium") {
-    return [
-      [
-        { x: 23, y: 23 },
-        { x: 27, y: 23 },
-        { x: 27, y: 28 },
-        { x: 23, y: 28 },
-      ],
-      [
-        { x: 72, y: 29 },
-        { x: 76, y: 29 },
-        { x: 76, y: 34 },
-        { x: 72, y: 34 },
-      ],
-    ];
-  }
-
-  return [
-    [
-      { x: 23, y: 23 },
-      { x: 27, y: 23 },
-      { x: 27, y: 28 },
-      { x: 23, y: 28 },
-    ],
-    [
-      { x: 72, y: 28 },
-      { x: 76, y: 28 },
-      { x: 76, y: 33 },
-      { x: 72, y: 33 },
-    ],
-    [
-      { x: 61, y: 68 },
-      { x: 66, y: 68 },
-      { x: 66, y: 73 },
-      { x: 61, y: 73 },
-    ],
-  ];
-}
-
 function normalizeOutline(value: unknown, fallback: RoofPoint[]) {
   if (!Array.isArray(value) || value.length < 3) {
     return fallback;
@@ -906,16 +858,14 @@ function normalizeOutline(value: unknown, fallback: RoofPoint[]) {
   return points.length >= 3 ? points : fallback;
 }
 
-function normalizeObstructionOutlines(value: unknown, fallback: RoofPoint[][]) {
-  if (!Array.isArray(value) || !value.length) {
-    return fallback;
+function normalizeObstructionOutlines(value: unknown): RoofPoint[][] {
+  if (!Array.isArray(value)) {
+    return [];
   }
 
-  const outlines = value
+  return value
     .map((outline) => normalizeOutline(outline, []))
     .filter((outline): outline is RoofPoint[] => outline.length >= 3);
-
-  return outlines.length ? outlines : fallback;
 }
 
 function normalizePoint(value: unknown): RoofPoint | null {

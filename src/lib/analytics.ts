@@ -1,5 +1,22 @@
 type GtagEventParams = Record<string, string | number | boolean | null | undefined>;
 
+/**
+ * Analytics is intentionally aggregate-only. Keep this list small and
+ * explicit so a future caller cannot accidentally turn an event into a
+ * transport for report, contact, property, or URL data.
+ */
+const ALLOWED_EVENT_PARAM_KEYS = new Set([
+  "content_version",
+  "contact_requested",
+  "output",
+  "panel_count_bucket",
+  "placement",
+  "surface",
+]);
+
+const SENSITIVE_VALUE_PATTERN =
+  /address|bill|coordinate|email|https?:\/\/|lead|latitude|longitude|name|phone|report|token|url/i;
+
 declare global {
   interface Window {
     gtag?: (
@@ -15,11 +32,16 @@ export function trackEvent(eventName: string, params: GtagEventParams = {}) {
     return;
   }
 
+  if (!/^[a-z0-9_]+$/i.test(eventName)) {
+    return;
+  }
+
   const safeParams = Object.fromEntries(
     Object.entries(params)
+      .filter(([key]) => ALLOWED_EVENT_PARAM_KEYS.has(key))
       .filter(
-        ([key]) =>
-          !/address|email|phone|name|lead|report|url|bill|saving/i.test(key)
+        ([, value]) =>
+          typeof value !== "string" || !SENSITIVE_VALUE_PATTERN.test(value)
       )
       .map(([key, value]) => [
         key,

@@ -1,20 +1,15 @@
 import type { MetadataRoute } from "next";
 import { APP_CANONICAL_URL } from "@/lib/brand";
+import { isPreviewDeployment } from "@/lib/seo";
 
 export default function robots(): MetadataRoute.Robots {
   return {
     rules: {
       userAgent: "*",
       allow: "/",
-      disallow: [
-        "/api/",
-        "/dashboard/",
-        "/estimate",
-        "/marketing/",
-        "/report/",
-        "/thank-you",
-      ],
+      // Auth protects private data; crawling must be allowed to see page noindex.
+      disallow: ["/api/", "/marketing/"],
     },
-    sitemap: `${APP_CANONICAL_URL}/sitemap.xml`,
+    ...(isPreviewDeployment() ? {} : { sitemap: `${APP_CANONICAL_URL}/sitemap.xml` }),
   };
 }

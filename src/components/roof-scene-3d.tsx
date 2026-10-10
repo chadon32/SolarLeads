@@ -1,27 +1,35 @@
 "use client";
 
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentRef } from "react";
-import { Focus, Minus, Plus, RotateCcw, Square } from "lucide-react";
+import { useEffect, useId, useMemo, useState } from "react";
+import { Focus, Hand, Minus, Plus, RotateCcw, Square, Trees, X } from "lucide-react";
 import * as THREE from "three";
-import { Canvas, useThree } from "@react-three/fiber";
-import { OrbitControls } from "@react-three/drei";
-import { readGeoTiffRaster, type GeoTiffRaster } from "@/lib/geotiff-utils";
-import type { RoofAnalysis, RoofGeoBounds } from "@/lib/roof-analysis";
+import { Canvas, type ThreeEvent } from "@react-three/fiber";
+import { Edges, Line } from "@react-three/drei";
+import { SunlightLegend } from "@/components/sunlight-legend";
+import { readGeoTiffRaster, SolarRasterLoadError } from "@/lib/geotiff-utils";
+import { DEFAULT_MODULE_FACE, type ModuleFaceLayout } from "@/lib/module-face";
 import { selectCohesiveSolarPanels } from "@/lib/panel-layout";
-import { buildPanelInstanceMatrices, getRoofCameraPose, type ModelBounds, type ViewerPanel } from "@/lib/roof-viewer";
+import type { RoofAnalysis } from "@/lib/roof-analysis";
+import { describeRoofFace, summarizeRoofFaces, type RoofFaceFacts } from "@/lib/roof-face-labels";
+import { isRoofReconstructionEnabled, runRoofModel } from "@/lib/roof-model-runner";
+import type { RoofObstruction } from "@/lib/roof-reconstruction";
+import { CameraRig } from "./roof-scene/camera-rig";
+import { ModuleOutlines, PanelArray, useModuleSkin } from "./roof-scene/panel-array";
 import {
-  boundsCenter,
-  buildObstructionMarkerGeometry,
-  buildRoofFaceGeometry,
-  buildSegmentPlaneTransforms,
-  estimateGroundElevationMeters,
-  expandBoundsMeters,
-  fitSegmentPlanes,
-  latLngToLocalMeters,
-  liftRoofSegmentPlanes,
-  normalizedOutlineToLatLng,
-  type LatLng,
-} from "@/lib/roof-scene-geometry";
+  buildRebuiltScene,
+  buildSegmentScene,
+  disposeScene,
+  prepareScene,
+  roofModelJobFor,
+  type RebuiltShell,
+  type SceneData,
+  type SegmentShell,
+} from "./roof-scene/scene-data";
+import { GroundPlane, SceneLighting } from "./roof-scene/scene-environment";
+import { Surroundings } from "./roof-scene/surroundings";
+import { useCoarsePointer, usePrefersReducedMotion } from "./roof-scene/use-media-query";
+import { useOverlaySafeInsets, VIEWER_OVERLAY_ATTRIBUTE } from "./roof-scene/use-overlay-safe-insets";
+import { useRefreshShadows } from "./roof-scene/use-refresh-shadows";
 
 type RoofScene3DProps = {
   dsmUrl: string | null;
@@ -33,59 +41,25 @@ type RoofScene3DProps = {
   roofData: RoofAnalysis;
   selectedPanelCount: number;
   showSunlight: boolean;
-};
-
-type FaceMesh = {
-  key: number;
-  roof: THREE.BufferGeometry;
-  roofEdges: THREE.EdgesGeometry;
-  wall: THREE.BufferGeometry;
-};
-
-type ObstructionMesh = {
-  key: number;
-  top: THREE.BufferGeometry;
-  wall: THREE.BufferGeometry;
-};
-
-type SceneData = {
-  faces: FaceMesh[];
-  obstructions: ObstructionMesh[];
-  fluxTexture: THREE.CanvasTexture | null;
-  panels: Array<{
-    key: number;
-    position: [number, number, number];
-    rotation: [number, number, number];
-    alongMeters: number;
-    acrossMeters: number;
-  }>;
-  extentMeters: number;
-  roofTopMeters: number;
-  modelBounds: ModelBounds;
+  /** Datasheet face of the selected module (cell layout, colours). */
+  moduleFace?: ModuleFaceLayout;
+  /** Offered when the 3D view cannot be shown. */
+  onRequestMapView?: () => void;
 };
 
 type LoadState =
   | { status: "loading" }
-  | { status: "error"; message: string }
+  | { status: "error"; message: string; retryable: boolean }
   | { status: "ready"; data: SceneData };
 
-/** Padding around the roof so the model floats in a roomy workspace. */
-const SCENE_PADDING_METERS = 14;
-/** Face/panel height when the elevation scan has no usable samples. */
-const DEFAULT_FACE_HEIGHT_METERS = 3.2;
-/** Neutral roof tone for the default (non-sunlight) material. */
-const ROOF_COLOR = "#e8e4dc";
-const WALL_COLOR = "#f3f2ef";
-/**
- * Cell matrix of a standard residential module (60-cell: 6 across the short
- * edge, 10 along the long edge). Drawn into the glass texture so modules read
- * as photovoltaic rather than as plain dark rectangles.
- */
-const PV_CELLS_SHORT_EDGE = 6;
-const PV_CELLS_LONG_EDGE = 10;
+// Roof and walls separated in value, so planes read before lighting does.
+const ROOF_COLOR = "#dcd6cb";
+const WALL_COLOR = "#a9a194";
+const FASCIA_COLOR = "#3a3f47";
+const EDGE_COLOR = "#38475a";
+const HIGHLIGHT_COLOR = "#67e8f9";
 
-// rgbUrl stays in the props contract but the CAD view no longer needs the
-// aerial photo — only the DSM (plane fits) and flux (heatmap).
+// rgbUrl stays in the props contract but the CAD view does not need the aerial photo.
 export default function RoofScene3D({
   dsmUrl,
   fluxUrl,
@@ -95,18 +69,26 @@ export default function RoofScene3D({
   roofData,
   selectedPanelCount,
   showSunlight,
+  moduleFace = DEFAULT_MODULE_FACE,
+  onRequestMapView,
 }: RoofScene3DProps) {
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const instructionsId = useId();
+  const summaryId = useId();
+  const [region, setRegion] = useState<HTMLDivElement | null>(null);
   const [cameraCommand, setCameraCommand] = useState({ action: "fit", sequence: 0 });
   const [modelKey, setModelKey] = useState(0);
+  const [selectedFace, setSelectedFace] = useState<number | null>(null);
+  const [showSurroundings, setShowSurroundings] = useState(true);
+  const [exploring, setExploring] = useState(false);
+  const coarsePointer = useCoarsePointer();
+  const reducedMotion = usePrefersReducedMotion();
+  const safeInsets = useOverlaySafeInsets(region);
   const sendCameraCommand = (action: string) => setCameraCommand((previous) => ({ action, sequence: previous.sequence + 1 }));
 
-  // Reset to the loading state when the data-layer inputs change
-  // (React's "adjust state during render" pattern).
+  // Reset to loading when the data-layer inputs change ("adjust state during render").
   const inputsKey = `${dsmUrl}|${fluxUrl}|${maskUrl}`;
   const [lastInputsKey, setLastInputsKey] = useState(inputsKey);
-
   if (lastInputsKey !== inputsKey) {
     setLastInputsKey(inputsKey);
     setState({ status: "loading" });
@@ -117,218 +99,108 @@ export default function RoofScene3D({
 
     async function load() {
       if (!dsmUrl) {
-        setState({
-          status: "error",
-          message: "3D model data is not available for this address.",
-        });
+        setState({ status: "error", message: "3D model data is not available for this address.", retryable: true });
         return;
       }
-
       if (!isWebGlAvailable()) {
-        setState({
-          status: "error",
-          message: "This device does not support the 3D roof view.",
-        });
+        setState({ status: "error", message: "This device does not support the 3D roof view.", retryable: false });
         return;
       }
-
       try {
         const fallbackBounds = roofData.roofBounds ?? null;
         const [dsm, flux, mask] = await Promise.all([
           readGeoTiffRaster(dsmUrl, fallbackBounds),
-          fluxUrl
-            ? readGeoTiffRaster(fluxUrl, fallbackBounds).catch(() => null)
-            : Promise.resolve(null),
-          maskUrl
-            ? readGeoTiffRaster(maskUrl, fallbackBounds).catch(() => null)
-            : Promise.resolve(null),
+          fluxUrl ? readGeoTiffRaster(fluxUrl, fallbackBounds).catch(() => null) : Promise.resolve(null),
+          maskUrl ? readGeoTiffRaster(maskUrl, fallbackBounds).catch(() => null) : Promise.resolve(null),
         ]);
-
-        if (cancelled) {
-          return;
-        }
-
+        if (cancelled) return;
         if (!dsm) {
-          setState({
-            status: "error",
-            message: "3D model data is not available for this address.",
-          });
+          setState({ status: "error", message: "3D model data is not available for this address.", retryable: true });
           return;
         }
-
-        const data = buildSceneData({ dsm, flux, mask, roofData });
-
+        const inputs = { dsm, flux, mask, roofData };
+        const prepared = prepareScene(inputs);
+        // The rebuilt single-shell roof runs in a worker; without a rooftop
+        // mask, with the flag off, or on timeout the per-segment model is used.
+        const job = isRoofReconstructionEnabled() ? roofModelJobFor(inputs, prepared) : null;
+        const model = job ? await runRoofModel(job, { cacheKey: modelCacheKey(dsmUrl, maskUrl, fluxUrl, roofData) }) : null;
+        if (cancelled) return;
+        const data = model ? buildRebuiltScene(inputs, prepared, model) : buildSegmentScene(inputs, prepared);
         if (!data) {
-          setState({
-            status: "error",
-            message: "The 3D model could not be built for this address.",
-          });
+          setState({ status: "error", message: "The 3D model could not be built for this address.", retryable: true });
           return;
         }
-
-        if (!cancelled) {
-          setState({ status: "ready", data });
-        }
+        setState({ status: "ready", data });
       } catch (error) {
-        console.warn("[roof-scene-3d:error]", {
-          errorType: error instanceof Error ? error.name : "unknown",
-        });
+        console.warn("[roof-scene-3d:error]", { errorType: error instanceof Error ? error.name : "unknown" });
         if (!cancelled) {
           setState({
             status: "error",
-            message: "The 3D model could not be loaded. Please try again.",
+            message: error instanceof SolarRasterLoadError ? error.message : "The 3D model could not be loaded. Please try again.",
+            retryable: true,
           });
         }
       }
     }
 
     load();
-
     return () => {
       cancelled = true;
     };
   }, [dsmUrl, fluxUrl, maskUrl, roofData, modelKey]);
 
   useEffect(() => {
-    if (state.status !== "ready") {
-      return;
-    }
-
-    const { faces, obstructions, fluxTexture } = state.data;
-
-    return () => {
-      for (const face of faces) {
-        face.roof.dispose();
-        face.roofEdges.dispose();
-        face.wall.dispose();
-      }
-      for (const obstruction of obstructions) {
-        obstruction.top.dispose();
-        obstruction.wall.dispose();
-      }
-      fluxTexture?.dispose();
-    };
+    if (state.status !== "ready") return;
+    const { data } = state;
+    return () => disposeScene(data);
   }, [state]);
 
-  // The Canvas mounts after the async GeoTIFF load, and fiber's initial
-  // container measurement can miss that late mount, leaving the default
-  // 300x150 canvas. A resize event forces a correct re-measure.
+  // Fiber can miss the late mount after the async load; force a re-measure.
   useEffect(() => {
-    if (state.status !== "ready") {
-      return;
-    }
-
-    const handle = window.setTimeout(() => {
-      window.dispatchEvent(new Event("resize"));
-    }, 60);
-
+    if (state.status !== "ready") return;
+    const handle = window.setTimeout(() => window.dispatchEvent(new Event("resize")), 60);
     return () => window.clearTimeout(handle);
   }, [state.status]);
 
-  // One frame + two glass materials shared by every module. Declaring these
-  // inline per panel allocated a material (and its shader binding) per module
-  // — hundreds of identical copies on a fully packed roof.
-  const panelSkin = useMemo(() => {
-    const portraitTexture = makePvCellTexture(
-      PV_CELLS_SHORT_EDGE,
-      PV_CELLS_LONG_EDGE
-    );
-    const landscapeTexture = makePvCellTexture(
-      PV_CELLS_LONG_EDGE,
-      PV_CELLS_SHORT_EDGE
-    );
-
-    return {
-      // Anodized graphite, not bright mill-finish aluminium. Each module shows
-      // only a couple of centimetres of frame, but across a whole array those
-      // borders merge into a grid — a light frame turns a dark PV field into a
-      // white mesh at any real zoom level.
-      frame: new THREE.MeshStandardMaterial({
-        color: "#4a5260",
-        roughness: 0.5,
-        metalness: 0.45,
-      }),
-      // Low metalness: without an environment map a metallic surface has
-      // nothing to reflect and renders near-black. Tight roughness instead
-      // gives the cover glass a crisp specular highlight.
-      glassPortrait: new THREE.MeshStandardMaterial({
-        map: portraitTexture,
-        color: portraitTexture ? "#ffffff" : "#10192b",
-        roughness: 0.22,
-        metalness: 0.08,
-      }),
-      glassLandscape: new THREE.MeshStandardMaterial({
-        map: landscapeTexture,
-        color: landscapeTexture ? "#ffffff" : "#10192b",
-        roughness: 0.22,
-        metalness: 0.08,
-      }),
-      textures: [portraitTexture, landscapeTexture],
-    };
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      panelSkin.frame.dispose();
-      panelSkin.glassPortrait.dispose();
-      panelSkin.glassLandscape.dispose();
-      for (const texture of panelSkin.textures) {
-        texture?.dispose();
-      }
-    };
-  }, [panelSkin]);
-
+  const skin = useModuleSkin(moduleFace, panelHeightMeters / panelWidthMeters);
   const readyData = state.status === "ready" ? state.data : null;
 
-  // Cohesive-subset selection walks and clusters every candidate module, so
-  // it must not rerun on unrelated rerenders (layer toggles, resizes).
+  // A new scene clears any face selection ("adjust state during render").
+  const [selectionScope, setSelectionScope] = useState<SceneData | null>(readyData);
+  if (selectionScope !== readyData) {
+    setSelectionScope(readyData);
+    setSelectedFace(null);
+  }
+
+  // Cohesive-subset selection walks every candidate module; keep it off unrelated rerenders.
   const visiblePanels = useMemo(() => {
-    if (!readyData) {
-      return [];
-    }
-
-    const selectedPanels = new Set(
-      selectCohesiveSolarPanels({
-        panels: roofData.solarPanels,
-        targetCount: selectedPanelCount,
-        panelWidthMeters,
-        panelHeightMeters,
-      })
+    if (!readyData) return [];
+    const selected = new Set(
+      selectCohesiveSolarPanels({ panels: roofData.solarPanels, targetCount: selectedPanelCount, panelWidthMeters, panelHeightMeters })
     );
-    const selectedPanelIndices = new Set(
-      roofData.solarPanels.flatMap((panel, index) =>
-        selectedPanels.has(panel) ? [index] : []
-      )
-    );
-
+    const selectedIndices = new Set(roofData.solarPanels.flatMap((panel, index) => (selected.has(panel) ? [index] : [])));
     return readyData.panels.flatMap((panel) => {
-      if (!selectedPanelIndices.has(panel.key)) {
-        return [];
-      }
-
-      const placement = roofData.solarPanels[panel.key];
-      const landscape = placement?.orientation === "LANDSCAPE";
-
-      return [
-        {
-          ...panel,
-          alongMeters: landscape ? panelWidthMeters : panelHeightMeters,
-          acrossMeters: landscape ? panelHeightMeters : panelWidthMeters,
-        },
-      ];
+      if (!selectedIndices.has(panel.key)) return [];
+      const landscape = roofData.solarPanels[panel.key]?.orientation === "LANDSCAPE";
+      return [{ ...panel, alongMeters: landscape ? panelWidthMeters : panelHeightMeters, acrossMeters: landscape ? panelHeightMeters : panelWidthMeters }];
     });
-  }, [
-    panelHeightMeters,
-    panelWidthMeters,
-    readyData,
-    roofData,
-    selectedPanelCount,
-  ]);
+  }, [panelHeightMeters, panelWidthMeters, readyData, roofData, selectedPanelCount]);
+
+  const faceFacts = useMemo(() => {
+    const counts = new Map<number, number>();
+    for (const panel of visiblePanels) counts.set(panel.segmentIndex, (counts.get(panel.segmentIndex) ?? 0) + 1);
+    return new Map(
+      (readyData?.faces ?? []).map((face): [number, RoofFaceFacts] => [
+        face.id,
+        { ...face, moduleCount: face.segmentIndex === null ? 0 : counts.get(face.segmentIndex) ?? 0 },
+      ])
+    );
+  }, [readyData, visiblePanels]);
 
   if (state.status === "loading") {
     return (
       <SceneMessage>
-        <span className="inline-flex h-10 w-10 animate-spin rounded-full border-2 border-cyan-300/70 border-t-transparent" />
+        <span className="inline-flex h-10 w-10 animate-spin rounded-full border-2 border-sky-300/70 border-t-transparent" />
         <p className="text-sm text-slate-200">Building the 3D roof model…</p>
       </SceneMessage>
     );
@@ -337,290 +209,384 @@ export default function RoofScene3D({
   if (state.status === "error") {
     return (
       <SceneMessage>
-        <p className="text-sm font-semibold text-slate-100">
-          3D view unavailable
-        </p>
+        <p className="text-sm font-semibold text-slate-100">3D view unavailable</p>
         <p className="max-w-xs text-xs text-slate-300">{state.message}</p>
-        <button type="button" onClick={() => { setState({ status: "loading" }); setModelKey((value) => value + 1); }} className="min-h-11 rounded-full border border-cyan-200/30 px-5 text-sm text-cyan-100 focus-visible:outline-2 focus-visible:outline-cyan-200">Retry 3D model</button>
+        <div className="flex flex-wrap justify-center gap-2">
+          {state.retryable ? (
+            <button
+              type="button"
+              onClick={() => {
+                setState({ status: "loading" });
+                setModelKey((value) => value + 1);
+              }}
+              className="min-h-11 rounded-full border border-sky-200/30 px-5 text-sm text-sky-100 focus-visible:outline-2 focus-visible:outline-sky-200"
+            >
+              Retry 3D model
+            </button>
+          ) : null}
+          {onRequestMapView ? (
+            <button type="button" onClick={onRequestMapView} className="min-h-11 rounded-full border border-white/20 px-5 text-sm text-slate-100 focus-visible:outline-2 focus-visible:outline-sky-200">
+              Switch to map view
+            </button>
+          ) : null}
+        </div>
       </SceneMessage>
     );
   }
 
   const { data } = state;
   const cameraDistance = Math.max(24, data.extentMeters * 0.85);
-  const gridSize = Math.ceil(data.extentMeters * 3);
   const showFlux = showSunlight && data.fluxTexture !== null;
-  // Shadow frustum has to enclose the whole model, or casters outside it
-  // silently stop shadowing.
+  // The shadow frustum has to enclose the model and nearby trees.
   const shadowExtent = Math.max(20, data.extentMeters * 0.75);
+  const hasSurroundings = Boolean(data.context && (data.context.trees.length || data.context.buildings.length));
+  const locked = coarsePointer && !exploring;
+  const selected = selectedFace !== null ? faceFacts.get(selectedFace) : undefined;
+  const selectedText = selected ? describeRoofFace(selected) : null;
+  const summary = [
+    summarizeRoofFaces([...faceFacts.values()]),
+    data.obstructions.length ? `${data.obstructions.length} raised rooftop feature${data.obstructions.length === 1 ? "" : "s"} from the elevation scan.` : "",
+    hasSurroundings ? `${data.context!.trees.length} trees and ${data.context!.buildings.length} neighbouring roofs from the elevation scan.` : "",
+  ].filter(Boolean).join(" ");
+
+  const surroundingsToggle = (
+    <button
+      type="button"
+      aria-label="Trees and nearby roofs"
+      aria-pressed={showSurroundings}
+      title="Trees and nearby roofs from the elevation scan"
+      onClick={() => setShowSurroundings((value) => !value)}
+      className={`flex h-11 w-11 flex-col items-center justify-center gap-0.5 rounded-card focus-visible:outline-2 focus-visible:outline-sky-200 ${showSurroundings ? "bg-white/10" : "hover:bg-white/10"}`}
+    >
+      <Trees className="h-4 w-4" aria-hidden="true" />
+      <span aria-hidden="true" className="text-xs font-medium">Trees</span>
+    </button>
+  );
+  const doneButton = (
+    <button
+      type="button"
+      aria-label="Stop exploring the 3D model"
+      onClick={() => setExploring(false)}
+      className="min-h-11 rounded-card px-3 text-xs font-semibold text-sky-100 hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-sky-200"
+    >
+      Done
+    </button>
+  );
 
   return (
     <div
-      className="absolute inset-0 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-cyan-200"
+      ref={setRegion}
+      className="absolute inset-0 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-sky-200"
       data-panel-height-meters={panelHeightMeters}
       data-panel-width-meters={panelWidthMeters}
       data-rendered-panel-count={visiblePanels.length}
+      data-roof-model={data.mode}
+      data-face-count={data.faces.length}
+      data-tree-count={data.context?.trees.length ?? 0}
+      data-neighbor-count={data.context?.buildings.length ?? 0}
       data-testid="roof-scene-3d"
       role="region"
       aria-label="Interactive preliminary 3D roof model"
-      aria-describedby={instructionsId}
+      aria-describedby={`${instructionsId} ${summaryId}`}
       tabIndex={0}
       onKeyDown={(event) => {
         if (event.target !== event.currentTarget) return;
         const actions: Record<string, string> = { ArrowLeft: "left", ArrowRight: "right", ArrowUp: "up", ArrowDown: "down", "+": "zoom-in", "=": "zoom-in", "-": "zoom-out", Home: "fit" };
-        if (actions[event.key]) { event.preventDefault(); sendCameraCommand(actions[event.key]); }
+        if (actions[event.key]) {
+          event.preventDefault();
+          sendCameraCommand(actions[event.key]);
+        }
+        if (event.key === "Escape") setSelectedFace(null);
       }}
     >
-      <p id={instructionsId} className="sr-only">Arrow keys rotate; plus and minus zoom; Home resets. Elevation-based roof model. Mounting hardware is illustrative, not an installation design.</p>
+      <p id={instructionsId} className="sr-only">
+        Arrow keys rotate; plus and minus zoom; Home resets. Elevation-based roof model. Mounting hardware is illustrative, not an installation design.
+      </p>
+      <p id={summaryId} className="sr-only">{summary}</p>
       <Canvas
         dpr={[1, 2]}
         frameloop="demand"
-        // Flat (no tone mapping) keeps the heatmap ramp's true colors.
-        flat
-        // Soft shadows seat the modules onto their roof planes; without them
-        // a racked array reads as pasted-on rectangles floating over the face.
-        shadows={{ type: THREE.PCFShadowMap }}
-        camera={{
-          fov: 42,
-          near: 0.5,
-          far: 2000,
-          position: [
-            cameraDistance * 0.5,
-            cameraDistance * 0.85,
-            cameraDistance * 0.55,
-          ],
-        }}
-        gl={{ antialias: true, alpha: true }}
+        // The light and the roof are static: shadows are re-rendered when content changes, not on every orbit frame.
+        shadows={{ type: THREE.PCFShadowMap, autoUpdate: false }}
+        camera={{ fov: 42, near: 0.5, far: 2000, position: [cameraDistance * 0.5, cameraDistance * 0.85, cameraDistance * 0.55] }}
+        // Khronos PBR Neutral tone mapping: highlights roll off instead of
+        // clipping, and base colours stay true. The heatmap opts out per material.
+        gl={{ antialias: true, alpha: true, toneMapping: THREE.NeutralToneMapping, toneMappingExposure: 0.9 }}
         onCreated={(created) => {
-          // Paint the first frame immediately so the model shows even before
-          // the animation loop's first tick (e.g. throttled background tabs).
+          // Paint the first frame immediately (e.g. throttled background tabs).
           created.gl.render(created.scene, created.camera);
         }}
-        style={{
-          background:
-            "radial-gradient(120% 90% at 50% 0%, #131c2e 0%, #0b1322 55%, #060b16 100%)",
-        }}
+        onPointerMissed={() => setSelectedFace(null)}
+        style={{ background: "radial-gradient(120% 90% at 50% 0%, #131c2e 0%, #0b1322 55%, #060b16 100%)" }}
       >
-        {/* Ambient fill is deliberately low. The renderer is `flat` (no tone
-            mapping), so a strong hemisphere term drives a near-white roof past
-            1.0 on every face at once — surfaces then clip to the same value
-            and the model flattens into featureless cardboard. Keeping fill
-            below the key light preserves the falloff that shows form. */}
-        <hemisphereLight args={["#ffffff", "#475569", 0.42]} />
-        <directionalLight
-          // Mid-afternoon elevation (~40°), not overhead. A high sun drops each
-          // module's shadow directly beneath itself where it cannot be seen —
-          // the oblique angle is what makes the array read as mounted hardware.
-          position={[28, 30, 20]}
-          intensity={0.78}
-          castShadow
-          shadow-mapSize={[2048, 2048]}
-          shadow-camera-near={1}
-          shadow-camera-far={160}
-          shadow-camera-left={-shadowExtent}
-          shadow-camera-right={shadowExtent}
-          shadow-camera-top={shadowExtent}
-          shadow-camera-bottom={-shadowExtent}
-          // Modules stand only ~14 cm off the face, so the depth bias has to
-          // stay small or their shadows detach from the racking.
-          shadow-bias={-0.0004}
-          shadow-normalBias={0.02}
-        />
-        <directionalLight position={[-26, 20, -22]} intensity={0.16} />
-
-        {/* CAD workspace floor */}
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.02, 0]} receiveShadow>
-          <planeGeometry args={[gridSize * 2, gridSize * 2]} />
-          <meshStandardMaterial color="#0c1424" roughness={1} metalness={0} />
-        </mesh>
-        <gridHelper
-          args={[gridSize, Math.max(8, Math.round(gridSize / 2)), "#25364e", "#152137"]}
-          position={[0, 0, 0]}
-        />
-
-        {/* Extruded house: flat roof faces + wall skirts */}
-        {data.faces.map((face) => (
-          <group key={face.key}>
-            {/* Faces cast as well as receive: a stepped roof only reads as
-                solid form when its higher sections shadow the lower ones. */}
-            <mesh geometry={face.roof} castShadow receiveShadow>
-              {/* Distinct keys force a fresh material on swap — mutating
-                  `map` on a live material skips the shader recompile and
-                  the texture silently never shows. */}
-              {showFlux ? (
-                <meshStandardMaterial
-                  key="flux"
-                  map={data.fluxTexture}
-                  roughness={0.85}
-                  metalness={0}
-                  side={THREE.DoubleSide}
-                />
-              ) : (
-                <meshStandardMaterial
-                  key="plain"
-                  color={ROOF_COLOR}
-                  roughness={0.9}
-                  metalness={0}
-                  side={THREE.DoubleSide}
-                />
-              )}
-            </mesh>
-            <lineSegments geometry={face.roofEdges}>
-              <lineBasicMaterial color="#64748b" transparent opacity={0.65} />
-            </lineSegments>
-            <mesh geometry={face.wall} castShadow receiveShadow>
-              <meshStandardMaterial
-                color={WALL_COLOR}
-                roughness={0.95}
-                metalness={0}
-                side={THREE.DoubleSide}
-              />
-            </mesh>
-          </group>
+        <SceneLighting shadowExtent={shadowExtent} />
+        <GroundPlane extentMeters={data.extentMeters} />
+        {data.shell ? (
+          <RebuiltRoof shell={data.shell} fluxTexture={showFlux ? data.fluxTexture : null} selectedFace={selectedFace} onSelectFace={setSelectedFace} />
+        ) : null}
+        {data.segmentShells.map((shell) => (
+          <SegmentRoof
+            key={shell.faceId}
+            shell={shell}
+            fluxTexture={showFlux ? data.fluxTexture : null}
+            selected={selectedFace === shell.faceId}
+            onSelectFace={setSelectedFace}
+          />
         ))}
-
-        {/* Detected shading obstruction markers */}
-        {data.obstructions.map((obstruction) => (
-          <group key={`obstruction-${obstruction.key}`}>
-            <mesh geometry={obstruction.top} castShadow>
-              <meshStandardMaterial
-                color="#64748b"
-                roughness={0.85}
-                metalness={0}
-                transparent
-                opacity={0.72}
-                side={THREE.DoubleSide}
-              />
-            </mesh>
-            <mesh geometry={obstruction.wall}>
-              <meshStandardMaterial
-                color="#475569"
-                roughness={0.9}
-                metalness={0}
-                transparent
-                opacity={0.6}
-                side={THREE.DoubleSide}
-              />
-            </mesh>
-          </group>
-        ))}
-
-        <PanelInstances panels={visiblePanels} skin={panelSkin} capacity={roofData.solarPanels.length} />
-        <CameraControls bounds={data.modelBounds} command={cameraCommand} />
-        <ForceRender
-          trigger={`${showFlux}|${visiblePanels.length}|${panelHeightMeters}|${panelWidthMeters}`}
-        />
+        {data.obstructions.length ? <RooftopFeatures obstructions={data.obstructions} /> : null}
+        {data.context && showSurroundings ? <Surroundings context={data.context} /> : null}
+        <PanelArray panels={visiblePanels} skin={skin} capacity={roofData.solarPanels.length} animate={!reducedMotion} />
+        <ModuleOutlines panels={visiblePanels} />
+        <CameraRig bounds={data.modelBounds} command={cameraCommand} safeInsets={safeInsets} />
+        <ForceRender trigger={`${showFlux}|${visiblePanels.length}|${panelHeightMeters}|${panelWidthMeters}|${showSurroundings}|${selectedFace}`} />
       </Canvas>
-      <div className="absolute bottom-3 left-3 z-20 max-w-[calc(100%-1.5rem)] rounded-2xl border border-white/15 bg-slate-950/90 p-1.5 text-slate-100 shadow-lg backdrop-blur">
-        <div role="toolbar" aria-label="3D camera controls" className="flex gap-1">
-          {[
-            { action: "fit", label: "Reset 3D view", caption: "Reset", Icon: RotateCcw },
-            { action: "top", label: "View roof from above", caption: "Top", Icon: Square },
-            { action: "perspective", label: "View roof in perspective", caption: "3D", Icon: Focus },
-            { action: "zoom-out", label: "Zoom out of roof", caption: "", Icon: Minus },
-            { action: "zoom-in", label: "Zoom into roof", caption: "", Icon: Plus },
-          ].map(({ action, label, caption, Icon }) => (
-            <button key={action} type="button" aria-label={label} title={label} onClick={() => sendCameraCommand(action)} className="flex h-11 w-11 flex-col items-center justify-center gap-0.5 rounded-xl hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-cyan-200">
-              <Icon className="h-4 w-4" aria-hidden="true" />
-              {caption ? <span aria-hidden="true" className="text-[9px] font-medium">{caption}</span> : null}
+
+      {locked ? (
+        // Touch devices: one-finger swipes keep scrolling the page until the visitor opts in.
+        <button
+          type="button"
+          onClick={() => setExploring(true)}
+          aria-label="Explore the 3D model"
+          className="absolute inset-0 z-10 flex items-end justify-center bg-transparent pb-[5.25rem] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-sky-200"
+        >
+          <span className="inline-flex min-h-11 items-center gap-2 rounded-full border border-white/20 bg-slate-950/80 px-4 text-sm font-medium text-slate-100 shadow-lg backdrop-blur">
+            <Hand className="h-4 w-4" aria-hidden="true" />
+            Tap to explore in 3D
+          </span>
+        </button>
+      ) : null}
+
+      {selected && selectedText ? (
+        // Centred at the top of the overlay-free area the camera frames into, so it never lands on a panel.
+        <div
+          role="status"
+          className="absolute z-20 mx-auto max-w-[20rem] rounded-card border border-white/15 bg-slate-950/90 px-3.5 py-2.5 text-slate-100 shadow-lg backdrop-blur"
+          style={{ top: safeInsets.top + 8, left: safeInsets.left + 12, right: safeInsets.right + 12 }}
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold">{selectedText.title}</p>
+              <p className="mt-0.5 text-xs text-slate-300">{selectedText.details.join(" · ")}</p>
+            </div>
+            <button
+              type="button"
+              aria-label="Close roof face details"
+              onClick={() => setSelectedFace(null)}
+              className="grid h-9 w-9 shrink-0 place-items-center rounded-full hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-sky-200"
+            >
+              <X className="h-4 w-4" aria-hidden="true" />
             </button>
-          ))}
-        </div>
-        <p className="px-1.5 pb-0.5 pt-1 text-[10px] text-slate-300">Drag to orbit. Pinch or use + / - to zoom.</p>
-      </div>
-      {data.obstructions.length > 0 ? (
-        <div className="pointer-events-none absolute left-3 top-3 flex items-center gap-2 rounded-full border border-white/10 bg-slate-950/70 px-3 py-1 text-[0.6rem] font-medium tracking-[0.06em] text-slate-300 backdrop-blur">
-          <span className="inline-block h-2.5 w-2.5 rounded-sm bg-slate-400/80" />
-          Shading obstruction (detected)
+          </div>
         </div>
       ) : null}
+
+      {/* Phones: secondary controls sit in the free top-right corner so the camera row stays on one line. */}
+      {hasSurroundings || (coarsePointer && exploring) ? (
+        <div {...{ [VIEWER_OVERLAY_ATTRIBUTE]: "" }} className="absolute right-3 top-3 z-20 flex gap-1 rounded-card border border-white/15 bg-slate-950/90 p-1 text-slate-100 shadow-lg backdrop-blur sm:hidden">
+          {coarsePointer && exploring ? doneButton : null}
+          {hasSurroundings ? surroundingsToggle : null}
+        </div>
+      ) : null}
+
+      <div
+        {...{ [VIEWER_OVERLAY_ATTRIBUTE]: "" }}
+        className="absolute bottom-3 left-3 z-20 max-w-[calc(100%-1.5rem)] rounded-card border border-white/15 bg-slate-950/90 p-1.5 text-slate-100 shadow-lg backdrop-blur"
+      >
+        {showFlux ? (
+          // On phones the legend lives in the map controls panel below the canvas.
+          <div className="hidden px-1.5 pb-2 pt-1 sm:block">
+            <SunlightLegend />
+          </div>
+        ) : null}
+        <div className="flex flex-wrap items-center gap-1">
+          <div role="toolbar" aria-label="3D camera controls" className="flex flex-wrap gap-1">
+            {[
+              { action: "fit", label: "Reset 3D view", caption: "Reset", Icon: RotateCcw },
+              { action: "top", label: "View roof from above", caption: "Top", Icon: Square },
+              { action: "perspective", label: "View roof in perspective", caption: "3D", Icon: Focus },
+              { action: "zoom-out", label: "Zoom out of roof", caption: "", Icon: Minus },
+              { action: "zoom-in", label: "Zoom into roof", caption: "", Icon: Plus },
+            ].map(({ action, label, caption, Icon }) => (
+              <button
+                key={action}
+                type="button"
+                aria-label={label}
+                title={label}
+                onClick={() => sendCameraCommand(action)}
+                className="flex h-11 w-11 flex-col items-center justify-center gap-0.5 rounded-card hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-sky-200"
+              >
+                <Icon className="h-4 w-4" aria-hidden="true" />
+                {caption ? <span aria-hidden="true" className="text-xs font-medium">{caption}</span> : null}
+              </button>
+            ))}
+          </div>
+          {hasSurroundings ? <div className="hidden sm:flex">{surroundingsToggle}</div> : null}
+          {coarsePointer && exploring ? <div className="hidden sm:flex">{doneButton}</div> : null}
+        </div>
+        {/* w-0 + min-w-full: the hint wraps to the controls' width instead of widening the card under neighbouring panels. */}
+        <p className="hidden w-0 min-w-full px-1.5 pb-0.5 pt-1 text-xs leading-snug text-slate-300 sm:block">
+          {locked ? "Swipe to scroll. Tap the model to explore." : "Drag to orbit. Pinch or use + / - to zoom. Tap a roof face for details."}
+          {data.obstructions.length ?" Grey blocks are raised features in the elevation scan." : ""}
+        </p>
+      </div>
     </div>
   );
 }
 
-function PanelInstances({ panels, skin, capacity }: {
-  panels: ViewerPanel[];
-  skin: { frame: THREE.Material; glassPortrait: THREE.Material; glassLandscape: THREE.Material };
-  capacity: number;
+function RebuiltRoof({
+  shell,
+  fluxTexture,
+  selectedFace,
+  onSelectFace,
+}: {
+  shell: RebuiltShell;
+  fluxTexture: THREE.CanvasTexture | null;
+  selectedFace: number | null;
+  onSelectFace: (face: number | null) => void;
 }) {
-  const frames = useRef<THREE.InstancedMesh>(null);
-  const portrait = useRef<THREE.InstancedMesh>(null);
-  const landscape = useRef<THREE.InstancedMesh>(null);
-  const rails = useRef<THREE.InstancedMesh>(null);
-  const invalidate = useThree((store) => store.invalidate);
-  useLayoutEffect(() => {
-    if (!frames.current || !portrait.current || !landscape.current || !rails.current) return;
-    let portraits = 0, landscapes = 0;
-    panels.forEach((panel, index) => {
-      const matrices = buildPanelInstanceMatrices(panel);
-      frames.current!.setMatrixAt(index, matrices.frame);
-      if (panel.acrossMeters >= panel.alongMeters) landscape.current!.setMatrixAt(landscapes++, matrices.glass);
-      else portrait.current!.setMatrixAt(portraits++, matrices.glass);
-      matrices.rails.forEach((matrix, rail) => rails.current!.setMatrixAt(index * 2 + rail, matrix));
-    });
-    for (const [mesh, count] of [[frames.current, panels.length], [portrait.current, portraits], [landscape.current, landscapes], [rails.current, panels.length * 2]] as const) {
-      mesh.count = count;
-      mesh.instanceMatrix.needsUpdate = true;
-      mesh.computeBoundingSphere();
-      mesh.computeBoundingBox();
-    }
-    invalidate();
-  }, [panels, invalidate]);
-  const count = Math.max(1, capacity);
-  return <group>
-    <instancedMesh ref={frames} args={[undefined, undefined, count]} material={skin.frame} castShadow><boxGeometry args={[1, 1, 1]} /></instancedMesh>
-    <instancedMesh ref={portrait} args={[undefined, undefined, count]} material={skin.glassPortrait}><planeGeometry args={[1, 1]} /></instancedMesh>
-    <instancedMesh ref={landscape} args={[undefined, undefined, count]} material={skin.glassLandscape}><planeGeometry args={[1, 1]} /></instancedMesh>
-    {/* Racking is illustrative; surveyed mounting hardware is not available. */}
-    <instancedMesh ref={rails} args={[undefined, undefined, count * 2]} material={skin.frame} castShadow><boxGeometry args={[1, 1, 1]} /></instancedMesh>
-  </group>;
+  const highlight = useMemo(() => faceHighlightGeometry(shell, selectedFace), [shell, selectedFace]);
+  useEffect(() => () => highlight?.dispose(), [highlight]);
+  const select = (event: ThreeEvent<MouseEvent>) => {
+    // Ignore the click that ends an orbit drag.
+    if (event.delta > 6 || event.faceIndex === undefined || event.faceIndex === null) return;
+    event.stopPropagation();
+    onSelectFace(shell.triangleFaces[event.faceIndex] ?? null);
+  };
+  return (
+    <group>
+      <mesh geometry={shell.roof} castShadow receiveShadow onClick={select}>
+        <RoofMaterial fluxTexture={fluxTexture} flatShading />
+      </mesh>
+      <mesh geometry={shell.walls} castShadow receiveShadow>
+        <meshStandardMaterial color={WALL_COLOR} roughness={0.95} metalness={0} side={THREE.DoubleSide} />
+      </mesh>
+      {shell.cliffs ? (
+        <mesh geometry={shell.cliffs} castShadow receiveShadow>
+          <meshStandardMaterial color={WALL_COLOR} roughness={0.95} metalness={0} side={THREE.DoubleSide} />
+        </mesh>
+      ) : null}
+      <mesh geometry={shell.fascia} castShadow>
+        <meshStandardMaterial color={FASCIA_COLOR} roughness={0.8} metalness={0} side={THREE.DoubleSide} />
+      </mesh>
+      {/* Ridges, hips and valleys are exact plane intersections; resolution-independent 1.25 px CAD lines. */}
+      {shell.creaseLines.length ? <Line segments points={shell.creaseLines} color={EDGE_COLOR} lineWidth={1.25} /> : null}
+      {shell.eaveLines.length ? <Line segments points={shell.eaveLines} color={EDGE_COLOR} lineWidth={1.25} /> : null}
+      {highlight ? (
+        <mesh geometry={highlight} renderOrder={2}>
+          <HighlightMaterial />
+        </mesh>
+      ) : null}
+    </group>
+  );
 }
 
-function CameraControls({ bounds, command }: { bounds: ModelBounds; command: { action: string; sequence: number } }) {
-  const controls = useRef<ComponentRef<typeof OrbitControls>>(null);
-  const { camera, size, invalidate } = useThree();
-  const lastSequence = useRef(-1);
-  useLayoutEffect(() => {
-    if (!controls.current || !(camera instanceof THREE.PerspectiveCamera)) return;
-    const orbit = controls.current;
-    const action = lastSequence.current === command.sequence ? "fit" : command.action;
-    lastSequence.current = command.sequence;
-    const pose = getRoofCameraPose(bounds, size.width / Math.max(1, size.height), action === "top");
-    orbit.minDistance = Math.max(3, pose.distance * 0.12);
-    orbit.maxDistance = Math.max(120, pose.distance * 3);
-    if (["fit", "top", "perspective"].includes(action)) {
-      // Flush damping momentum before fitting or switching camera presets.
-      orbit.enableDamping = false;
-      orbit.update();
-      camera.position.copy(pose.position);
-      orbit.target.copy(pose.target);
-      camera.lookAt(pose.target);
-      camera.updateProjectionMatrix();
-      orbit.update();
-      orbit.enableDamping = true;
-    } else if (action === "zoom-in" || action === "zoom-out") {
-      const offset = camera.position.clone().sub(orbit.target);
-      const nextDistance = THREE.MathUtils.clamp(offset.length() * (action === "zoom-in" ? 0.8 : 1.25), orbit.minDistance, orbit.maxDistance);
-      camera.position.copy(orbit.target).add(offset.setLength(nextDistance));
-      orbit.update();
-    } else if (action === "left" || action === "right") {
-      orbit.setAzimuthalAngle(orbit.getAzimuthalAngle() + (action === "left" ? -0.15 : 0.15));
-    } else if (action === "up" || action === "down") {
-      orbit.setPolarAngle(THREE.MathUtils.clamp(orbit.getPolarAngle() + (action === "up" ? -0.1 : 0.1), 0.001, Math.PI * 0.47));
-    }
-    invalidate();
-  }, [camera, bounds, size.width, size.height, command, invalidate]);
-  return <OrbitControls ref={controls} makeDefault enableDamping dampingFactor={0.08} maxPolarAngle={Math.PI * 0.47} />;
+function SegmentRoof({
+  shell,
+  fluxTexture,
+  selected,
+  onSelectFace,
+}: {
+  shell: SegmentShell;
+  fluxTexture: THREE.CanvasTexture | null;
+  selected: boolean;
+  onSelectFace: (face: number | null) => void;
+}) {
+  return (
+    <group>
+      <mesh
+        geometry={shell.roof}
+        castShadow
+        receiveShadow
+        onClick={(event) => {
+          if (event.delta > 6) return;
+          event.stopPropagation();
+          onSelectFace(shell.faceId);
+        }}
+      >
+        <RoofMaterial fluxTexture={fluxTexture} />
+        <Edges threshold={14} color={EDGE_COLOR} lineWidth={1.25} />
+      </mesh>
+      <mesh geometry={shell.walls} castShadow receiveShadow>
+        <meshStandardMaterial color={WALL_COLOR} roughness={0.95} metalness={0} side={THREE.DoubleSide} />
+      </mesh>
+      {selected ? (
+        <mesh geometry={shell.roof} renderOrder={2}>
+          <HighlightMaterial />
+        </mesh>
+      ) : null}
+    </group>
+  );
 }
 
-/** Request frames for changed content; the idle scene needs no animation loop. */
+/**
+ * Distinct keys force a fresh material on swap — mutating `map` on a live
+ * material skips the shader recompile and the texture silently never shows.
+ * The heatmap is data, not a surface: unlit and outside tone mapping, so
+ * every face shows exactly the legend colour; the edges carry the form.
+ */
+function RoofMaterial({ fluxTexture, flatShading = false }: { fluxTexture: THREE.CanvasTexture | null; flatShading?: boolean }) {
+  return fluxTexture ? (
+    <meshBasicMaterial key="flux" map={fluxTexture} toneMapped={false} side={THREE.DoubleSide} polygonOffset polygonOffsetFactor={1} polygonOffsetUnits={1} />
+  ) : (
+    <meshStandardMaterial key="plain" color={ROOF_COLOR} roughness={0.85} metalness={0} flatShading={flatShading} side={THREE.DoubleSide} polygonOffset polygonOffsetFactor={1} polygonOffsetUnits={1} />
+  );
+}
+
+function HighlightMaterial() {
+  return (
+    <meshBasicMaterial
+      color={HIGHLIGHT_COLOR}
+      transparent
+      opacity={0.32}
+      depthWrite={false}
+      toneMapped={false}
+      side={THREE.DoubleSide}
+      polygonOffset
+      polygonOffsetFactor={-2}
+      polygonOffsetUnits={-2}
+    />
+  );
+}
+
+/** Raised rooftop features detected in the elevation scan (units, vents, chimneys). */
+function RooftopFeatures({ obstructions }: { obstructions: RoofObstruction[] }) {
+  return (
+    <group>
+      {obstructions.map((feature, index) => (
+        <mesh key={index} position={[feature.x, (feature.baseM + feature.topM) / 2, feature.z]} castShadow receiveShadow>
+          <boxGeometry args={[Math.max(0.3, feature.widthM), Math.max(0.2, feature.topM - feature.baseM), Math.max(0.3, feature.depthM)]} />
+          <meshStandardMaterial color="#8b95a3" roughness={0.7} metalness={0.2} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+/** The selected face's triangles as their own small geometry (never shares buffers with the roof). */
+function faceHighlightGeometry(shell: RebuiltShell, face: number | null) {
+  if (face === null || !shell.roof.index) return null;
+  const index = shell.roof.index.array;
+  const positions = shell.roof.getAttribute("position").array;
+  const out: number[] = [];
+  for (let triangle = 0; triangle < shell.triangleFaces.length; triangle++) {
+    if (shell.triangleFaces[triangle] !== face) continue;
+    for (let corner = 0; corner < 3; corner++) {
+      const vertex = index[triangle * 3 + corner];
+      out.push(positions[vertex * 3], positions[vertex * 3 + 1], positions[vertex * 3 + 2]);
+    }
+  }
+  if (!out.length) return null;
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(out, 3));
+  return geometry;
+}
+
+/** Request a frame and a shadow-map refresh for changed content; the idle scene needs no animation loop. */
 function ForceRender({ trigger }: { trigger: string }) {
-  const invalidate = useThree((store) => store.invalidate);
-
+  const refreshShadows = useRefreshShadows();
   useEffect(() => {
-    invalidate();
-  }, [invalidate, trigger]);
-
+    refreshShadows();
+  }, [refreshShadows, trigger]);
   return null;
 }
 
@@ -630,6 +596,11 @@ function SceneMessage({ children }: { children: React.ReactNode }) {
       {children}
     </div>
   );
+}
+
+function modelCacheKey(dsmUrl: string, maskUrl: string | null, fluxUrl: string | null, roofData: RoofAnalysis) {
+  const first = roofData.solarPanels[0]?.center;
+  return [dsmUrl, maskUrl, fluxUrl, roofData.solarPanels.length, first?.lat, first?.lng, roofData.annualSunlightHours].join("|");
 }
 
 function isWebGlAvailable() {
@@ -643,467 +614,3 @@ function isWebGlAvailable() {
   }
 }
 
-function buildSceneData({
-  dsm,
-  flux,
-  mask,
-  roofData,
-}: {
-  dsm: GeoTiffRaster;
-  flux: GeoTiffRaster | null;
-  mask: GeoTiffRaster | null;
-  roofData: RoofAnalysis;
-}): SceneData | null {
-  const focusBounds = resolveFocusBounds(roofData, dsm.bounds);
-  const cropBounds = expandBoundsMeters(focusBounds, SCENE_PADDING_METERS);
-  const origin = boundsCenter(cropBounds);
-  const sampledGroundElevationMeters = estimateGroundElevationMeters(dsm.raster);
-
-  const fluxCanvas = flux ? buildFluxCanvas(flux, mask) : null;
-  const fluxTexture = fluxCanvas ? makeCanvasTexture(fluxCanvas) : null;
-
-  // One fitted plane per segment (from panel-center DSM samples) — the
-  // shared surface for BOTH the roof faces and the panel arrays, so
-  // modules always sit flush on their face.
-  const fittedPlanes = fitSegmentPlanes({
-    panels: roofData.solarPanels,
-    raster: dsm.raster,
-    width: dsm.width,
-    height: dsm.height,
-    bounds: dsm.bounds,
-    origin,
-    groundElevationMeters: sampledGroundElevationMeters,
-    fallbackElevationMeters: DEFAULT_FACE_HEIGHT_METERS,
-  });
-  // A cropped scan may contain roof pixels but no actual ground. Clamping
-  // individual corners then changes the roof pitch and buries the panels.
-  // Shift the shared display datum instead, preserving every relative plane.
-  const { planes: segmentPlanes, liftMeters } = liftRoofSegmentPlanes({
-    planes: fittedPlanes,
-    origin,
-    outlines: roofData.roofSegments.map((segment) => ({
-      segmentIndex: segment.segmentIndex ?? -1,
-      points: roofData.roofBounds
-        ? normalizedOutlineToLatLng(segment.outline, roofData.roofBounds)
-        : [],
-    })),
-  });
-  const groundElevationMeters = sampledGroundElevationMeters - liftMeters;
-
-  // Extruded roof faces: one crisp plane per segment outline.
-  const faces: FaceMesh[] = [];
-  let roofTopMeters = 0;
-
-  if (roofData.roofBounds) {
-    roofData.roofSegments.forEach((segment, index) => {
-      const outline = normalizedOutlineToLatLng(
-        segment.outline,
-        roofData.roofBounds!
-      );
-      const geometry = buildRoofFaceGeometry({
-        outline,
-        pitchDeg: segment.pitchDeg,
-        azimuthDeg: segment.azimuthDeg,
-        origin,
-        raster: dsm.raster,
-        width: dsm.width,
-        height: dsm.height,
-        bounds: dsm.bounds,
-        groundElevationMeters,
-        fallbackElevationMeters: DEFAULT_FACE_HEIGHT_METERS,
-        textureBounds: flux?.bounds ?? null,
-        plane:
-          segment.segmentIndex !== undefined
-            ? segmentPlanes.get(segment.segmentIndex)
-            : undefined,
-      });
-
-      if (!geometry) {
-        return;
-      }
-
-      const roof = new THREE.BufferGeometry();
-      roof.setAttribute(
-        "position",
-        new THREE.BufferAttribute(geometry.positions, 3)
-      );
-      roof.setAttribute("uv", new THREE.BufferAttribute(geometry.uvs, 2));
-      roof.setIndex(new THREE.BufferAttribute(geometry.indices, 1));
-      roof.computeVertexNormals();
-
-      const wall = new THREE.BufferGeometry();
-      wall.setAttribute(
-        "position",
-        new THREE.BufferAttribute(geometry.wallPositions, 3)
-      );
-      wall.setIndex(new THREE.BufferAttribute(geometry.wallIndices, 1));
-      wall.computeVertexNormals();
-
-      faces.push({
-        key: index,
-        roof,
-        roofEdges: new THREE.EdgesGeometry(roof, 12),
-        wall,
-      });
-      roofTopMeters = Math.max(roofTopMeters, geometry.maxHeightMeters);
-    });
-  }
-
-  if (!faces.length && !roofData.solarPanels.length) {
-    fluxTexture?.dispose();
-    return null;
-  }
-
-  // Detected shading obstructions as low roof-mounted marker prisms.
-  const obstructions: ObstructionMesh[] = [];
-
-  if (roofData.roofBounds) {
-    roofData.obstructionOutlines.forEach((rawOutline, index) => {
-      const outline = normalizedOutlineToLatLng(
-        rawOutline,
-        roofData.roofBounds!
-      );
-      const geometry = buildObstructionMarkerGeometry({
-        outline,
-        origin,
-        raster: dsm.raster,
-        width: dsm.width,
-        height: dsm.height,
-        bounds: dsm.bounds,
-        groundElevationMeters,
-        fallbackElevationMeters: DEFAULT_FACE_HEIGHT_METERS,
-      });
-
-      if (!geometry) {
-        return;
-      }
-
-      const top = new THREE.BufferGeometry();
-      top.setAttribute(
-        "position",
-        new THREE.BufferAttribute(geometry.positions, 3)
-      );
-      top.setIndex(new THREE.BufferAttribute(geometry.indices, 1));
-      top.computeVertexNormals();
-
-      const wall = new THREE.BufferGeometry();
-      wall.setAttribute(
-        "position",
-        new THREE.BufferAttribute(geometry.wallPositions, 3)
-      );
-      wall.setIndex(new THREE.BufferAttribute(geometry.wallIndices, 1));
-      wall.computeVertexNormals();
-
-      obstructions.push({ key: index, top, wall });
-    });
-  }
-
-  // One fitted plane per roof segment: modules mount coplanar like a real
-  // racked array instead of following per-sample DSM noise.
-  const transforms = buildSegmentPlaneTransforms({
-    planes: segmentPlanes,
-    panels: roofData.solarPanels,
-    raster: dsm.raster,
-    width: dsm.width,
-    height: dsm.height,
-    bounds: dsm.bounds,
-    origin,
-    groundElevationMeters,
-    panelWidthMeters: roofData.panelWidthMeters,
-    panelHeightMeters: roofData.panelHeightMeters,
-    fallbackElevationMeters: DEFAULT_FACE_HEIGHT_METERS,
-  });
-
-  const panels = transforms.flatMap((transform, index) => {
-    if (!transform) {
-      return [];
-    }
-
-    roofTopMeters = Math.max(roofTopMeters, transform.position.y);
-
-    return [
-      {
-        key: index,
-        position: [
-          transform.position.x,
-          transform.position.y,
-          transform.position.z,
-        ] as [number, number, number],
-        rotation: [transform.tiltRad, transform.headingRad, 0] as [
-          number,
-          number,
-          number,
-        ],
-        alongMeters: transform.alongMeters,
-        acrossMeters: transform.acrossMeters,
-      },
-    ];
-  });
-
-  const northeastLocal = latLngToLocalMeters(cropBounds.northeast, origin);
-  const southwestLocal = latLngToLocalMeters(cropBounds.southwest, origin);
-  const extentMeters = Math.max(
-    Math.abs(northeastLocal.x - southwestLocal.x),
-    Math.abs(northeastLocal.z - southwestLocal.z)
-  );
-
-  const box = new THREE.Box3();
-  for (const face of faces) {
-    face.roof.computeBoundingBox();
-    if (face.roof.boundingBox) box.union(face.roof.boundingBox);
-  }
-  for (const panel of panels) box.expandByPoint(new THREE.Vector3(...panel.position));
-  if (box.isEmpty()) box.setFromCenterAndSize(new THREE.Vector3(), new THREE.Vector3(10, 6, 10));
-  box.min.y = Math.min(0, box.min.y);
-  box.expandByScalar(0.6);
-
-  return {
-    faces,
-    obstructions,
-    fluxTexture,
-    panels,
-    extentMeters,
-    roofTopMeters: roofTopMeters || DEFAULT_FACE_HEIGHT_METERS,
-    modelBounds: { min: box.min.toArray(), max: box.max.toArray() },
-  };
-}
-
-function resolveFocusBounds(
-  roofData: RoofAnalysis,
-  dsmBounds: RoofGeoBounds
-): RoofGeoBounds {
-  if (roofData.roofBounds) {
-    return roofData.roofBounds;
-  }
-
-  const centers = roofData.solarPanels
-    .map((panel) => panel.center)
-    .filter(
-      (center): center is LatLng =>
-        Number.isFinite(center?.lat) && Number.isFinite(center?.lng)
-    );
-
-  if (centers.length >= 2) {
-    return {
-      northeast: {
-        lat: Math.max(...centers.map((center) => center.lat)),
-        lng: Math.max(...centers.map((center) => center.lng)),
-      },
-      southwest: {
-        lat: Math.min(...centers.map((center) => center.lat)),
-        lng: Math.min(...centers.map((center) => center.lng)),
-      },
-    };
-  }
-
-  // Last resort: a small box around the DSM center.
-  const center = boundsCenter(dsmBounds);
-  return expandBoundsMeters(
-    { northeast: { ...center }, southwest: { ...center } },
-    12
-  );
-}
-
-/**
- * Continuous irradiance gradient canvas from the annual-flux GeoTIFF —
- * the Aurora-style heatmap draped over the clean roof faces. Pixels
- * without usable flux (or off the roof mask) fall back to the neutral
- * roof tone so untextured spots blend with the default material.
- */
-function buildFluxCanvas(
-  flux: GeoTiffRaster,
-  mask: GeoTiffRaster | null
-): HTMLCanvasElement | null {
-  const fluxPixelCount = flux.width * flux.height;
-
-  if (!fluxPixelCount) {
-    return null;
-  }
-
-  const validValues: number[] = [];
-
-  for (let index = 0; index < fluxPixelCount; index += 1) {
-    const value = Number(flux.raster[index]);
-    if (
-      Number.isFinite(value) &&
-      value > -9990 &&
-      (!mask || isMaskedRoofPixel(flux, mask, index))
-    ) {
-      validValues.push(value);
-    }
-  }
-
-  if (!validValues.length) {
-    return null;
-  }
-
-  validValues.sort((left, right) => left - right);
-  const low = percentileValue(validValues, 0.08);
-  const high = percentileValue(validValues, 0.92);
-  const range = Math.max(high - low, 1);
-
-  const canvas = document.createElement("canvas");
-  canvas.width = flux.width;
-  canvas.height = flux.height;
-  const context = canvas.getContext("2d");
-
-  if (!context) {
-    return null;
-  }
-
-  const imageData = context.createImageData(flux.width, flux.height);
-  const pixels = imageData.data;
-  const neutral = { r: 232, g: 228, b: 220 };
-
-  for (let index = 0; index < fluxPixelCount; index += 1) {
-    const value = Number(flux.raster[index]);
-    const target = index * 4;
-    const valid = Number.isFinite(value) && value > -9990;
-
-    const color = valid
-      ? fluxRampColor(Math.max(0, Math.min(1, (value - low) / range)))
-      : neutral;
-
-    pixels[target] = color.r;
-    pixels[target + 1] = color.g;
-    pixels[target + 2] = color.b;
-    pixels[target + 3] = 255;
-  }
-
-  context.putImageData(imageData, 0, 0);
-  return canvas;
-}
-
-/** Nearest-neighbor mask lookup by geographic position of a flux pixel. */
-function isMaskedRoofPixel(
-  flux: GeoTiffRaster,
-  mask: GeoTiffRaster,
-  fluxIndex: number
-) {
-  const column = fluxIndex % flux.width;
-  const row = Math.floor(fluxIndex / flux.width);
-  const lat =
-    flux.bounds.northeast.lat -
-    ((row + 0.5) / flux.height) *
-      (flux.bounds.northeast.lat - flux.bounds.southwest.lat);
-  const lng =
-    flux.bounds.southwest.lng +
-    ((column + 0.5) / flux.width) *
-      (flux.bounds.northeast.lng - flux.bounds.southwest.lng);
-
-  const maskLatSpan = mask.bounds.northeast.lat - mask.bounds.southwest.lat;
-  const maskLngSpan = mask.bounds.northeast.lng - mask.bounds.southwest.lng;
-
-  if (maskLatSpan <= 0 || maskLngSpan <= 0) {
-    return true;
-  }
-
-  const maskColumn = Math.floor(
-    ((lng - mask.bounds.southwest.lng) / maskLngSpan) * mask.width
-  );
-  const maskRow = Math.floor(
-    ((mask.bounds.northeast.lat - lat) / maskLatSpan) * mask.height
-  );
-
-  if (
-    maskColumn < 0 ||
-    maskRow < 0 ||
-    maskColumn >= mask.width ||
-    maskRow >= mask.height
-  ) {
-    return false;
-  }
-
-  return Number(mask.raster[maskRow * mask.width + maskColumn] ?? 0) > 0;
-}
-
-/** Same ramp as the 2D Sunlight view: shade blue -> warm amber -> sunny orange. */
-function fluxRampColor(value: number) {
-  const shade = { r: 30, g: 64, b: 175 };
-  const warm = { r: 251, g: 191, b: 36 };
-  const sunny = { r: 249, g: 115, b: 22 };
-  const mix = (
-    left: { r: number; g: number; b: number },
-    right: { r: number; g: number; b: number },
-    amount: number
-  ) => ({
-    r: Math.round(left.r + (right.r - left.r) * amount),
-    g: Math.round(left.g + (right.g - left.g) * amount),
-    b: Math.round(left.b + (right.b - left.b) * amount),
-  });
-
-  return value <= 0.5
-    ? mix(shade, warm, value / 0.5)
-    : mix(warm, sunny, (value - 0.5) / 0.5);
-}
-
-function percentileValue(sorted: number[], ratio: number) {
-  const index = Math.min(
-    sorted.length - 1,
-    Math.max(0, Math.round((sorted.length - 1) * ratio))
-  );
-  return sorted[index] ?? 0;
-}
-
-function makeCanvasTexture(canvas: HTMLCanvasElement) {
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.anisotropy = 4;
-  return texture;
-}
-
-/**
- * Face of a photovoltaic module: a matrix of monocrystalline cells separated
- * by backsheet gaps, each crossed by busbars.
- *
- * `cols`/`rows` are given in the module's own UV frame, so a portrait module
- * (6 across, 10 down) and a landscape one (10 across, 6 down) each get a grid
- * whose cells stay square instead of stretching with the module.
- */
-function makePvCellTexture(cols: number, rows: number) {
-  if (typeof document === "undefined") {
-    return null;
-  }
-
-  const cellPx = 44;
-  const gapPx = 3;
-  const canvas = document.createElement("canvas");
-  canvas.width = cols * cellPx;
-  canvas.height = rows * cellPx;
-
-  const ctx = canvas.getContext("2d");
-  if (!ctx) {
-    return null;
-  }
-
-  // Backsheet showing through the inter-cell gaps.
-  ctx.fillStyle = "#080d18";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  const busbarPx = Math.max(1, Math.round(cellPx * 0.035));
-
-  for (let row = 0; row < rows; row += 1) {
-    for (let col = 0; col < cols; col += 1) {
-      const x = col * cellPx + gapPx / 2;
-      const y = row * cellPx + gapPx / 2;
-      const size = cellPx - gapPx;
-
-      // Silicon wafer: a cool blue-black with a soft diagonal sheen.
-      const wafer = ctx.createLinearGradient(x, y, x + size, y + size);
-      wafer.addColorStop(0, "#1d3055");
-      wafer.addColorStop(0.5, "#14243d");
-      wafer.addColorStop(1, "#0e1a2c");
-      ctx.fillStyle = wafer;
-      ctx.fillRect(x, y, size, size);
-
-      // Two busbars per cell, running the cell's long axis.
-      ctx.fillStyle = "rgba(196, 212, 232, 0.26)";
-      ctx.fillRect(x + size * 0.31, y, busbarPx, size);
-      ctx.fillRect(x + size * 0.65, y, busbarPx, size);
-    }
-  }
-
-  const texture = makeCanvasTexture(canvas);
-  texture.anisotropy = 8;
-  return texture;
-}

@@ -243,7 +243,7 @@ function HookScene() {
       <AbsoluteFill style={{ background: "linear-gradient(90deg, rgba(5,9,20,0.92) 0%, rgba(5,9,20,0.66) 47%, rgba(5,9,20,0.18) 100%)" }} />
       <div style={{ position: "absolute", top: 72, left: 104 }}><Brand /></div>
       <div style={{ position: "absolute", left: 104, top: 270, width: 950, opacity: fade(frame, 20) }}>
-        <Kicker>THE FIRST STEP ISN'T A SALES CALL</Kicker>
+        <Kicker>THE FIRST STEP ISN&apos;T A SALES CALL</Kicker>
         <h1 style={brandStyle({ fontSize: 94, lineHeight: 0.98, letterSpacing: "-0.055em", margin: "32px 0 26px", fontWeight: 800 })}>
           Before you call an installer,
           <br />

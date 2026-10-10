@@ -20,6 +20,6 @@ export function buildEstimateUrl(address: string) {
   return `${APP_URL}/estimate?${params.toString()}`;
 }
 
-export function buildShareUrl(address: string) {
+export function buildEstimateNavigationUrl(address: string) {
   return `${APP_URL}/estimate?address=${encodeURIComponent(address)}`;
 }

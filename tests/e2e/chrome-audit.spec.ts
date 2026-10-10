@@ -52,13 +52,13 @@ for (const width of [1440, 393]) {
     await page.getByRole("button", { name: "Reset 3D view", exact: true }).click();
     await page.getByRole("tab", { name: "Sunlight", exact: true }).click();
     await inspect("sunlight");
-    await page.getByRole("tab", { name: "3D Model", exact: true }).click();
-    for (const name of ["Overview", "Roof & Shade", "Panels", "Savings", "Financing", "Send Report"]) {
+    await page.getByRole("tab", { name: "3D model", exact: true }).click();
+    for (const name of ["Overview", "Roof & shade", "Panels", "Savings", "Financing", "Send Report"]) {
       await page.getByRole("tablist", { name: "Solar report detail sections" }).getByRole("tab", { name, exact: true }).click();
       if (name === "Send Report") await expect(page.getByLabel("Name", { exact: true })).toBeVisible();
       await inspect(name.toLowerCase().replaceAll(/[^a-z]+/g, "-"));
     }
-    await page.getByRole("button", { name: "Send My Full Report" }).last().click();
+    await page.getByRole("button", { name: "Send my full report" }).last().click();
     await inspect("report-validation");
     await page.reload();
     await expect(page.locator("#report-dashboard")).toBeVisible({ timeout: 25_000 });

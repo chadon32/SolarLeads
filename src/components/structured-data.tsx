@@ -1,8 +1,7 @@
 import { APP_CANONICAL_URL, APP_NAME, APP_TAGLINE } from "@/lib/brand";
-import { faqItems } from "@/lib/faq";
 
 /**
- * JSON-LD describing the site, the service, and the homepage FAQ.
+ * Homepage-only JSON-LD describing the site and its free analysis service.
  *
  * Every claim here is one the live product actually supports. Deliberately
  * absent: aggregateRating, review, postalAddress, telephone, and foundingDate.
@@ -49,20 +48,7 @@ export function StructuredData() {
         // The roof analysis genuinely costs the homeowner nothing.
         price: "0",
         priceCurrency: "USD",
-        availability: "https://schema.org/InStock",
       },
-    },
-    {
-      "@type": "FAQPage",
-      "@id": `${APP_CANONICAL_URL}/#faq`,
-      mainEntity: faqItems.map((item) => ({
-        "@type": "Question",
-        name: item.question,
-        acceptedAnswer: {
-          "@type": "Answer",
-          text: item.answer,
-        },
-      })),
     },
   ];
 

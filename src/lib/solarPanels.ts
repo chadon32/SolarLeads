@@ -1,12 +1,11 @@
 import { calculateFederalResidentialSolarCredit } from "@/lib/financial-model";
 import { getUsableAreaM2, type RoofAnalysis } from "@/lib/roof-analysis";
-import {
-  ARIZONA_AVG_RATE_PER_KWH,
-  INSTALLED_COST_PER_WATT,
-} from "@/lib/solar-assumptions";
+import { INSTALLED_COST_PER_WATT } from "@/lib/solar-assumptions";
 import { getMaxPanelCount } from "@/lib/solar-metrics";
 
 import { getSelectedPanelEnergy } from "@/lib/selected-panel-energy";
+import type { ModuleFaceLayout } from "@/lib/module-face";
+import { estimateAnnualSolarSavings } from "@/lib/solar-savings";
 
 export type SolarPanelTier = "premium" | "mid" | "value";
 
@@ -26,6 +25,8 @@ export type SolarPanel = {
   tier: SolarPanelTier;
   bestFor: string;
   specSourceUrl: string;
+  /** Datasheet cell layout and colours, drawn on the 3D module glass. */
+  face?: ModuleFaceLayout;
 };
 
 export type InverterType = "string" | "microinverters" | "optimizers";
@@ -70,6 +71,8 @@ export const SOLAR_PANELS: SolarPanel[] = [
     tier: "premium",
     bestFor: "small roofs needing max output",
     specSourceUrl: "https://www.recgroup.com/en-us/rec-alpha-pure-r",
+    // 80 gapless half-cut HJT cells, black anodised frame.
+    face: { cellsAcross: 5, cellsAlong: 16, halfCut: true, backsheet: "black", frame: "black", frontContacts: "multi-busbar", gapless: true },
   },
   {
     id: "qcells-q-peak-duo",
@@ -87,6 +90,8 @@ export const SOLAR_PANELS: SolarPanel[] = [
     tier: "mid",
     bestFor: "balanced residential performance",
     specSourceUrl: "https://us.qcells.com/q-peak-duo-blk-ml-g10/",
+    // 6 × 22 Q.ANTUM half cells, zero-gap layout, all-black (BLK).
+    face: { cellsAcross: 6, cellsAlong: 22, halfCut: true, backsheet: "black", frame: "black", frontContacts: "multi-busbar", gapless: true },
   },
   {
     id: "canadian-solar-hiku6",
@@ -105,6 +110,8 @@ export const SOLAR_PANELS: SolarPanel[] = [
     bestFor: "compact residential roof layouts",
     specSourceUrl:
       "https://investors.canadiansolar.com/news-releases/news-release-details/canadian-solar-starts-mass-production-new-rooftop-module-power",
+    // 108 cells as 2 × (9 × 6) half-cells, black frame.
+    face: { cellsAcross: 6, cellsAlong: 18, halfCut: true, backsheet: "white", frame: "black", frontContacts: "multi-busbar" },
   },
   {
     id: "sunpower-maxeon-6",
@@ -123,6 +130,9 @@ export const SOLAR_PANELS: SolarPanel[] = [
     bestFor: "high efficiency and long warranty options",
     specSourceUrl:
       "https://maxeon.com/us/sites/default/files/2024-12/sp_max6_66c_res_420_410_dc_ds_en_ltr_552330.pdf",
+    // 66 back-contact Maxeon Gen 6 cells, black frame; SPR-MAX6-420 has a
+    // white backsheet (the -BLK variant is black).
+    face: { cellsAcross: 6, cellsAlong: 11, halfCut: false, backsheet: "white", frame: "black", frontContacts: "none", chamferedCells: true },
   },
   {
     id: "jinko-tiger-neo",
@@ -141,6 +151,8 @@ export const SOLAR_PANELS: SolarPanel[] = [
     bestFor: "N-type TOPCon performance",
     specSourceUrl:
       "https://www.jinkosolar.com/uploads/61970f6e/JKM410-430N-54HL4-%28V%29-F1-EN.pdf",
+    // 108 N-type half-cells (6 × 18), black frame (-V).
+    face: { cellsAcross: 6, cellsAlong: 18, halfCut: true, backsheet: "white", frame: "black", frontContacts: "multi-busbar" },
   },
   {
     id: "panasonic-evervolt",
@@ -158,6 +170,8 @@ export const SOLAR_PANELS: SolarPanel[] = [
     tier: "premium",
     bestFor: "high output in hot climates",
     specSourceUrl: "https://ftp.panasonic.com/solar/datasheet/400_410_hk_series.pdf",
+    // 132 half-cut HJT cells, black-on-black.
+    face: { cellsAcross: 6, cellsAlong: 22, halfCut: true, backsheet: "black", frame: "black", frontContacts: "multi-busbar" },
   },
 ];
 
@@ -327,11 +341,7 @@ export function getPanelFit(
   );
   const annualBill =
     input.monthlyBill && input.monthlyBill > 0 ? input.monthlyBill * 12 : null;
-  const annualSavings = Math.round(
-    annualBill
-      ? Math.min(annualKwh * ARIZONA_AVG_RATE_PER_KWH, annualBill)
-      : annualKwh * ARIZONA_AVG_RATE_PER_KWH
-  );
+  const annualSavings = estimateAnnualSolarSavings({ annualKwh, monthlyBill: annualBill ? annualBill / 12 : null });
   const installedCostPerWatt =
     panel.installedCostPerWatt + (input.inverterCostAdderPerWatt ?? 0);
   const systemCost = Math.round(

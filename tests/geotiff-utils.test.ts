@@ -1,6 +1,32 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getGeoTiffBounds, utmToLatLng } from "../src/lib/geotiff-utils";
+import { getGeoTiffBounds, utmToLatLng, readGeoTiffRaster, SolarRasterLoadError } from "../src/lib/geotiff-utils";
+import { writeArrayBuffer } from "geotiff";
+
+test("raster requests deduplicate, cache success, and allow retries after rate limiting", async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  const bytes = writeArrayBuffer(new Float32Array([1, 2, 3, 4]), { width: 2, height: 2 });
+  globalThis.fetch = async (_url, options) => {
+    calls += 1;
+    assert.equal(options?.cache, "default");
+    if (calls === 1) return new Response("{}", { status: 429, headers: { "Retry-After": "120" } });
+    return new Response(bytes);
+  };
+  try {
+    await assert.rejects(readGeoTiffRaster("https://test.invalid/cache.tif", null), (error: unknown) =>
+      error instanceof SolarRasterLoadError && error.message.includes("2 minute(s)"));
+    const [first, second] = await Promise.all([
+      readGeoTiffRaster("https://test.invalid/cache.tif", null),
+      readGeoTiffRaster("https://test.invalid/cache.tif", null),
+    ]);
+    assert.equal(first, second);
+    assert.equal(await readGeoTiffRaster("https://test.invalid/cache.tif", null), first);
+    assert.equal(calls, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
 
 test("utmToLatLng converts a Mesa AZ UTM 12N coordinate", () => {
   // Center of a real Solar API DSM tile for 3555 N Diego, Mesa AZ
