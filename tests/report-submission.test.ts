@@ -67,6 +67,7 @@ for (const missingColumn of ["referral_code", "report_snapshot"]) {
       const responsePayload = await response.json();
       assert.equal(responsePayload.lead.emailDeliveryStatus, "unavailable");
       assert.equal(inserts.length, 2);
+      assert.equal(inserts[1].notification_status, "homeowner_email_sending", "Initial delivery must be claimed before the provider is called");
       assert.deepEqual(inserts[1].report_snapshot, inserts[0].report_snapshot);
       for (const field of ["panel_count", "system_size_kw", "annual_savings", "selected_panel_model"]) {
         assert.deepEqual(inserts[1][field], inserts[0][field]);

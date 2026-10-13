@@ -85,7 +85,10 @@ const fixtureServer = createServer(async (request, response) => {
   }
   if (url.pathname === "/rest/v1/leads") {
     const id = url.searchParams.get("id")?.replace(/^eq\./, "");
-    const matching = id ? leads.filter((lead) => lead.id === id) : leads;
+    const expectedUpdatedAt = url.searchParams.get("updated_at")?.replace(/^eq\./, "");
+    const matching = leads.filter((lead) =>
+      (!id || lead.id === id) && (!expectedUpdatedAt || lead.updated_at === expectedUpdatedAt),
+    );
     let body = "";
     for await (const chunk of request) body += chunk;
     if (request.method === "PATCH") {
@@ -152,13 +155,23 @@ async function start() {
         SUPABASE_URL: `http://127.0.0.1:${fixturePort}`,
         SUPABASE_SERVICE_ROLE_KEY: "synthetic-local-fixture-key",
         DASHBOARD_ACCESS_TOKEN: token,
+        REPORT_SIGNING_SECRET: "synthetic-preview-report-signing-secret-only",
+        UTILITY_BILL_UPLOAD_SECRET: "synthetic-preview-upload-signing-secret-only",
+        RATE_LIMIT_SECRET: "synthetic-preview-rate-limit-secret-only",
+        DISABLE_EMAIL_SENDING: "true",
+        DISABLE_SOLAR_API_CALLS: "true",
         RESEND_API_KEY: "",
         SENDGRID_API_KEY: "",
         TWILIO_AUTH_TOKEN: "",
-        FOURFOLD_ATTRIBUTION_URL: "",
-        FOURFOLD_ATTRIBUTION_TOKEN: "",
+        FOURFOLD_ATTRIBUTION_ENDPOINT: "",
+        FOURFOLD_ATTRIBUTION_SECRET: "",
+        GOOGLE_MAPS_API_KEY: "",
+        GOOGLE_PLACES_API_KEY: "",
+        ANTHROPIC_API_KEY: "",
+        NEXT_PUBLIC_GA_MEASUREMENT_ID: "",
         NEXT_PUBLIC_GOOGLE_MAPS_API_KEY: "",
         NEXT_PUBLIC_TURNSTILE_SITE_KEY: "",
+        TURNSTILE_SECRET_KEY: "",
       },
     },
   );

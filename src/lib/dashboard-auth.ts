@@ -160,12 +160,8 @@ export function isDashboardRequestOriginAllowed(request: Request) {
 }
 
 function usesDashboardSessionCookie(request: Request) {
-  const hasExplicitToken = Boolean(
-    request.headers.get("authorization")?.trim() ||
-      request.headers.get("x-dashboard-token")?.trim()
-  );
-
-  return !hasExplicitToken && Boolean(getDashboardSessionCookieFromRequest(request));
+  const tokenAuth = verifyDashboardToken(getDashboardTokenFromRequest(request));
+  return !tokenAuth.ok && Boolean(getDashboardSessionCookieFromRequest(request));
 }
 
 export function requireDashboardAuth(request: Request) {
@@ -248,7 +244,11 @@ function parseCookieValue(cookieHeader: string, name: string) {
     const [rawKey, ...rawValue] = cookie.trim().split("=");
 
     if (rawKey === name) {
-      return decodeURIComponent(rawValue.join("="));
+      try {
+        return decodeURIComponent(rawValue.join("="));
+      } catch {
+        return "";
+      }
     }
   }
 

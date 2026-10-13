@@ -1,6 +1,6 @@
 "use client";
 
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import {
   Download,
   Search,
@@ -38,7 +38,11 @@ import {
   type DashboardRecordDataQuality,
 } from "@/lib/dashboard-data";
 import { getShortPanelBrand } from "@/lib/solarPanels";
-import { LEAD_STATUS_OPTIONS, type LeadStatus } from "@/lib/lead-status";
+import {
+  LEAD_STATUS_OPTIONS,
+  normalizeLeadStatus,
+  type LeadStatus,
+} from "@/lib/lead-status";
 
 export type DashboardLeadStatus = LeadStatus;
 
@@ -152,8 +156,8 @@ function getReportDownloadPath(lead: DashboardCrmLead) {
   }
 }
 
-function getEstimateReportPath(address: string) {
-  return `/estimate?address=${encodeURIComponent(address)}`;
+function getSavedReportPath(leadId: string) {
+  return `/report/${encodeURIComponent(leadId)}`;
 }
 
 function getDashboardAuthHeaders(
@@ -191,6 +195,7 @@ export function DashboardCrm({
   const [pdfUnavailableIds] = useState<Set<string>>(() => new Set());
   const [utilityBillUnavailableIds] = useState<Set<string>>(() => new Set());
   const [updatingIds, setUpdatingIds] = useState<Set<string>>(() => new Set());
+  const pendingStatusIds = useRef(new Set<string>());
   const [deletingIds, setDeletingIds] = useState<Set<string>>(() => new Set());
   const [actionError, setActionError] = useState("");
   const [actionSuccess, setActionSuccess] = useState("");
@@ -533,10 +538,11 @@ export function DashboardCrm({
     lead: DashboardCrmLead,
     nextStatus: DashboardLeadStatus,
   ) => {
-    if (deletingIds.has(lead.id)) {
+    if (deletingIds.has(lead.id) || pendingStatusIds.current.has(lead.id)) {
       return;
     }
 
+    pendingStatusIds.current.add(lead.id);
     const previousStatus = lead.status;
     setActionError("");
     setActionSuccess("");
@@ -558,12 +564,31 @@ export function DashboardCrm({
         body: JSON.stringify({
           leadId: lead.id,
           status: nextStatus,
+          expectedUpdatedAt: lead.updatedAt ?? undefined,
         }),
       });
 
+      const payload = await response.json().catch(() => null);
+      const savedStatus = normalizeLeadStatus(payload?.lead?.status);
+      const updatedAt = payload?.lead?.updatedAt;
       if (!response.ok) {
-        throw new Error("Unable to update status");
+        throw new Error(payload?.message ?? "Unable to update status.");
       }
+      if (
+        payload?.lead?.id !== lead.id ||
+        !savedStatus ||
+        typeof updatedAt !== "string" ||
+        !Number.isFinite(Date.parse(updatedAt))
+      ) {
+        throw new Error(
+          "The saved status could not be confirmed. Refresh the dashboard before retrying.",
+        );
+      }
+      setLeadItems((current) =>
+        current.map((item) =>
+          item.id === lead.id ? { ...item, status: savedStatus, updatedAt } : item,
+        ),
+      );
     } catch (error) {
       setLeadItems((current) =>
         current.map((item) =>
@@ -574,6 +599,7 @@ export function DashboardCrm({
         error instanceof Error ? error.message : "Unable to update status.",
       );
     } finally {
+      pendingStatusIds.current.delete(lead.id);
       setUpdatingIds((current) => {
         const next = new Set(current);
         next.delete(lead.id);
@@ -1115,7 +1141,7 @@ function LeadTable({
                   </button>
                 )}
                 <a
-                  href={getEstimateReportPath(lead.address)}
+                  href={getSavedReportPath(lead.id)}
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex min-h-10 items-center rounded-full border border-white/10 bg-white/[0.055] px-3.5 py-2 text-xs font-semibold text-white/78 transition hover:bg-white/[0.1] hover:text-white"
@@ -1473,7 +1499,7 @@ function LeadDetailPanel({
           )
         ) : null}
         <a
-          href={getEstimateReportPath(lead.address)}
+          href={getSavedReportPath(lead.id)}
           target="_blank"
           rel="noreferrer"
           className={`${secondaryButtonClass} sm:col-span-2`}

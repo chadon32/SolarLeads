@@ -8,6 +8,7 @@ import {
 
 test("report email status distinguishes sent, rejected, and skipped delivery", () => {
   assert.equal(getReportEmailDeliveryStatus({ ok: true }), "sent");
+  assert.equal(getReportEmailDeliveryStatus({ ok: false, reason: "acceptance_unconfirmed" }), "unconfirmed");
   assert.equal(
     getReportEmailDeliveryStatus({ ok: false, skipped: false }),
     "failed"
@@ -23,4 +24,6 @@ test("report email copy is truthful and gives a next step", () => {
   assert.match(getReportEmailDeliveryCopy("unavailable").title, /unavailable/);
   assert.equal(normalizeReportEmailDeliveryStatus("delayed"), "unavailable");
   assert.equal(normalizeReportEmailDeliveryStatus("sent"), "sent");
+  assert.equal(normalizeReportEmailDeliveryStatus("unconfirmed"), "unconfirmed");
+  assert.match(getReportEmailDeliveryCopy("unconfirmed").message, /email may still arrive/);
 });

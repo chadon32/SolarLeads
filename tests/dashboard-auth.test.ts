@@ -106,3 +106,28 @@ test("dashboard session bootstrap accepts a POST token and returns a token-free 
   assert.match(response.headers.get("set-cookie") ?? "", /HttpOnly/i);
   assert.doesNotMatch(response.headers.get("location") ?? "", /token/i);
 });
+
+test("malformed session cookies fail closed and an invalid header cannot bypass the cookie origin check", (t) => {
+  const previous = process.env.DASHBOARD_ACCESS_TOKEN;
+  process.env.DASHBOARD_ACCESS_TOKEN = "isolated-auth-regression-token";
+  t.after(() => {
+    if (previous === undefined) delete process.env.DASHBOARD_ACCESS_TOKEN;
+    else process.env.DASHBOARD_ACCESS_TOKEN = previous;
+  });
+  for (const cookie of ["%", "%E0%A4%A", "%ZZ"]) {
+    const request = new Request("https://dashboard.example/api/leads/status", {
+      method: "PATCH",
+      headers: { cookie: `${DASHBOARD_SESSION_COOKIE}=${cookie}` },
+    });
+    assert.equal(requireDashboardAuth(request)?.status, 403);
+  }
+  const request = new Request("https://dashboard.example/api/leads/status", {
+    method: "PATCH",
+    headers: {
+      authorization: "Bearer invalid-token",
+      cookie: `${DASHBOARD_SESSION_COOKIE}=${createDashboardSessionCookieValue()}`,
+      origin: "https://untrusted.example",
+    },
+  });
+  assert.equal(requireDashboardAuth(request)?.status, 403);
+});

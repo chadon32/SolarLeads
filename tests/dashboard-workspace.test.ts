@@ -26,6 +26,7 @@ test("workspace has deep-linked navigation, cohort controls, and accessible char
     assert.ok(html.includes(`/dashboard?view=${view}`));
   }
   assert.ok(html.includes('aria-current="page"'));
+  assert.ok(html.includes('id="main-content" tabindex="-1"'));
   assert.ok(html.includes('aria-label="Submission period"'));
   assert.ok(html.includes("Include test leads"));
   assert.ok(html.includes("View daily counts"));
@@ -40,6 +41,13 @@ test("analytics explains win rate, modeled value, missing data, and report compl
   assert.ok(html.includes("not website conversion"));
   assert.ok(html.includes("not sales revenue"));
   assert.ok(html.includes("Missing values are excluded"));
+});
+
+test("pipeline report links open saved reports rather than recomputing an estimate", () => {
+  const html = render("pipeline");
+  assert.ok(html.includes('href="/report/00000000-0000-4000-8000-0000000000a1"'));
+  assert.ok(html.includes('href="/report/00000000-0000-4000-8000-0000000000b2"'));
+  assert.ok(!html.includes('href="/estimate?address='));
 });
 
 test("an unavailable delivery queue is not presented as a successful empty queue", () => {

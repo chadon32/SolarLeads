@@ -107,6 +107,24 @@ test("a PDF preserves zero savings, zero offset and a flat roof pitch", async ()
   } finally { PDFPage.prototype.drawText = drawText; fixture.restore(); }
 });
 
+test("legacy PDF energy offset uses the saved value before recalculating", async () => {
+  for (const savedOffset of [80, 0]) {
+    const lead = { ...makePdfLead(), report_snapshot: null, energy_offset_pct: savedOffset };
+    const fixture = installPdfFixture(lead);
+    const drawText = PDFPage.prototype.drawText;
+    const texts: string[] = [];
+    PDFPage.prototype.drawText = function (text, options) {
+      texts.push(text);
+      return drawText.call(this, text, options);
+    };
+    try {
+      const { GET } = await import("../src/app/api/report/pdf/route");
+      assert.equal((await GET(pdfFixtureRequest())).status, 200);
+      assert.ok(texts.includes(`Energy offset: ${savedOffset}%`));
+    } finally { PDFPage.prototype.drawText = drawText; fixture.restore(); }
+  }
+});
+
 test("PDF readiness is recalculated from the selected system instead of legacy roof confidence", async () => {
   const lead = makePdfLead();
   const snapshot = lead.report_snapshot!;

@@ -239,7 +239,17 @@ async function sendEmail({
     if (result.error) {
       const error = sanitizeProviderError(result.error);
       console.error("[notification-email:error]", { error, kind });
-      return { error, ok: false, reason: "send_failed" };
+      const uncertain = result.error.name === "application_error" ||
+        (result.error.statusCode != null && result.error.statusCode >= 500);
+      return { error, ok: false, reason: uncertain ? "acceptance_unconfirmed" : "send_failed" };
+    }
+
+    if (typeof result.data?.id !== "string" || !result.data.id.trim()) {
+      return {
+        error: "The email provider did not confirm acceptance. Check delivery before retrying.",
+        ok: false,
+        reason: "acceptance_unconfirmed",
+      };
     }
 
     console.info("[notification-email:sent]", {
@@ -255,7 +265,7 @@ async function sendEmail({
   } catch (error) {
     const message = sanitizeProviderError(error);
     console.error("[notification-email:error]", { error: message, kind });
-    return { error: message, ok: false, reason: "send_failed" };
+    return { error: message, ok: false, reason: "acceptance_unconfirmed" };
   }
 }
 

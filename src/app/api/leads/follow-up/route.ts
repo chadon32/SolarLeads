@@ -141,7 +141,7 @@ function normalizeFollowUpAction(value: unknown): FollowUpAction | null {
   }
 
   const normalized = value.trim().toLowerCase().replace(/\s+/g, "-");
-  return normalized in followUpStatusLabels ? (normalized as FollowUpAction) : null;
+  return Object.hasOwn(followUpStatusLabels, normalized) ? (normalized as FollowUpAction) : null;
 }
 
 function getNextFollowUpAt(

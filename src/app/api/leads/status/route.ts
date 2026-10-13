@@ -12,6 +12,7 @@ const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const statusUpdateSchema = z.object({
   leadId: z.string().uuid(),
   status: z.string().trim().min(1).max(32),
+  expectedUpdatedAt: z.string().datetime({ offset: true }).optional(),
 });
 
 export async function PATCH(request: Request) {
@@ -69,12 +70,16 @@ export async function PATCH(request: Request) {
     const statusLabel =
       LEAD_STATUS_OPTIONS.find((option) => option.id === status)?.label ?? "New";
 
-    const { data, error } = await supabase
+    let update = supabase
       .from("leads")
-      .update({ status: statusLabel })
-      .eq("id", leadId)
-      .select("id, status")
-      .single();
+      .update({ status: statusLabel, updated_at: new Date().toISOString() })
+      .eq("id", leadId);
+    if (parsed.success && parsed.data.expectedUpdatedAt) {
+      update = update.eq("updated_at", parsed.data.expectedUpdatedAt);
+    }
+    const { data, error } = await update
+      .select("id, status, updated_at")
+      .maybeSingle();
 
     if (error) {
       return NextResponse.json(
@@ -83,10 +88,18 @@ export async function PATCH(request: Request) {
       );
     }
 
+    if (!data) {
+      return NextResponse.json(
+        { message: "This lead changed or was removed. Refresh the dashboard before updating it again." },
+        { status: 409 }
+      );
+    }
+
     return NextResponse.json({
       lead: {
         id: data.id,
         status: normalizeLeadStatus(data.status) ?? status,
+        updatedAt: data.updated_at,
       },
     });
   } catch (error) {

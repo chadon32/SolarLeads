@@ -116,7 +116,7 @@ type LeadsQueryResult = {
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ view?: string | string[] }>;
+  searchParams: Promise<{ view?: string | string[]; access?: string | string[] }>;
 }) {
   const params = await searchParams;
   const initialView = normalizeDashboardView(params.view);
@@ -131,7 +131,7 @@ export default async function DashboardPage({
   }
 
   if (accessToken && !sessionAuth.ok) {
-    return <DashboardAccessGate />;
+    return <DashboardAccessGate accessDenied={params.access === "denied"} />;
   }
 
   const supabase = getSupabaseAdminClient();
@@ -444,15 +444,23 @@ export default async function DashboardPage({
 
 function DashboardAccessGate({
   configurationMissing = false,
+  accessDenied = false,
 }: {
   configurationMissing?: boolean;
+  accessDenied?: boolean;
 }) {
   return (
-    <main className="relative min-h-screen bg-[radial-gradient(circle_at_top,_rgba(25,72,108,0.3),_transparent_36%),linear-gradient(180deg,#05070d_0%,#07111d_68%,#06070b_100%)] px-4 py-8 text-slate-100 sm:px-6 md:px-10 lg:px-12">
+    <main id="main-content" className="relative min-h-screen bg-[radial-gradient(circle_at_top,_rgba(25,72,108,0.3),_transparent_36%),linear-gradient(180deg,#05070d_0%,#07111d_68%,#06070b_100%)] px-4 py-8 text-slate-100 sm:px-6 md:px-10 lg:px-12">
       <div className="mx-auto max-w-4xl rounded-[2rem] border border-white/10 bg-white/5 p-5 backdrop-blur-xl sm:p-6">
         <p className="text-xs font-semibold uppercase tracking-[0.34em] text-cyan-300">
-          Homeowner dashboard
+          Lead dashboard
         </p>
+
+        {accessDenied && !configurationMissing ? (
+          <p id="dashboard-access-error" role="alert" className="mt-4 text-sm text-rose-200">
+            That access token was not accepted. Check the token and try again.
+          </p>
+        ) : null}
         <h1 className="mt-3 text-3xl font-semibold tracking-tight text-white">
           {configurationMissing
             ? "Dashboard is not configured."
@@ -478,6 +486,8 @@ function DashboardAccessGate({
               id="dashboard-access-token"
               name="token"
               type="password"
+              aria-invalid={accessDenied || undefined}
+              aria-describedby={accessDenied ? "dashboard-access-error" : undefined}
               required
               autoComplete="current-password"
               placeholder="Dashboard token"

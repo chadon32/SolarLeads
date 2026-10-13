@@ -526,6 +526,7 @@ export async function POST(request: Request) {
     };
     const scoredInsert = {
       ...extendedInsert,
+      notification_status: "homeowner_email_sending",
       battery_added: batteryAdded,
       battery_brand: selectedBattery?.brand ?? null,
       battery_cost: selectedBattery?.cost ?? null,
@@ -877,6 +878,9 @@ async function saveConsentEvent(
 }
 
 function buildNotificationStatus(results: LeadNotificationSummary) {
+  if (results.homeownerEmail.reason === "acceptance_unconfirmed") {
+    return "homeowner_email_needs_review";
+  }
   const email = resultStatus(results.homeownerEmail);
 
   if (email === "sent") return "homeowner_email_sent";

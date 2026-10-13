@@ -537,9 +537,10 @@ function buildProposalData(
   }).annualImpactLbs;
   const energyOffsetPct =
     nonNegativeNumber(snapshotMetrics?.coveragePct) ??
+    nonNegativeNumber(lead.energy_offset_pct) ??
     (annualKwh !== undefined && monthlyBill
       ? calculateEnergyOffsetPct(annualKwh, monthlyBill)
-      : nonNegativeNumber(lead.energy_offset_pct));
+      : undefined);
   const suitabilityScore = calculateSolarReadinessScore({
     annualSunlightHours: sunlightHours ?? 0,
     coveragePct: energyOffsetPct ?? 0,

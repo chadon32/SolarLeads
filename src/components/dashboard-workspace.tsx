@@ -149,7 +149,7 @@ export function DashboardWorkspace({
           </button>
         </div>
       </aside>
-      <div className="crm-main">
+      <div className="crm-main" id="main-content" tabIndex={-1}>
         <div className="crm-topline">
           <span>
             PRIVATE OPERATIONS <span className="crm-topline-divider">/</span>{" "}
