@@ -15,6 +15,7 @@ import { InstallerVisitAgenda, type VisitCalendarDraft, type VisitTopicId } from
 import { EMPTY_VISIT } from "@/lib/site-visit-calendar";
 import { billOptionsIncluding } from "@/lib/monthly-bill-options";
 import { BillAverageCalculator } from "@/components/bill-average-calculator";
+import { AnnualUsageMatch, type UsageMatchDraft } from "@/components/annual-usage-match";
 import { BatteryRuntimePlanner } from "@/components/battery-runtime-planner";
 import { DEFAULT_BACKUP_SCENARIO, estimateBatteryRuntime, runtimeLabel, type BackupScenario } from "@/lib/battery-runtime";
 import {
@@ -64,6 +65,7 @@ type SolarReportDashboardProps = {
   address: string;
   analysis: RoofAnalysis;
   activePanelCount?: number;
+  onPanelCountChange?: (count: number) => void;
   monthlyBill?: number;
   onSelectedInverterTypeChange?: (inverterType: InverterType) => void;
   onSelectedPanelIdChange?: (panelId: string) => void;
@@ -116,6 +118,7 @@ const financingCopy: Record<FinancingMode, string> = {
 export function SolarReportDashboard({
   activeTab: externalActiveTab,
   activePanelCount,
+  onPanelCountChange,
   address,
   analysis,
   monthlyBill: externalMonthlyBill = 200,
@@ -139,6 +142,7 @@ export function SolarReportDashboard({
   const [cashQuote, setCashQuote] = useState<CashQuoteDraft>({ price: "", size: "" });
   const [secondCashQuote, setSecondCashQuote] = useState<CashQuoteDraft | null>(null);
   const [backupScenario, setBackupScenario] = useState(DEFAULT_BACKUP_SCENARIO);
+  const [usageMatch, setUsageMatch] = useState<UsageMatchDraft>({ usage: "" });
   const [visitTopics, setVisitTopics] = useState<VisitTopicId[]>([]);
   const [visitSchedule, setVisitSchedule] = useState<VisitCalendarDraft>(EMPTY_VISIT);
   const [selectedAdvisorQuestion, setSelectedAdvisorQuestion] = useState(0);
@@ -299,6 +303,9 @@ export function SolarReportDashboard({
               onMonthlyBillChange={onMonthlyBillChange}
               values={values}
             >
+              <AnnualUsageMatch analysis={analysis} panel={selectedPanel} currentCount={values.panelCount}
+                currentDc={values.annualKwh} maxCount={values.maxPanelCount} draft={usageMatch} onDraft={setUsageMatch}
+                onApply={onPanelCountChange} />
               <ScenarioComparison
                 baseline={baseline}
                 onPin={setBaseline}
