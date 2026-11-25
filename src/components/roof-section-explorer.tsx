@@ -30,7 +30,7 @@ export function RoofSectionExplorer({ sections, panelsVisible, selectedId, onSel
               {name}
             </button> : <p className="py-1 text-sm font-semibold">{name}</p>}
             <dl className="grid grid-cols-2 gap-x-2 gap-y-2 pb-1 text-xs leading-5">
-              <div><dt className="text-slate-400">Roof area</dt><dd>{squareFeet.format(s.areaM2 / 0.09290304)} sq ft</dd></div>
+              <div><dt className="text-slate-400">Section area</dt><dd>{squareFeet.format(s.areaM2 / 0.09290304)} sq ft</dd></div>
               <div><dt className="text-slate-400">Pitch</dt><dd>{Math.round(s.pitchDeg)}°</dd></div>
               {onSelect && <>
                 <div><dt className="text-slate-400">Relative sunlight</dt><dd>{s.sunShare !== null && Number.isFinite(s.sunShare) ? `${Math.round(s.sunShare * 100)}% of best-case sun` : "Not available"}</dd></div>
