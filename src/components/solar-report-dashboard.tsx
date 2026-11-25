@@ -9,6 +9,8 @@ import {
 } from "react";
 import type { RoofAnalysis } from "@/lib/roof-analysis";
 import { RedactedScenarioShareCard } from "@/components/redacted-scenario-share-card";
+import { InstallerQuoteComparison, ScenarioComparison, type EstimateSnapshot } from "@/components/estimate-planning-tools";
+import type { CashQuoteDraft } from "@/lib/installer-quote-comparison";
 import { billOptionsIncluding } from "@/lib/monthly-bill-options";
 import {
   buildSolarAdvisorInputFromAnalysis,
@@ -126,6 +128,8 @@ export function SolarReportDashboard({
   const monthlyBill = externalMonthlyBill;
   const [internalActiveTab, setInternalActiveTab] = useState<DetailTab>("overview");
   const [financingMode, setFinancingMode] = useState<FinancingMode>("loan");
+  const [baseline, setBaseline] = useState<EstimateSnapshot | null>(null);
+  const [cashQuote, setCashQuote] = useState<CashQuoteDraft>({ price: "", size: "" });
   const [selectedAdvisorQuestion, setSelectedAdvisorQuestion] = useState(0);
   const selectedPanel = getPanelById(selectedPanelId);
   const selectedInverter = getInverterOption(selectedInverterType);
@@ -278,14 +282,29 @@ export function SolarReportDashboard({
               imageryDate={analysis.imageryDate}
               onMonthlyBillChange={onMonthlyBillChange}
               values={values}
-            />
+            >
+              <ScenarioComparison
+                baseline={baseline}
+                onPin={setBaseline}
+                current={{
+                  module: `${selectedPanel.brand} ${selectedPanel.model}`,
+                  inverter: selectedInverter.label,
+                  battery: selectedBattery ? `${selectedBattery.brand} ${selectedBattery.model}` : "No battery",
+                  monthlyBill, panelCount: values.panelCount, systemKw: values.recommendedKw,
+                  installedCost: values.installedCost, annualSavings: values.annualSavings,
+                }}
+              />
+            </SavingsTab>
           ) : null}
           {activeTab === "financing" ? (
             <FinancingTab
               financingMode={financingMode}
               onFinancingModeChange={setFinancingMode}
               values={values}
-            />
+            >
+              <InstallerQuoteComparison draft={cashQuote} modelRate={values.costPerWatt}
+                modeledWatts={values.panelCount * selectedPanel.watts} onChange={setCashQuote} />
+            </FinancingTab>
           ) : null}
           <div hidden={activeTab !== "send"}>
             {reportFormOpened ? <SendReportTab sendReportContent={sendReportContent} /> : null}
@@ -1256,10 +1275,12 @@ function RoofShadeTab({
 }
 
 function SavingsTab({
+  children,
   imageryDate,
   onMonthlyBillChange,
   values,
 }: {
+  children: ReactNode;
   imageryDate?: string | null;
   onMonthlyBillChange?: (monthlyBill: number) => void;
   values: DashboardValues;
@@ -1310,6 +1331,7 @@ function SavingsTab({
           </p>
         </section>
       </div>
+      {children}
       <HowThisWasCalculated imageryDate={imageryDate} values={values} />
     </div>
   );
@@ -1455,10 +1477,12 @@ function BillBar({
 }
 
 function FinancingTab({
+  children,
   financingMode,
   onFinancingModeChange,
   values,
 }: {
+  children: ReactNode;
   financingMode: FinancingMode;
   onFinancingModeChange: (value: FinancingMode) => void;
   values: DashboardValues;
@@ -1563,6 +1587,9 @@ function FinancingTab({
         <p className="mt-4 text-sm leading-7 text-ink-muted">
           {financingCopy[financingMode]}
         </p>
+        {financingMode === "buy" ? children : (
+          <p className="mt-2 text-sm text-ink-muted">Have a cash quote? Select Buy to compare its price per watt.</p>
+        )}
         <p className="mt-3 text-xs leading-5 text-amber-100/78">
           Financing values are illustrative only. Final pricing, eligibility,
           incentives, APR, dealer fees, and terms require installer, lender, and

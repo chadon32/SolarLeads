@@ -975,6 +975,7 @@ export function HomeClient({
             </div>
             {hasValidAnalysis && roofAnalysis ? (
               <SolarReportDashboard
+                key={selectedAddress}
                 activeTab={reportTab}
                 address={selectedAddress}
                 analysis={roofAnalysis}
