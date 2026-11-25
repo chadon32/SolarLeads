@@ -11,6 +11,7 @@ import type { RoofAnalysis } from "@/lib/roof-analysis";
 import { RedactedScenarioShareCard } from "@/components/redacted-scenario-share-card";
 import { InstallerQuoteComparison, ScenarioComparison, type EstimateSnapshot } from "@/components/estimate-planning-tools";
 import type { CashQuoteDraft } from "@/lib/installer-quote-comparison";
+import { InstallerVisitAgenda, type VisitTopicId } from "@/components/installer-visit-agenda";
 import { billOptionsIncluding } from "@/lib/monthly-bill-options";
 import {
   buildSolarAdvisorInputFromAnalysis,
@@ -130,6 +131,7 @@ export function SolarReportDashboard({
   const [financingMode, setFinancingMode] = useState<FinancingMode>("loan");
   const [baseline, setBaseline] = useState<EstimateSnapshot | null>(null);
   const [cashQuote, setCashQuote] = useState<CashQuoteDraft>({ price: "", size: "" });
+  const [visitTopics, setVisitTopics] = useState<VisitTopicId[]>([]);
   const [selectedAdvisorQuestion, setSelectedAdvisorQuestion] = useState(0);
   const selectedPanel = getPanelById(selectedPanelId);
   const selectedInverter = getInverterOption(selectedInverterType);
@@ -259,7 +261,9 @@ export function SolarReportDashboard({
               advisor={values.advisor}
               analysis={analysis}
               values={values}
-            />
+            >
+              <InstallerVisitAgenda selected={visitTopics} onChange={setVisitTopics} />
+            </RoofShadeTab>
           ) : null}
           {activeTab === "panels" ? (
             <PanelsTab
@@ -1212,10 +1216,12 @@ function OverviewStat({ label, note, value }: { label: string; note?: string; va
 function RoofShadeTab({
   advisor,
   analysis,
+  children,
   values,
 }: {
   advisor: SolarAdvisorProfile;
   analysis: RoofAnalysis;
+  children: ReactNode;
   values: DashboardValues;
 }) {
   return (
@@ -1235,19 +1241,7 @@ function RoofShadeTab({
           planes, and estimated sunlight quality. The heat layer is intentionally
           subtle so the roof remains readable.
         </p>
-        <div className="mt-4 rounded-card border border-white/8 bg-slate-950/34 p-3">
-          <p className="text-xs font-semibold text-ink-muted">
-            Installer verification checklist
-          </p>
-          <ul className="mt-3 grid gap-2 text-xs leading-5 text-ink-dim">
-            <li>Confirm roof measurements, condition, obstructions, and fire setbacks.</li>
-            <li>Verify electrical service capacity and utility interconnection requirements.</li>
-            <li>Confirm equipment, tariff, incentives, production, and final pricing.</li>
-          </ul>
-          <p className="mt-3 text-xs leading-5 text-sky-100/72">
-            These items require an on-site installer review and are not editable in this preliminary homeowner model.
-          </p>
-        </div>
+        {children}
       </div>
       <div className="rounded-card border border-white/10 bg-black/20 p-4">
         <p className="text-xs font-semibold text-ink-muted">

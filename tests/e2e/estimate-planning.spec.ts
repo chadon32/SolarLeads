@@ -9,6 +9,36 @@ test.beforeEach(async ({ page }) => {
   await new HomeEstimatePage(page).openReadyEstimate();
 });
 
+test("a homeowner without a quote can save only the questions selected for their site visit", async ({ page }) => {
+  const roof = page.getByRole("tab", { name: "Roof & shade" });
+  await roof.click();
+  const tool = page.getByRole("region", { name: "Installer verification checklist" });
+  const link = tool.getByRole("link", { name: "Download site visit agenda" });
+  const electrical = tool.getByRole("checkbox", { name: "Electrical service capacity and utility approval" });
+  const production = tool.getByRole("checkbox", { name: "Sunlight and expected production" });
+  await expect(link).toHaveCount(0);
+  await electrical.check();
+  await production.check();
+  await page.getByRole("tab", { name: "Savings", exact: true }).click();
+  await roof.click();
+  await expect(tool.getByRole("status")).toHaveText("2 of 5 topics selected");
+  await electrical.uncheck();
+  const downloadPromise = page.waitForEvent("download");
+  await link.click();
+  const file = await downloadPromise;
+  expect(file.suggestedFilename()).toBe("SolarTelligence-site-visit.txt");
+  const path = await file.path();
+  expect(path).toBeTruthy();
+  const content = await readFile(path!, "utf8");
+  expect(content).toContain("What first-year production in kWh");
+  expect(content).not.toContain("Does my electrical service");
+  expect(content).not.toContain(TEST_ADDRESS);
+  await page.reload();
+  await roof.click();
+  await expect(tool.getByRole("status")).toHaveText("0 of 5 topics selected");
+  await expect(link).toHaveCount(0);
+});
+
 test("a homeowner can pin, adjust, replace and clear a roof setup", async ({ page }, testInfo) => {
   const savings = page.getByRole("tab", { name: "Savings", exact: true });
   const tool = page.getByRole("region", { name: "Compare two setups" });
