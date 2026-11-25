@@ -14,6 +14,8 @@ import type { CashQuoteDraft } from "@/lib/installer-quote-comparison";
 import { InstallerVisitAgenda, type VisitTopicId } from "@/components/installer-visit-agenda";
 import { billOptionsIncluding } from "@/lib/monthly-bill-options";
 import { BillAverageCalculator } from "@/components/bill-average-calculator";
+import { BatteryRuntimePlanner } from "@/components/battery-runtime-planner";
+import { DEFAULT_BACKUP_SCENARIO, estimateBatteryRuntime, runtimeLabel, type BackupScenario } from "@/lib/battery-runtime";
 import {
   buildSolarAdvisorInputFromAnalysis,
   buildSolarAdvisorProfile,
@@ -135,6 +137,7 @@ export function SolarReportDashboard({
   const [baseline, setBaseline] = useState<EstimateSnapshot | null>(null);
   const [cashQuote, setCashQuote] = useState<CashQuoteDraft>({ price: "", size: "" });
   const [secondCashQuote, setSecondCashQuote] = useState<CashQuoteDraft | null>(null);
+  const [backupScenario, setBackupScenario] = useState(DEFAULT_BACKUP_SCENARIO);
   const [visitTopics, setVisitTopics] = useState<VisitTopicId[]>([]);
   const [selectedAdvisorQuestion, setSelectedAdvisorQuestion] = useState(0);
   const selectedPanel = getPanelById(selectedPanelId);
@@ -276,14 +279,16 @@ export function SolarReportDashboard({
               monthlyBill={monthlyBill}
               onSelectedInverterTypeChange={onSelectedInverterTypeChange}
               onSelectedPanelIdChange={onSelectedPanelIdChange}
-              onAddBatteryChange={onAddBatteryChange}
-              onBatteryOptionChange={onBatteryOptionChange}
               addBattery={addBattery}
               batteryOption={batteryOption}
               selectedInverterType={selectedInverterType}
               selectedPanelId={selectedPanel.id}
               values={values}
-            />
+            >
+              <BatteryStorageSection addBattery={addBattery} batteryOption={batteryOption}
+                onAddBatteryChange={onAddBatteryChange} onBatteryOptionChange={onBatteryOptionChange}
+                scenario={backupScenario} onScenarioChange={setBackupScenario} />
+            </PanelsTab>
           ) : null}
           {activeTab === "savings" ? (
             <SavingsTab
@@ -340,8 +345,7 @@ function PanelsTab({
   analysis,
   batteryOption,
   monthlyBill,
-  onAddBatteryChange,
-  onBatteryOptionChange,
+  children,
   onSelectedInverterTypeChange,
   onSelectedPanelIdChange,
   selectedInverterType,
@@ -353,8 +357,7 @@ function PanelsTab({
   analysis: RoofAnalysis;
   batteryOption?: string;
   monthlyBill: number;
-  onAddBatteryChange?: (addBattery: boolean) => void;
-  onBatteryOptionChange?: (batteryOption: string) => void;
+  children: ReactNode;
   onSelectedInverterTypeChange?: (inverterType: InverterType) => void;
   onSelectedPanelIdChange?: (panelId: string) => void;
   selectedInverterType: InverterType;
@@ -514,12 +517,7 @@ function PanelsTab({
         onSelectedInverterTypeChange={onSelectedInverterTypeChange}
       />
 
-      <BatteryStorageSection
-        addBattery={addBattery}
-        batteryOption={batteryOption}
-        onAddBatteryChange={onAddBatteryChange}
-        onBatteryOptionChange={onBatteryOptionChange}
-      />
+      {children}
 
       <IncentivesSection
         federalCredit={federalCredit}
@@ -829,11 +827,15 @@ function BatteryStorageSection({
   batteryOption,
   onAddBatteryChange,
   onBatteryOptionChange,
+  scenario,
+  onScenarioChange,
 }: {
   addBattery: boolean;
   batteryOption?: string;
   onAddBatteryChange?: (addBattery: boolean) => void;
   onBatteryOptionChange?: (batteryOption: string) => void;
+  scenario: BackupScenario;
+  onScenarioChange: (value: BackupScenario) => void;
 }) {
   return (
     <section id="battery-storage" className="rounded-card border border-white/10 bg-black/18 p-4">
@@ -854,6 +856,7 @@ function BatteryStorageSection({
         <button
           type="button"
           onClick={() => onAddBatteryChange?.(!addBattery)}
+          aria-pressed={addBattery}
           className={`inline-flex min-h-11 min-w-32 items-center justify-center rounded-full px-4 py-3 text-sm font-semibold transition ${
             addBattery
               ? "bg-sky-200 text-slate-950"
@@ -864,17 +867,19 @@ function BatteryStorageSection({
         </button>
       </div>
 
-      {addBattery ? (
+      {addBattery ? (<>
+        <BatteryRuntimePlanner battery={getBatteryById(batteryOption)} scenario={scenario} onChange={onScenarioChange} />
         <div className="mt-4 grid gap-2 md:grid-cols-3">
           {BATTERY_OPTIONS.map((battery) => (
             <BatteryCard
               key={battery.id}
               battery={battery}
+              runtime={runtimeLabel(estimateBatteryRuntime(battery, scenario))}
               selected={getBatteryById(batteryOption).id === battery.id}
               onSelect={() => onBatteryOptionChange?.(battery.id)}
             />
           ))}
-        </div>
+        </div></>
       ) : null}
     </section>
   );
@@ -882,10 +887,12 @@ function BatteryStorageSection({
 
 function BatteryCard({
   battery,
+  runtime,
   onSelect,
   selected,
 }: {
   battery: BatteryOption;
+  runtime: string;
   onSelect: () => void;
   selected: boolean;
 }) {
@@ -896,6 +903,7 @@ function BatteryCard({
     <button
       type="button"
       onClick={onSelect}
+      aria-pressed={selected}
       className={`rounded-card border p-3 text-left transition ${
         selected
           ? "border-sky-200/48 bg-sky-200/[0.08]"
@@ -917,10 +925,10 @@ function BatteryCard({
       </div>
       <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-ink-dim">
         <PanelFinancialRow label="Capacity" value={`${battery.capacityKwh} kWh`} />
-        <PanelFinancialRow label="Backup" value={`~${battery.backupHours} hrs`} />
-        <PanelFinancialRow label="Cost" value={formatMoney(battery.cost)} />
+        <PanelFinancialRow label="Scenario runtime" value={runtime} />
+        <PanelFinancialRow label="Est. cost" value={formatMoney(battery.cost)} />
         <PanelFinancialRow label="Est. net cost" value={formatMoney(afterCredit)} />
-        <PanelFinancialRow label="Warranty" value={`${battery.warrantyYears} yrs`} />
+        <PanelFinancialRow label="Limited warranty" value={`Up to ${battery.warrantyYears} yrs`} />
         <PanelFinancialRow label="Power" value={`${battery.powerKw} kW`} />
       </div>
     </button>

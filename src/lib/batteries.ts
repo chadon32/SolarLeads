@@ -6,7 +6,7 @@ export type BatteryOption = {
   powerKw: number;
   cost: number;
   warrantyYears: number;
-  backupHours: number;
+  specificationUrl: string;
   bestFor: string;
 };
 
@@ -19,8 +19,8 @@ export const BATTERY_OPTIONS: BatteryOption[] = [
     powerKw: 11.5,
     cost: 11500,
     warrantyYears: 10,
-    backupHours: 12,
-    bestFor: "Whole home backup",
+    specificationUrl: "https://energylibrary.tesla.com/docs/Public/EnergyStorage/Powerwall/3/Datasheet/en-us/Powerwall-3-Datasheet.pdf",
+    bestFor: "Configurable output; confirm the installed rating",
   },
   {
     id: "pwrcell",
@@ -30,19 +30,19 @@ export const BATTERY_OPTIONS: BatteryOption[] = [
     powerKw: 6.7,
     cost: 9800,
     warrantyYears: 10,
-    backupHours: 16,
-    bestFor: "Longest backup time",
+    specificationUrl: "https://www.generac.com/globalassets/residential/solar-power-storage/pwrcell--overview/a0000949454_pwrcell_batterycabinet_specsheet_rev-lv3_engspan_digital_.pdf",
+    bestFor: "Six-module PWRcell cabinet",
   },
   {
     id: "enphase10t",
     brand: "Enphase",
     model: "IQ Battery 10T",
-    capacityKwh: 10.5,
+    capacityKwh: 10.08,
     powerKw: 3.84,
     cost: 8500,
     warrantyYears: 15,
-    backupHours: 9,
-    bestFor: "Best with Enphase microinverters",
+    specificationUrl: "https://enphase.com/download/iq-battery-10t-data-sheet",
+    bestFor: "U.S. model with integrated microinverters",
   },
 ];
 
