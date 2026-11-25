@@ -53,5 +53,9 @@ test("pipeline report links open saved reports rather than recomputing an estima
 test("an unavailable delivery queue is not presented as a successful empty queue", () => {
   const html = render("follow-ups");
   assert.ok(html.includes("Follow-up data unavailable"));
+  assert.doesNotMatch(html, /Queue filter|No follow-ups in this view/);
+  const exportButton = html.match(/<button\b[^>]*>(?:(?!<\/button>)[\s\S])*?Export view<\/button>/)?.[0];
+  assert.ok(exportButton);
+  assert.match(exportButton.slice(0, exportButton.indexOf(">")), /\bdisabled\b/);
   assert.ok(!html.includes(">Send now<"));
 });
