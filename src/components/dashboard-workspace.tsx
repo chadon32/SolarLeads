@@ -24,6 +24,7 @@ import type {
   DashboardView,
 } from "@/lib/dashboard-analytics";
 import { formatName } from "@/lib/name-format";
+import { CONTACT_REQUEST_LABELS, type ContactRequest } from "@/lib/dashboard-contact";
 import { formatDisplayAddress } from "@/lib/address-format";
 import { LEAD_STATUS_OPTIONS, type LeadStatus } from "@/lib/lead-status";
 
@@ -462,6 +463,7 @@ export function DashboardOverview({
   analytics,
   leads,
   failedCount,
+  onContact,
   onNavigate,
   onSelect,
   onStage,
@@ -470,6 +472,7 @@ export function DashboardOverview({
   analytics: DashboardAnalytics;
   leads: DashboardCrmLead[];
   failedCount: number | null;
+  onContact: (request: ContactRequest) => void;
   onNavigate: (view: DashboardView) => void;
   onSelect: (id: string) => void;
   onStage: (status: LeadStatus) => void;
@@ -489,7 +492,7 @@ export function DashboardOverview({
           </span>
           <span>
             <strong>New leads to review</strong>
-            <small>Make the first move</small>
+            <small>Review the saved contact preference</small>
           </span>
           <ArrowRight size={17} aria-hidden="true" />
         </button>
@@ -513,6 +516,23 @@ export function DashboardOverview({
           </span>
           <ArrowRight size={17} aria-hidden="true" />
         </button>
+      </section>
+      <section className="crm-panel" aria-labelledby="crm-contact-heading">
+        <div className="crm-panel-heading">
+          <div>
+            <h2 id="crm-contact-heading">Homeowner contact preferences</h2>
+            <p>Saved choices in this period, not sales stages. A report request alone is not a request for installer contact.</p>
+          </div>
+        </div>
+        <div className="crm-priorities">
+          {(Object.keys(CONTACT_REQUEST_LABELS) as ContactRequest[]).map(request => (
+            <button key={request} type="button" onClick={() => onContact(request)}>
+              <span className="crm-priority-count">{leads.filter(lead => lead.contact.request === request).length}</span>
+              <span><strong>{CONTACT_REQUEST_LABELS[request]}</strong><small>View matching leads</small></span>
+              <ArrowRight size={17} aria-hidden="true" />
+            </button>
+          ))}
+        </div>
       </section>
       <section className="crm-panel">
         <div className="crm-panel-heading">

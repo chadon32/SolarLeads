@@ -3,8 +3,9 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 
 // Local-only REST adapter. The preview never points at a production database.
-const fixturePort = 3201;
-const appPort = 3101;
+const testBuild = process.argv.includes("--qa-build");
+const fixturePort = testBuild ? 3283 : 3201;
+const appPort = testBuild ? 3183 : 3101;
 const token = "dashboard-workspace-local-qa";
 const now = Date.now();
 const stages = [
@@ -22,6 +23,9 @@ let leads = Array.from({ length: 64 }, (_, index) => {
     name: `QA Homeowner ${String(index + 1).padStart(2, "0")}`,
     email: `qa-${index + 1}@example.test`,
     phone: "",
+    installer_contact_consent: [true, false, null][index % 3],
+    preferred_contact_method: index % 2 === 0 ? "Email" : "Phone",
+    quote_requested: index % 3 === 2,
     address: `${index + 1} QA Test Way, Mesa, AZ 85201`,
     status: stages[index % stages.length],
     created_at: createdAt,
@@ -85,6 +89,11 @@ const fixtureServer = createServer(async (request, response) => {
   }
   if (url.pathname === "/rest/v1/leads") {
     const id = url.searchParams.get("id")?.replace(/^eq\./, "");
+    if (!id && (request.method === "DELETE" || request.method === "PATCH")) {
+      response.statusCode = 400;
+      response.end(JSON.stringify({ message: "A single fixture lead ID is required." }));
+      return;
+    }
     const expectedUpdatedAt = url.searchParams.get("updated_at")?.replace(/^eq\./, "");
     const matching = leads.filter((lead) =>
       (!id || lead.id === id) && (!expectedUpdatedAt || lead.updated_at === expectedUpdatedAt),
@@ -97,7 +106,7 @@ const fixtureServer = createServer(async (request, response) => {
         Object.assign(lead, patch, { updated_at: new Date().toISOString() });
     }
     if (request.method === "DELETE")
-      leads = leads.filter((lead) => lead.id !== id);
+      leads = leads.filter((lead) => !matching.includes(lead));
     const total = matching.length;
     const limit = Number(url.searchParams.get("limit") ?? total);
     response.setHeader(
@@ -107,9 +116,12 @@ const fixtureServer = createServer(async (request, response) => {
     const projected = matching.slice(0, limit).map((lead) => {
       if (!url.searchParams.get("select")?.includes("snapshot_version:"))
         return lead;
-      const { report_snapshot: snapshot, ...record } = lead;
+      const { report_snapshot: snapshot, installer_contact_consent, preferred_contact_method, ...record } = lead;
+      const columns = url.searchParams.get("select")?.split(",").map(col => col.trim()) ?? [];
       return {
         ...record,
+        ...(columns.includes("installer_contact_consent") ? { installer_contact_consent } : {}),
+        ...(columns.includes("preferred_contact_method") ? { preferred_contact_method } : {}),
         snapshot_version: snapshot.version,
         snapshot_created_at: snapshot.createdAt,
         snapshot_bill: snapshot.monthlyBill,
@@ -142,16 +154,19 @@ const fixtureServer = createServer(async (request, response) => {
 async function start() {
   fixtureServer.listen(fixturePort, "127.0.0.1");
   await once(fixtureServer, "listening");
-  console.log(`Synthetic dashboard: http://localhost:${appPort}/dashboard`);
+  console.log(`Synthetic dashboard: ${testBuild ? "https" : "http"}://localhost:${appPort}/dashboard`);
   console.log(`Local fixture token: ${token}`);
   const child = spawn(
-    process.platform === "win32" ? "npm.cmd" : "npm",
-    ["run", "dev", "--", "--port", String(appPort)],
+    testBuild ? process.execPath : process.platform === "win32" ? "npm.cmd" : "npm",
+    testBuild
+      ? ["scripts/dashboard-qa-https.mjs"]
+      : ["run", "dev", "--", "--port", String(appPort)],
     {
       stdio: "inherit",
-      shell: process.platform === "win32",
+      shell: !testBuild && process.platform === "win32",
       env: {
         ...process.env,
+        ...(testBuild ? { NODE_ENV: "production" } : {}),
         SUPABASE_URL: `http://127.0.0.1:${fixturePort}`,
         SUPABASE_SERVICE_ROLE_KEY: "synthetic-local-fixture-key",
         DASHBOARD_ACCESS_TOKEN: token,
@@ -181,7 +196,8 @@ async function start() {
   };
   process.on("SIGINT", close);
   process.on("SIGTERM", close);
-  child.on("exit", () => {
+  child.on("exit", (code) => {
+    if (code) process.exitCode = code;
     fixtureServer.close();
   });
 }

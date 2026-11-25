@@ -32,6 +32,7 @@ import {
   verifyDashboardSessionCookie,
 } from "@/lib/dashboard-auth";
 import { formatName } from "@/lib/name-format";
+import { readDashboardContact, withDashboardContactColumns } from "@/lib/dashboard-contact";
 import { getSupabaseAdminClient } from "@/lib/supabase-admin";
 import { buildReportPdfPath } from "@/lib/report-access";
 import {
@@ -86,6 +87,8 @@ type DashboardLead = {
   pdf_downloaded?: boolean | null;
   pdf_generated?: boolean | null;
   quote_requested?: boolean | null;
+  installer_contact_consent?: boolean | null;
+  preferred_contact_method?: string | null;
   solar_suitability_score?: number | null;
   twenty_year_savings?: number | null;
   utility_bill_file_path?: string | null;
@@ -146,54 +149,30 @@ export default async function DashboardPage({
   const baseLeadSelect =
     "id, name, email, phone, address, monthly_bill, estimated_savings, created_at";
 
-  let leadsResult = (await supabase
+  const queryLeads = withDashboardContactColumns(async (columns) => (await supabase
     .from("leads")
-    .select(
-      scoredLeadSelect.replace("report_snapshot", DASHBOARD_SNAPSHOT_SELECT),
-      { count: "exact" },
-    )
+    .select(columns, { count: "exact" })
     .order("created_at", { ascending: false })
-    .limit(DASHBOARD_RECORD_LIMIT)) as unknown as LeadsQueryResult;
+    .limit(DASHBOARD_RECORD_LIMIT)) as unknown as LeadsQueryResult);
+  let leadsResult = await queryLeads(scoredLeadSelect.replace("report_snapshot", DASHBOARD_SNAPSHOT_SELECT));
 
   if (
     leadsResult.error &&
     isMissingColumn(leadsResult.error.message, "utility_bill_file_path")
   ) {
-    leadsResult = (await supabase
-      .from("leads")
-      .select(
-        scoredLeadSelectWithoutUtilityBillPath.replace(
-          "report_snapshot",
-          DASHBOARD_SNAPSHOT_SELECT,
-        ),
-        { count: "exact" },
-      )
-      .order("created_at", { ascending: false })
-      .limit(DASHBOARD_RECORD_LIMIT)) as unknown as LeadsQueryResult;
+    leadsResult = await queryLeads(scoredLeadSelectWithoutUtilityBillPath.replace("report_snapshot", DASHBOARD_SNAPSHOT_SELECT));
   }
 
   if (leadsResult.error && shouldRetryLegacySelect(leadsResult.error.message)) {
-    leadsResult = (await supabase
-      .from("leads")
-      .select(scoredLeadSelectWithoutNewOptional, { count: "exact" })
-      .order("created_at", { ascending: false })
-      .limit(DASHBOARD_RECORD_LIMIT)) as unknown as LeadsQueryResult;
+    leadsResult = await queryLeads(scoredLeadSelectWithoutNewOptional);
   }
 
   if (leadsResult.error && shouldRetryLegacySelect(leadsResult.error.message)) {
-    leadsResult = (await supabase
-      .from("leads")
-      .select(extendedLeadSelect, { count: "exact" })
-      .order("created_at", { ascending: false })
-      .limit(DASHBOARD_RECORD_LIMIT)) as unknown as LeadsQueryResult;
+    leadsResult = await queryLeads(extendedLeadSelect);
   }
 
   if (leadsResult.error && shouldRetryLegacySelect(leadsResult.error.message)) {
-    leadsResult = (await supabase
-      .from("leads")
-      .select(baseLeadSelect, { count: "exact" })
-      .order("created_at", { ascending: false })
-      .limit(DASHBOARD_RECORD_LIMIT)) as unknown as LeadsQueryResult;
+    leadsResult = await queryLeads(baseLeadSelect);
   }
 
   const { data: leads, error: leadsError } = leadsResult;
@@ -323,6 +302,7 @@ export default async function DashboardPage({
 
     return {
       id: lead.id,
+      contact: readDashboardContact(lead.installer_contact_consent, lead.preferred_contact_method),
       name: formatName(lead.name),
       email: lead.email,
       phone: lead.phone ?? "",

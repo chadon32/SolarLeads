@@ -11,6 +11,7 @@ import { normalizeDashboardView } from "../../src/lib/dashboard-analytics";
 
 const lead = (id: string, name: string, address: string): DashboardCrmLead => ({
   id,
+  contact: { request: "unknown", preferredMethod: null },
   name,
   email: `${name.toLowerCase()}@example.test`,
   phone: "",

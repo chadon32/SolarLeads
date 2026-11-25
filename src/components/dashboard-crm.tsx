@@ -38,6 +38,7 @@ import {
   type DashboardRecordDataQuality,
 } from "@/lib/dashboard-data";
 import { getShortPanelBrand } from "@/lib/solarPanels";
+import { CONTACT_REQUEST_LABELS, type ContactRequest } from "@/lib/dashboard-contact";
 import {
   LEAD_STATUS_OPTIONS,
   normalizeLeadStatus,
@@ -48,6 +49,7 @@ export type DashboardLeadStatus = LeadStatus;
 
 export type DashboardCrmLead = {
   id: string;
+  contact: { request: ContactRequest; preferredMethod: string | null };
   name: string;
   email: string;
   phone: string;
@@ -206,6 +208,7 @@ export function DashboardCrm({
   const [listPage, setListPage] = useState(1);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [onlyStale, setOnlyStale] = useState(false);
+  const [contactFilter, setContactFilter] = useState<ContactRequest | "all">("all");
   const asOf = stats.loadedAt;
   const deferredSearch = useDeferredValue(search);
 
@@ -269,6 +272,7 @@ export function DashboardCrm({
 
     const nextLeads = scopedLeads
       .filter((lead) => {
+        if (contactFilter !== "all" && lead.contact.request !== contactFilter) return false;
         if (onlyStale && !analytics.stale.some((item) => item.id === lead.id)) {
           return false;
         }
@@ -310,6 +314,7 @@ export function DashboardCrm({
     return nextLeads;
   }, [
     deferredSearch,
+    contactFilter,
     scopedLeads,
     sortBy,
     statusFilter,
@@ -330,6 +335,7 @@ export function DashboardCrm({
   );
 
   const openLead = (id: string) => {
+    setContactFilter("all");
     setOnlyStale(false);
     setSearch("");
     setStatusFilter("all");
@@ -349,6 +355,7 @@ export function DashboardCrm({
     showSelectedLead();
   };
   const openStage = (status: DashboardLeadStatus) => {
+    setContactFilter("all");
     setOnlyStale(false);
     setSearch("");
     setStatusFilter(status);
@@ -356,6 +363,7 @@ export function DashboardCrm({
     navigateView("pipeline");
   };
   const openStale = () => {
+    setContactFilter("all");
     setSearch("");
     setStatusFilter("all");
     setOnlyStale(true);
@@ -692,6 +700,8 @@ export function DashboardCrm({
         "selected_inverter_type",
         "status",
         "created_at",
+        "installer_contact_request",
+        "preferred_installer_contact_method",
       ],
       ...(activeView === "pipeline" ? filteredLeads : scopedLeads).map(
         (lead) => [
@@ -736,6 +746,8 @@ export function DashboardCrm({
           lead.selectedInverterType ?? "",
           getStatusLabel(lead.status),
           lead.createdAt,
+          CONTACT_REQUEST_LABELS[lead.contact.request],
+          lead.contact.preferredMethod ?? "",
         ],
       ),
     ];
@@ -806,6 +818,14 @@ export function DashboardCrm({
           analytics={analytics}
           leads={scopedLeads}
           failedCount={failedFollowUpCount}
+          onContact={(request) => {
+            setOnlyStale(false);
+            setStatusFilter("all");
+            setSearch("");
+            setContactFilter(request);
+            setListPage(1);
+            navigateView("pipeline");
+          }}
           onNavigate={navigateView}
           onSelect={openLead}
           onStage={openStage}
@@ -872,6 +892,18 @@ export function DashboardCrm({
                         label: column.label,
                         value: column.id,
                       })),
+                    ]}
+                  />
+                  <Select
+                    label="Installer contact"
+                    value={contactFilter}
+                    onChange={(value) => {
+                      setContactFilter(value as ContactRequest | "all");
+                      setListPage(1);
+                    }}
+                    options={[
+                      { label: "All contact preferences", value: "all" },
+                      ...Object.entries(CONTACT_REQUEST_LABELS).map(([value, label]) => ({ label, value })),
                     ]}
                   />
                   <Select
@@ -977,7 +1009,7 @@ export function DashboardCrm({
               ) : (
                 <EmptyState
                   title="No leads match this view"
-                  description="Try clearing the search or switching the stage filter."
+                  description="Try clearing the search or changing the stage, contact preference, or submission period."
                 />
               )}
             </div>
@@ -1378,6 +1410,10 @@ function LeadDetailPanel({
       <div className="mt-5 grid gap-3 text-sm md:grid-cols-2">
         <DetailRow label="Email" value={lead.email} />
         <DetailRow label="Phone" value={lead.phone} />
+        <DetailRow label="Installer contact" value={CONTACT_REQUEST_LABELS[lead.contact.request]} />
+        {lead.contact.request === "requested" && (
+          <DetailRow label="Preferred installer contact method" value={lead.contact.preferredMethod ?? "Not recorded"} />
+        )}
         <DetailRow
           label="Monthly bill"
           value={formatMoneyMaybe(lead.monthlyBill)}

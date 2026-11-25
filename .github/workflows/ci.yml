@@ -59,6 +59,7 @@ jobs:
           # Test-only fixtures for the isolated Playwright server.
           DASHBOARD_ACCESS_TOKEN: "e2e-dashboard-token-fixture"
           REPORT_SIGNING_SECRET: "e2e-report-signing-fixture"
+      - run: npx playwright test --config playwright.operations.config.ts
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
@@ -66,4 +67,5 @@ jobs:
           path: |
             playwright-report
             test-results
+            qa-evidence/operations-results
           retention-days: 7
