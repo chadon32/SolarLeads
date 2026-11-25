@@ -93,8 +93,49 @@ test("tapping a roof face describes it in plain language", async ({ page }) => {
   await expect(card).toContainText(/(East|West)-facing roof/);
   await expect(card).toContainText(/20° pitch/);
   await expect(card).toContainText(/% of best-case sun/);
+  await page.getByText("Explore roof sections (2)", { exact: true }).click();
+  await expect(page.getByRole("list", { name: "Roof sections" }).getByRole("button", { pressed: true })).toHaveCount(1);
   await page.getByRole("button", { name: "Close roof face details" }).click();
   await expect(card).toHaveCount(0);
+  await expect(scene).toBeFocused();
+  await expect(page.getByRole("list", { name: "Roof sections" }).getByRole("button", { pressed: true })).toHaveCount(0);
+});
+
+test("the roof section explorer works by keyboard and reflects the actual visible layout", async ({ page }) => {
+  const { scene } = await openHouse(page, "hip", {});
+  const summary = page.getByText("Explore roof sections (4)", { exact: true });
+  await summary.focus();
+  await page.keyboard.press("Enter");
+  const list = page.getByRole("list", { name: "Roof sections" });
+  const choices = list.getByRole("button");
+  await expect(choices).toHaveCount(4);
+  await page.keyboard.press("Tab");
+  await expect(choices.first()).toBeFocused();
+  await page.keyboard.press("Space");
+  await expect(choices.first()).toHaveAttribute("aria-pressed", "true");
+  const card = scene.getByRole("status");
+  await expect(card).toContainText((await choices.first().innerText()).split(": ")[1]);
+  const counts = await list.getByText("Panels shown", { exact: true }).locator("..").locator("dd").allTextContents();
+  expect(counts.reduce((sum, count) => sum + Number(count), 0)).toBe(Number(await scene.getAttribute("data-rendered-panel-count")));
+  await page.getByRole("checkbox", { name: "Panels", exact: true }).first().uncheck();
+  await expect(list.getByText("Layer hidden")).toHaveCount(4);
+  await expect(card).toContainText("Panels hidden");
+  await choices.first().click();
+  await expect(card).toHaveCount(0);
+});
+
+test("roof section measurements remain available when the elevation scan is missing", async ({ page }) => {
+  await installSafeApiMocks(page);
+  await installSyntheticRoof(page, "gable");
+  await page.route("**/api/solar/data-layers**", route => route.fulfill({ json: { dsmUrl: null, maskUrl: null, annualFluxUrl: null } }));
+  await page.goto(`/estimate?address=${encodeURIComponent(TEST_ADDRESS)}`);
+  await expect(page.getByText("3D view unavailable", { exact: true })).toBeVisible();
+  await page.getByText("Explore roof sections (2)", { exact: true }).click();
+  const list = page.getByRole("list", { name: "Roof sections" });
+  await expect(list.getByRole("listitem")).toHaveCount(2);
+  await expect(list.getByText("646 sq ft")).toHaveCount(2);
+  await expect(list.getByRole("button")).toHaveCount(0);
+  await expect(list.getByText("Panels shown")).toHaveCount(0);
 });
 
 test.describe("on touch devices", () => {
@@ -111,5 +152,15 @@ test.describe("on touch devices", () => {
     await page.getByRole("button", { name: "Stop exploring the 3D model" }).tap();
     await expect(page.getByRole("button", { name: "Explore the 3D model" })).toBeVisible();
     await expect(scene).toHaveAttribute("data-roof-model", "reconstructed");
+  });
+
+  test("the roof section explorer on a phone does not require unlocking or dragging the model", async ({ page }) => {
+    await openHouse(page, "gable", {});
+    await page.getByText("Explore roof sections (2)", { exact: true }).tap();
+    const list = page.getByRole("list", { name: "Roof sections" });
+    await list.getByRole("button").last().tap();
+    await expect(list.getByRole("button").last()).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByRole("button", { name: "Explore the 3D model" })).toBeVisible();
+    expect(await list.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
   });
 });

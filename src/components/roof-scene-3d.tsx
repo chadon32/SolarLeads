@@ -1,11 +1,14 @@
 "use client";
 
 import { useEffect, useId, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { Focus, Hand, Minus, Plus, RotateCcw, Square, Trees, X } from "lucide-react";
 import * as THREE from "three";
 import { Canvas, type ThreeEvent } from "@react-three/fiber";
 import { Edges, Line } from "@react-three/drei";
 import { SunlightLegend } from "@/components/sunlight-legend";
+import { RoofSectionExplorer } from "@/components/roof-section-explorer";
+import { listAnalysisSections } from "@/lib/roof-section-explorer";
 import { readGeoTiffRaster, SolarRasterLoadError } from "@/lib/geotiff-utils";
 import { DEFAULT_MODULE_FACE, type ModuleFaceLayout } from "@/lib/module-face";
 import { selectCohesiveSolarPanels } from "@/lib/panel-layout";
@@ -32,6 +35,8 @@ import { useOverlaySafeInsets, VIEWER_OVERLAY_ATTRIBUTE } from "./roof-scene/use
 import { useRefreshShadows } from "./roof-scene/use-refresh-shadows";
 
 type RoofScene3DProps = {
+  sectionListHost: HTMLDivElement | null;
+  panelsVisible: boolean;
   dsmUrl: string | null;
   rgbUrl: string | null;
   fluxUrl: string | null;
@@ -61,6 +66,8 @@ const HIGHLIGHT_COLOR = "#67e8f9";
 
 // rgbUrl stays in the props contract but the CAD view does not need the aerial photo.
 export default function RoofScene3D({
+  sectionListHost,
+  panelsVisible,
   dsmUrl,
   fluxUrl,
   maskUrl,
@@ -208,7 +215,7 @@ export default function RoofScene3D({
 
   if (state.status === "error") {
     return (
-      <SceneMessage>
+      <><SceneMessage>
         <p className="text-sm font-semibold text-slate-100">3D view unavailable</p>
         <p className="max-w-xs text-xs text-slate-300">{state.message}</p>
         <div className="flex flex-wrap justify-center gap-2">
@@ -231,6 +238,8 @@ export default function RoofScene3D({
           ) : null}
         </div>
       </SceneMessage>
+      {sectionListHost && createPortal(<RoofSectionExplorer sections={listAnalysisSections(roofData)} />, sectionListHost)}
+      </>
     );
   }
 
@@ -242,9 +251,9 @@ export default function RoofScene3D({
   const hasSurroundings = Boolean(data.context && (data.context.trees.length || data.context.buildings.length));
   const locked = coarsePointer && !exploring;
   const selected = selectedFace !== null ? faceFacts.get(selectedFace) : undefined;
-  const selectedText = selected ? describeRoofFace(selected) : null;
+  const selectedText = selected ? describeRoofFace(selected, panelsVisible) : null;
   const summary = [
-    summarizeRoofFaces([...faceFacts.values()]),
+    summarizeRoofFaces([...faceFacts.values()], panelsVisible),
     data.obstructions.length ? `${data.obstructions.length} raised rooftop feature${data.obstructions.length === 1 ? "" : "s"} from the elevation scan.` : "",
     hasSurroundings ? `${data.context!.trees.length} trees and ${data.context!.buildings.length} neighbouring roofs from the elevation scan.` : "",
   ].filter(Boolean).join(" ");
@@ -371,7 +380,7 @@ export default function RoofScene3D({
             <button
               type="button"
               aria-label="Close roof face details"
-              onClick={() => setSelectedFace(null)}
+              onClick={() => { setSelectedFace(null); region?.focus({ preventScroll: true }); }}
               className="grid h-9 w-9 shrink-0 place-items-center rounded-full hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-sky-200"
             >
               <X className="h-4 w-4" aria-hidden="true" />
@@ -429,6 +438,11 @@ export default function RoofScene3D({
           {data.obstructions.length ?" Grey blocks are raised features in the elevation scan." : ""}
         </p>
       </div>
+      {sectionListHost && createPortal(
+        <RoofSectionExplorer sections={Array.from(faceFacts, ([id, facts]) => ({ ...facts, id }))}
+          panelsVisible={panelsVisible} selectedId={selectedFace} onSelect={setSelectedFace} />,
+        sectionListHost
+      )}
     </div>
   );
 }
