@@ -126,6 +126,51 @@ test("a homeowner downloads a private calendar agenda for a prearranged visit", 
   expect(requests.some(value => /2028-02-29|20280301T064500Z|\/api\/leads(?:\?|$)/.test(value))).toBe(false);
 });
 
+test("annual utility usage compares both layouts and only changes the estimate on request", async ({ page }, testInfo) => {
+  const traffic: string[] = [];
+  page.on("request", r => { if (/^https?:/.test(r.url())) traffic.push(r.url() + (r.postData() ?? "")); });
+  await page.goto("/estimate?panels=5&address=" + encodeURIComponent(TEST_ADDRESS));
+  const savings = page.getByRole("tab", { name: "Savings", exact: true });
+  await savings.click();
+  const tool = page.getByRole("region", { name: "Can my roof match my annual electricity use?" });
+  const input = tool.getByRole("textbox", { name: "Annual electricity use (kWh)" });
+  const assumptions = page.getByRole("region", { name: "How this estimate was calculated" });
+  await expect(assumptions).toContainText("from 5 panels");
+  await expect(tool.getByText("Current layout", { exact: false })).toHaveCount(0);
+  await input.fill("12,3");
+  await expect(input).toHaveAttribute("aria-invalid", "true");
+  await expect(tool.getByText(/Enter a whole number/)).toBeVisible();
+  await input.fill("9,437");
+  await expect(tool).toContainText("Current layout (5 panels)");
+  await expect(tool).toContainText("2,890 kWh estimated AC output");
+  await expect(assumptions).toContainText("from 5 panels");
+  const apply = tool.getByRole("button", { name: /Try roof maximum/ });
+  await tool.getByText("How the comparison works", { exact: true }).click();
+  await expect(tool.getByRole("link", { name: "Google Solar API method" })).toHaveAttribute("href", "https://developers.google.com/maps/documentation/solar/calculate-costs-us");
+  await tool.getByText("How the comparison works", { exact: true }).click();
+  const maximum = (await apply.innerText()).match(/(\d+) panels/)![1];
+  expect(Number(maximum)).toBeGreaterThan(5);
+  await expect(tool).toContainText("Roof maximum (" + maximum + " panels)");
+  expect(await tool.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+  await testInfo.attach("annual-energy-match", { body: await tool.screenshot(), contentType: "image/png" });
+  await apply.click();
+  await expect(assumptions).toContainText("from " + maximum + " panels");
+  await expect(tool).toContainText("already uses the modeled roof maximum");
+  await page.getByRole("tab", { name: "Panels", exact: true }).click();
+  await savings.click();
+  await expect(input).toHaveValue("9,437");
+  await tool.getByRole("button", { name: "Restore previous layout (5 panels)" }).click();
+  await expect(assumptions).toContainText("from 5 panels");
+  await input.fill("999,999");
+  await expect(tool).toContainText("Under 1%");
+  await page.reload();
+  await savings.click();
+  await expect(input).toHaveValue("");
+  const stored = await page.evaluate(() => JSON.stringify([localStorage, sessionStorage]));
+  expect(stored).not.toMatch(/9,437|999,999/);
+  expect(traffic.some(value => /9(?:,|%2C)437|999(?:,|%2C)999/i.test(value))).toBe(false);
+});
+
 test("a homeowner can pin, adjust, replace and clear a roof setup", async ({ page }, testInfo) => {
   const savings = page.getByRole("tab", { name: "Savings", exact: true });
   const tool = page.getByRole("region", { name: "Compare two setups" });

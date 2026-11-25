@@ -994,6 +994,7 @@ export function HomeClient({
                 analysis={roofAnalysis}
                 activePanelCount={activePanelCount}
                 monthlyBill={monthlyBill}
+                onPanelCountChange={setActivePanelCount}
                 onMonthlyBillChange={applyMonthlyBill}
                 showSavingsBillPicker={nativeApp}
                 onTabChange={setReportTab}
