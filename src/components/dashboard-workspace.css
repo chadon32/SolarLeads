@@ -692,6 +692,33 @@
 .crm-data-list > div:last-child {
   border-bottom: 0;
 }
+.crm-comparison-ranges, .crm-comparison-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 24px;
+}
+.crm-comparison-ranges {
+  justify-content: flex-start;
+  margin: 0 0 16px;
+}
+.crm-comparison-ranges dt, .crm-comparison-footer p, .crm-comparison-note {
+  color: var(--crm-muted);
+  font-size: 12px;
+}
+.crm-comparison-ranges dd { margin: 2px 0 0; font-size: 13px; }
+.crm-comparison-table { width: 100%; table-layout: fixed; font-size: 13px; border-collapse: collapse; }
+.crm-comparison-table th, .crm-comparison-table td {
+  text-align: right;
+  padding: 9px 2px;
+  border-bottom: 1px solid var(--crm-border);
+  font-variant-numeric: tabular-nums;
+}
+.crm-comparison-table th:first-child { width: 40%; text-align: left; }
+.crm-comparison-table thead th { color: var(--crm-muted); font-size: 12px; }
+.crm-comparison-table tbody th { font-weight: 500; }
+.crm-comparison-note, .crm-comparison-footer { margin-top: 14px; }
 .crm-method-note {
   font-size: 11px;
   line-height: 1.9;

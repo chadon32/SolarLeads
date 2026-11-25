@@ -405,6 +405,7 @@ export default async function DashboardPage({
       initialView={initialView}
       stats={{
         totalLeads,
+        leadHistoryLimited: leadsResult.count == null ? leadList.length >= DASHBOARD_RECORD_LIMIT : totalLeads > leadList.length,
         averageSavings,
         queuedFollowUps,
         pdfsGenerated,
