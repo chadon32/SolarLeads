@@ -26,6 +26,7 @@ import {
 } from "@/lib/dashboard-analytics";
 import { formatDisplayAddress } from "@/lib/address-format";
 import { trackEvent } from "@/lib/analytics";
+import { compareLeadPeriods } from "@/lib/lead-period-comparison";
 import { formatName } from "@/lib/name-format";
 import {
   LEAD_SCORE_EXPLANATION,
@@ -117,6 +118,7 @@ type DashboardCrmProps = {
   initialView?: DashboardView;
   stats: {
     totalLeads: number;
+    leadHistoryLimited?: boolean;
     averageSavings: number | null;
     averageLeadScore: number | null;
     queuedFollowUps: number | null;
@@ -836,7 +838,9 @@ export function DashboardCrm({
         />
       ) : null}
       {activeView === "analytics" ? (
-        <DashboardAnalyticsView analytics={analytics} />
+        <DashboardAnalyticsView analytics={analytics} comparison={compareLeadPeriods(
+          leadItems, period, asOf, includeTests, stats.leadHistoryLimited ?? stats.totalLeads > leads.length,
+        )} />
       ) : null}
       {activeView === "follow-ups" ? (
         <DashboardFollowUps

@@ -24,6 +24,8 @@ import type {
   DashboardView,
 } from "@/lib/dashboard-analytics";
 import { formatName } from "@/lib/name-format";
+import { DashboardPeriodComparison } from "@/components/dashboard-period-comparison";
+import type { LeadPeriodComparison } from "@/lib/lead-period-comparison";
 import { CONTACT_REQUEST_LABELS, type ContactRequest } from "@/lib/dashboard-contact";
 import { QUEUE_LABELS, type QueueFilter } from "@/lib/dashboard-follow-up-queue";
 import { formatDisplayAddress } from "@/lib/address-format";
@@ -605,14 +607,17 @@ export function DashboardOverview({
 
 export function DashboardAnalyticsView({
   analytics,
+  comparison,
 }: {
   analytics: DashboardAnalytics;
+  comparison: LeadPeriodComparison;
 }) {
   const maxBrand = Math.max(1, ...analytics.brands.map((item) => item.count));
   return (
     <div className="crm-view-content">
       <DashboardMetrics analytics={analytics} />
       <SubmissionChart analytics={analytics} />
+      <DashboardPeriodComparison data={comparison} />
       <div className="crm-overview-grid">
         <section className="crm-panel">
           <div className="crm-panel-heading">
