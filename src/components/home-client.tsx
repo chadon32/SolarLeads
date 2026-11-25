@@ -8,8 +8,10 @@ import {
   ArrowRight,
   Sparkles,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { billOptionsIncluding } from "@/lib/monthly-bill-options";
+import { MAX_MONTHLY_BILL } from "@/lib/bill-average";
+import { BillAverageCalculator } from "@/components/bill-average-calculator";
 import { createPortal } from "react-dom";
 import { AddressSearch } from "@/components/address-search";
 import { AnalysisSequence } from "@/components/analysis-sequence";
@@ -121,7 +123,6 @@ type SavedProgress = {
   systemKw?: number;
 };
 
-const MAX_MONTHLY_BILL = 5_000;
 const MONTHLY_BILL_RANGE_MESSAGE =
   `Enter a whole-dollar bill from $1 to $${MAX_MONTHLY_BILL.toLocaleString()}.`;
 
@@ -197,6 +198,11 @@ function getEstimateHref({
   return `/estimate?${params.toString()}`;
 }
 
+// Server-rendered controls cannot accept input until React attaches their handlers.
+const subscribeToHydration = () => () => {};
+const clientReady = () => true;
+const serverReady = () => false;
+
 export function HomeClient({
   initialAddress = "",
   initialAddBattery = false,
@@ -210,6 +216,7 @@ export function HomeClient({
   nativeApp = false,
 }: HomeClientProps) {
   const router = useRouter();
+  const formReady = useSyncExternalStore(subscribeToHydration, clientReady, serverReady);
   const startingMonthlyBill = normalizeMonthlyBill(initialMonthlyBill);
   const selectedAddress = initialAddress;
   const [solarData, setSolarData] = useState<RoofAnalysis | null>(null);
@@ -841,12 +848,16 @@ export function HomeClient({
 
             {!hasValidAnalysis ? (
               <>
-            <div
+            <fieldset
               id="address-estimate"
-              className={`liquid-glass liquid-glass-unclipped rounded-card p-4 sm:p-5 ${
+              disabled={!formReady}
+              aria-busy={!formReady}
+              className={`liquid-glass liquid-glass-unclipped min-w-0 rounded-card p-4 sm:p-5 ${
                 heroCompact ? "mt-0" : "mt-5 sm:mt-7"
               }`}
             >
+              <legend className="sr-only">Start your roof estimate</legend>
+              <noscript>Enable JavaScript to search for your address and calculate your estimate.</noscript>
               <label className="mb-4 block rounded-card border border-ridge bg-raised/80 px-4 py-3 text-left">
                 <span className="block text-sm font-semibold text-ink">
                   What is your monthly electric bill?
@@ -872,6 +883,7 @@ export function HomeClient({
                   Enter a whole-dollar average from $1 to $5,000. Used to personalize savings.
                 </span>
               </label>
+              <BillAverageCalculator currentBill={monthlyBill} onApply={applyMonthlyBill} />
               {monthlyBillError ? (
                 <div
                   id="monthly-bill-error"
@@ -883,6 +895,7 @@ export function HomeClient({
                 </div>
               ) : null}
               <AddressSearch
+                key={selectedAddress}
                 selectedAddress={selectedAddress}
                 onSelect={handleAddressSelect}
               />
@@ -909,7 +922,7 @@ export function HomeClient({
                   ) : null}
                 </>
               ) : null}
-            </div>
+            </fieldset>
 
             {!heroCompact && !nativeApp ? <SampleSolarReport /> : null}
             {!heroCompact ? (
@@ -981,7 +994,8 @@ export function HomeClient({
                 analysis={roofAnalysis}
                 activePanelCount={activePanelCount}
                 monthlyBill={monthlyBill}
-                onMonthlyBillChange={nativeApp ? applyMonthlyBill : undefined}
+                onMonthlyBillChange={applyMonthlyBill}
+                showSavingsBillPicker={nativeApp}
                 onTabChange={setReportTab}
                 selectedInverterType={selectedInverterType}
                 selectedPanelId={selectedPanelId}
