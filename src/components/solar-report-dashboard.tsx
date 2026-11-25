@@ -11,7 +11,8 @@ import type { RoofAnalysis } from "@/lib/roof-analysis";
 import { RedactedScenarioShareCard } from "@/components/redacted-scenario-share-card";
 import { InstallerQuoteComparison, ScenarioComparison, type EstimateSnapshot } from "@/components/estimate-planning-tools";
 import type { CashQuoteDraft } from "@/lib/installer-quote-comparison";
-import { InstallerVisitAgenda, type VisitTopicId } from "@/components/installer-visit-agenda";
+import { InstallerVisitAgenda, type VisitCalendarDraft, type VisitTopicId } from "@/components/installer-visit-agenda";
+import { EMPTY_VISIT } from "@/lib/site-visit-calendar";
 import { billOptionsIncluding } from "@/lib/monthly-bill-options";
 import { BillAverageCalculator } from "@/components/bill-average-calculator";
 import { BatteryRuntimePlanner } from "@/components/battery-runtime-planner";
@@ -139,6 +140,7 @@ export function SolarReportDashboard({
   const [secondCashQuote, setSecondCashQuote] = useState<CashQuoteDraft | null>(null);
   const [backupScenario, setBackupScenario] = useState(DEFAULT_BACKUP_SCENARIO);
   const [visitTopics, setVisitTopics] = useState<VisitTopicId[]>([]);
+  const [visitSchedule, setVisitSchedule] = useState<VisitCalendarDraft>(EMPTY_VISIT);
   const [selectedAdvisorQuestion, setSelectedAdvisorQuestion] = useState(0);
   const selectedPanel = getPanelById(selectedPanelId);
   const selectedInverter = getInverterOption(selectedInverterType);
@@ -269,7 +271,7 @@ export function SolarReportDashboard({
               analysis={analysis}
               values={values}
             >
-              <InstallerVisitAgenda selected={visitTopics} onChange={setVisitTopics} />
+              <InstallerVisitAgenda selected={visitTopics} onChange={setVisitTopics} schedule={visitSchedule} onSchedule={setVisitSchedule} />
             </RoofShadeTab>
           ) : null}
           {activeTab === "panels" ? (

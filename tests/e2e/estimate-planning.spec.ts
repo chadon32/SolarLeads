@@ -77,6 +77,55 @@ test("a homeowner without a quote can save only the questions selected for their
   await expect(link).toHaveCount(0);
 });
 
+test("a homeowner downloads a private calendar agenda for a prearranged visit", async ({ page }, testInfo) => {
+  const requests: string[] = [];
+  page.on("request", req => { if (/^https?:/.test(req.url())) requests.push(req.url() + (req.postData() ?? "")); });
+  const roof = page.getByRole("tab", { name: "Roof & shade" });
+  await roof.click();
+  const tool = page.getByRole("region", { name: "Installer verification checklist" });
+  const disclosure = tool.getByText("Add this agenda to my calendar", { exact: true });
+  const question = tool.getByRole("checkbox", { name: "Roof condition and usable space" });
+  const fileLink = tool.getByRole("link", { name: "Download calendar file (.ics)" });
+  await expect(disclosure).toHaveCount(0);
+  await question.check();
+  await disclosure.click();
+  await expect(tool.getByText(/does not book a visit or send an invitation/)).toBeVisible();
+  const date = tool.getByLabel("Visit date", { exact: true });
+  const time = tool.getByLabel("Start time (Phoenix)", { exact: true });
+  await expect(date).toHaveValue("");
+  await expect(time).toHaveValue("");
+  await date.fill("2028-02-29");
+  await expect(fileLink).toHaveCount(0);
+  await time.fill("23:45");
+  await tool.getByLabel("Visit length").selectOption("90");
+  await page.getByRole("tab", { name: "Savings", exact: true }).click();
+  await roof.click();
+  await disclosure.click();
+  await expect(date).toHaveValue("2028-02-29");
+  await expect(time).toHaveValue("23:45");
+  await expect(tool.getByLabel("Visit length")).toHaveValue("90");
+  expect(await tool.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+  await testInfo.attach("calendar-agenda", { body: await tool.screenshot(), contentType: "image/png" });
+  const nextFile = page.waitForEvent("download");
+  await fileLink.click();
+  const file = await nextFile;
+  expect(file.suggestedFilename()).toBe("SolarTelligence-site-visit.ics");
+  const contents = (await readFile((await file.path())!, "utf8")).replace(/\r\n /g, "");
+  expect(contents).toContain("DTSTART:20280301T064500Z\r\nDTEND:20280301T081500Z");
+  expect(contents).toContain("Which roof sections");
+  expect(contents).not.toMatch(/Does my electrical service|ATTENDEE|ORGANIZER|LOCATION/);
+  expect(contents).not.toContain(TEST_ADDRESS);
+  await question.uncheck();
+  await expect(disclosure).toHaveCount(0);
+  await page.reload();
+  await roof.click();
+  await question.check();
+  await disclosure.click();
+  await expect(date).toHaveValue("");
+  await expect(time).toHaveValue("");
+  expect(requests.some(value => /2028-02-29|20280301T064500Z|\/api\/leads(?:\?|$)/.test(value))).toBe(false);
+});
+
 test("a homeowner can pin, adjust, replace and clear a roof setup", async ({ page }, testInfo) => {
   const savings = page.getByRole("tab", { name: "Savings", exact: true });
   const tool = page.getByRole("region", { name: "Compare two setups" });
