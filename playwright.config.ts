@@ -88,7 +88,7 @@ export default defineConfig({
     },
     {
       name: "mobile",
-      testMatch: /(?:mobile|salesperson|estimate-planning)\.spec\.ts/,
+      testMatch: /(?:mobile|salesperson|estimate-planning|bill-average)\.spec\.ts/,
       use: {
         ...devices["iPhone 13"],
         viewport: { width: 390, height: 844 },

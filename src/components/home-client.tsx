@@ -10,6 +10,8 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { billOptionsIncluding } from "@/lib/monthly-bill-options";
+import { MAX_MONTHLY_BILL } from "@/lib/bill-average";
+import { BillAverageCalculator } from "@/components/bill-average-calculator";
 import { createPortal } from "react-dom";
 import { AddressSearch } from "@/components/address-search";
 import { AnalysisSequence } from "@/components/analysis-sequence";
@@ -121,7 +123,6 @@ type SavedProgress = {
   systemKw?: number;
 };
 
-const MAX_MONTHLY_BILL = 5_000;
 const MONTHLY_BILL_RANGE_MESSAGE =
   `Enter a whole-dollar bill from $1 to $${MAX_MONTHLY_BILL.toLocaleString()}.`;
 
@@ -872,6 +873,7 @@ export function HomeClient({
                   Enter a whole-dollar average from $1 to $5,000. Used to personalize savings.
                 </span>
               </label>
+              <BillAverageCalculator currentBill={monthlyBill} onApply={applyMonthlyBill} />
               {monthlyBillError ? (
                 <div
                   id="monthly-bill-error"
@@ -981,7 +983,8 @@ export function HomeClient({
                 analysis={roofAnalysis}
                 activePanelCount={activePanelCount}
                 monthlyBill={monthlyBill}
-                onMonthlyBillChange={nativeApp ? applyMonthlyBill : undefined}
+                onMonthlyBillChange={applyMonthlyBill}
+                showSavingsBillPicker={nativeApp}
                 onTabChange={setReportTab}
                 selectedInverterType={selectedInverterType}
                 selectedPanelId={selectedPanelId}

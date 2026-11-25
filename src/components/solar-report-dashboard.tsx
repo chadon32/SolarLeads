@@ -13,6 +13,7 @@ import { InstallerQuoteComparison, ScenarioComparison, type EstimateSnapshot } f
 import type { CashQuoteDraft } from "@/lib/installer-quote-comparison";
 import { InstallerVisitAgenda, type VisitTopicId } from "@/components/installer-visit-agenda";
 import { billOptionsIncluding } from "@/lib/monthly-bill-options";
+import { BillAverageCalculator } from "@/components/bill-average-calculator";
 import {
   buildSolarAdvisorInputFromAnalysis,
   buildSolarAdvisorProfile,
@@ -65,8 +66,9 @@ type SolarReportDashboardProps = {
   onSelectedPanelIdChange?: (panelId: string) => void;
   onAddBatteryChange?: (addBattery: boolean) => void;
   onBatteryOptionChange?: (batteryOption: string) => void;
-  /** Given only where the page has no header bill picker (the iOS app). */
   onMonthlyBillChange?: (monthlyBill: number) => void;
+  /** Show a picker here when the host has no header bill picker. */
+  showSavingsBillPicker?: boolean;
   onTabChange?: (tab: DetailTab) => void;
   addBattery?: boolean;
   batteryOption?: string;
@@ -117,6 +119,7 @@ export function SolarReportDashboard({
   onAddBatteryChange,
   onBatteryOptionChange,
   onMonthlyBillChange,
+  showSavingsBillPicker = true,
   onSelectedInverterTypeChange,
   onSelectedPanelIdChange,
   onTabChange,
@@ -283,6 +286,7 @@ export function SolarReportDashboard({
           ) : null}
           {activeTab === "savings" ? (
             <SavingsTab
+              showBillPicker={showSavingsBillPicker}
               imageryDate={analysis.imageryDate}
               onMonthlyBillChange={onMonthlyBillChange}
               values={values}
@@ -1272,11 +1276,13 @@ function SavingsTab({
   children,
   imageryDate,
   onMonthlyBillChange,
+  showBillPicker,
   values,
 }: {
   children: ReactNode;
   imageryDate?: string | null;
   onMonthlyBillChange?: (monthlyBill: number) => void;
+  showBillPicker: boolean;
   values: DashboardValues;
 }) {
   return (
@@ -1286,7 +1292,7 @@ function SavingsTab({
           <h3 id="savings-bill-heading" className="text-lg font-semibold text-ink">
             Your monthly bill
           </h3>
-          {onMonthlyBillChange ? (
+          {showBillPicker && onMonthlyBillChange ? (
             <div className="mt-3">
               <label htmlFor="savings-monthly-bill" className="field-label">
                 Monthly electric bill
@@ -1309,6 +1315,7 @@ function SavingsTab({
               Based on a {formatMoney(values.monthlyBill)} average bill. Change it at the top of the page.
             </p>
           )}
+          {onMonthlyBillChange && <BillAverageCalculator currentBill={values.monthlyBill} onApply={onMonthlyBillChange} />}
           <BillComparisonCard values={values} />
         </section>
         <section aria-labelledby="savings-time-heading" className="rounded-card border border-ridge bg-night/50 p-4 sm:p-5">
