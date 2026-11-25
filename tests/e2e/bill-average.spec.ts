@@ -10,6 +10,25 @@ async function openCalculator(page: Page) {
   return page.getByRole("region", { name: "Bill history calculator" });
 }
 
+test("slow scripts cannot discard an early bill or address entry", async ({ page }) => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  await page.route(/\/_next\/static\/.*\.js(?:\?|$)/, async route => {
+    await gate;
+    await route.continue();
+  });
+  const home = new HomeEstimatePage(page);
+  try {
+    await page.goto("/", { waitUntil: "commit" });
+    await expect(home.addressInput()).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Calculate my monthly average" })).toBeDisabled();
+    release();
+    await home.monthlyBillInput().fill("251");
+    await home.selectTestAddress();
+    await expect(page.locator("#estimate-monthly-bill")).toHaveValue("251");
+  } finally { release(); }
+});
+
 test("an annual total changes the starting bill only on Apply", async ({ page }) => {
   await new HomeEstimatePage(page).open();
   const bill = page.locator("#monthly-bill-input");

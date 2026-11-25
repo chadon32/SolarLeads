@@ -293,14 +293,6 @@ export function AddressSearch({
   });
 
   useEffect(() => {
-    const handle = window.requestAnimationFrame(() => {
-      setQuery(selectedAddress ?? "");
-    });
-
-    return () => window.cancelAnimationFrame(handle);
-  }, [selectedAddress]);
-
-  useEffect(() => {
     const trimmed = query.trim();
     const controller = new AbortController();
 

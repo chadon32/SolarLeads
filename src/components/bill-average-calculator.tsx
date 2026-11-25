@@ -27,7 +27,7 @@ export function BillAverageCalculator({ currentBill, onApply }: Props) {
           close();
         }} />}
       </div>
-      <span role="status" className="block text-sm text-ink-muted">
+      <span aria-live="polite" aria-atomic="true" className="block text-sm text-ink-muted">
         {!open && applied !== null && applied === currentBill ? `Estimate now uses ${money(applied)} per month.` : ""}
       </span>
     </div>
