@@ -9,6 +9,44 @@ test.beforeEach(async ({ page }) => {
   await new HomeEstimatePage(page).openReadyEstimate();
 });
 
+test("a homeowner compares battery backup at a common load and starting charge", async ({ page }, testInfo) => {
+  const panels = page.getByRole("tab", { name: "Panels", exact: true });
+  await panels.click();
+  const planner = page.getByRole("region", { name: "How long could one battery last?" });
+  await expect(planner).toHaveCount(0);
+  await page.getByRole("button", { name: "Add battery", exact: true }).click();
+  const watts = planner.getByRole("textbox", { name: "Total running load (W)" });
+  const charge = planner.getByRole("combobox", { name: /Charge at start of outage/ });
+  await expect(planner).toContainText("Tesla Powerwall 3: 13.5 hr estimated at 1,000 W");
+  await watts.fill("1,500");
+  await charge.selectOption("50");
+  await expect(planner).toContainText("Tesla Powerwall 3: 4.5 hr");
+  const generac = page.getByRole("button", { name: /Generac PWRcell M6/ });
+  await expect(generac).toContainText("6 hr");
+  await generac.click();
+  await expect(planner).toContainText("Generac PWRcell M6: 6 hr");
+  expect(await planner.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+  await testInfo.attach("battery-runtime-planner", { body: await planner.screenshot(), contentType: "image/png" });
+  await page.getByRole("tab", { name: "Savings", exact: true }).click();
+  await panels.click();
+  await expect(watts).toHaveValue("1,500");
+  await expect(charge).toHaveValue("50");
+  await page.getByRole("button", { name: /Enphase IQ Battery 10T/ }).click();
+  await expect(planner).toContainText("Enphase IQ Battery 10T: 3.4 hr");
+  await expect(planner.getByRole("link")).toHaveAttribute("href", "https://enphase.com/download/iq-battery-10t-data-sheet");
+  await watts.fill("3841");
+  await expect(planner).toContainText("No runtime is estimated");
+  await watts.fill("-1");
+  await expect(watts).toHaveAttribute("aria-invalid", "true");
+  await expect(planner).toContainText("Enter a valid load");
+  await planner.getByRole("button", { name: "Reset runtime inputs" }).click();
+  await expect(watts).toHaveValue("1000");
+  await expect(charge).toHaveValue("100");
+  await expect(planner).toContainText("Enphase IQ Battery 10T: 10.1 hr");
+  await page.getByRole("button", { name: "Battery added", exact: true }).click();
+  await expect(planner).toHaveCount(0);
+});
+
 test("a homeowner without a quote can save only the questions selected for their site visit", async ({ page }) => {
   const roof = page.getByRole("tab", { name: "Roof & shade" });
   await roof.click();
