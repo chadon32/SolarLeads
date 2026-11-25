@@ -66,6 +66,56 @@ test("a homeowner can pin, adjust, replace and clear a roof setup", async ({ pag
   await expect(tool.getByRole("button", { name: "Pin current setup" })).toBeFocused();
 });
 
+test("two installer offers compare total and per-watt prices without sharing quote data", async ({ page }, testInfo) => {
+  const requests: string[] = [];
+  page.on("request", req => requests.push(req.url() + (req.postData() ?? "")));
+  const finance = page.getByRole("tab", { name: "Financing", exact: true });
+  await finance.click();
+  const buy = page.getByRole("button", { name: "Buy", exact: true });
+  await buy.click();
+  const tool = page.getByRole("region", { name: "Check an installer's cash quote" });
+  const a = tool.getByRole("group", { name: "Quote A", exact: true });
+  const b = tool.getByRole("group", { name: "Quote B", exact: true });
+  await a.getByLabel("Quoted cash price ($)", { exact: true }).fill("24000");
+  await a.getByLabel("Quoted system size (kW DC)", { exact: true }).fill("8");
+  await tool.getByRole("button", { name: "Compare a second cash quote" }).click();
+  const table = tool.getByRole("table", { name: "Installer cash offers side by side" });
+  await b.getByLabel("Quoted cash price ($)", { exact: true }).fill("26091.37");
+  const sizeB = b.getByLabel("Quoted system size (kW DC)", { exact: true });
+  await sizeB.fill("0");
+  await expect(sizeB).toHaveAttribute("aria-invalid", "true");
+  await expect(table).toHaveCount(0);
+  await sizeB.fill("10");
+  await expect(tool.getByText(/costs \$2,091.37 more in total\. Quote B is \$0.39\/W lower/)).toBeVisible();
+  await expect(table.getByRole("row", { name: /Price per watt/ })).toHaveText(/\$3\.00\/W\$2\.61\/W/);
+  expect(await table.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+  await testInfo.attach("two-cash-quotes", { body: await table.screenshot(), contentType: "image/png" });
+  const nextFile = page.waitForEvent("download");
+  await tool.getByRole("link", { name: "Download quote comparison" }).click();
+  const file = await nextFile;
+  expect(file.suggestedFilename()).toBe("SolarTelligence-cash-offers.txt");
+  const contents = await readFile((await file.path())!, "utf8");
+  expect(contents).toContain("Quote B $26,091.37");
+  expect(contents).not.toContain(TEST_ADDRESS);
+  await page.getByRole("tab", { name: "Savings", exact: true }).click();
+  await finance.click();
+  await expect(sizeB).toHaveValue("10");
+  await a.getByLabel("Quoted system size (kW DC)", { exact: true }).fill("");
+  await expect(table).toHaveCount(0);
+  await expect(tool.getByRole("link", { name: "Download quote comparison" })).toHaveCount(0);
+  await tool.getByRole("button", { name: "Remove quote B" }).click();
+  await expect(a.getByLabel("Quoted cash price ($)", { exact: true })).toHaveValue("24000");
+  await tool.getByRole("button", { name: "Compare a second cash quote" }).click();
+  await expect(sizeB).toHaveValue("");
+  await b.getByLabel("Quoted cash price ($)", { exact: true }).fill("26091.37");
+  await page.reload();
+  await finance.click();
+  await buy.click();
+  await expect(b).toHaveCount(0);
+  expect(await page.evaluate(() => JSON.stringify([localStorage, sessionStorage]))).not.toContain("26091.37");
+  expect(requests.filter(r => !r.startsWith("data:")).some(r => r.includes("26091.37"))).toBe(false);
+});
+
 test("a cash quote validates, survives tab changes, and clears on refresh", async ({ page }, testInfo) => {
   const financing = page.getByRole("tab", { name: "Financing", exact: true });
   const buy = page.getByRole("button", { name: "Buy", exact: true });
