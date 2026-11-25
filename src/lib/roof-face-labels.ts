@@ -18,19 +18,23 @@ export function compassDirection(azimuthDeg: number) {
   return DIRECTIONS[Math.round(normalized / 45) % 8];
 }
 
-export function describeRoofFace({ pitchDeg, azimuthDeg, areaM2, sunShare, moduleCount }: RoofFaceFacts) {
+export function roofFaceTitle(pitchDeg: number, azimuthDeg: number) {
   const direction = compassDirection(azimuthDeg);
-  const title = pitchDeg < FLAT_BELOW_DEG ? "Flat roof" : `${direction[0].toUpperCase()}${direction.slice(1)}-facing roof`;
+  return pitchDeg < FLAT_BELOW_DEG ? "Flat roof" : `${direction[0].toUpperCase()}${direction.slice(1)}-facing roof`;
+}
+
+export function describeRoofFace({ pitchDeg, azimuthDeg, areaM2, sunShare, moduleCount }: RoofFaceFacts, panelsVisible = true) {
+  const title = roofFaceTitle(pitchDeg, azimuthDeg);
   const details = [`${Math.round(pitchDeg)}° pitch`, `${Math.round(areaM2)} m²`];
   if (sunShare !== null && Number.isFinite(sunShare)) details.push(`${Math.round(sunShare * 100)}% of best-case sun`);
-  details.push(moduleCount === 0 ? "No modules" : `${moduleCount} module${moduleCount === 1 ? "" : "s"}`);
+  details.push(!panelsVisible ? "Panels hidden" : moduleCount === 0 ? "No modules" : `${moduleCount} module${moduleCount === 1 ? "" : "s"}`);
   return { title, details };
 }
 
-export function summarizeRoofFaces(faces: RoofFaceFacts[]) {
+export function summarizeRoofFaces(faces: RoofFaceFacts[], panelsVisible = true) {
   const sorted = [...faces].sort((left, right) => right.areaM2 - left.areaM2);
   const parts = sorted.map((face) => {
-    const { title, details } = describeRoofFace(face);
+    const { title, details } = describeRoofFace(face, panelsVisible);
     return `${title}: ${details.join(", ")}.`;
   });
   return [`${faces.length} roof face${faces.length === 1 ? "" : "s"}.`, ...parts].join(" ");

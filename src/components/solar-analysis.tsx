@@ -1049,6 +1049,7 @@ function ViewportCanvas({
   onViewModeChange?: (next: ViewMode) => void;
 }) {
   const mapElementRef = useRef<HTMLDivElement | null>(null);
+  const [sectionListHost, setSectionListHost] = useState<HTMLDivElement | null>(null);
   const mapRef = useRef<GoogleMapInstance | null>(null);
   const overlayRefs = useRef<GoogleMapOverlayInstance[]>([]);
   const overlayRunRef = useRef(0);
@@ -1371,6 +1372,8 @@ function ViewportCanvas({
         />
         {is3dView ? (
           <RoofScene3D
+            sectionListHost={sectionListHost}
+            panelsVisible={layerVisibility.panels}
             dsmUrl={dsmUrl}
             rgbUrl={solarRgbUrl}
             fluxUrl={annualFluxUrl}
@@ -1428,6 +1431,7 @@ function ViewportCanvas({
           </div>
         ) : null}
       </div>
+      {is3dView && <div ref={setSectionListHost} />}
       {!showMapFallback || is3dView ? (
         <MobileMapControls
           layerVisibility={layerVisibility}
