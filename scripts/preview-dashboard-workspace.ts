@@ -73,7 +73,7 @@ const followUps = leads.slice(0, 12).map((lead, index) => ({
   channel: "email",
   title: "QA report follow-up",
   body: "Synthetic preview message. No real email is sent by this preview.",
-  scheduled_for: new Date(now + index * 3_600_000).toISOString(),
+  scheduled_for: new Date(now + (index === 2 ? -1 : index) * 3_600_000).toISOString(),
   status: ["failed", "needs_review", "queued", "sent"][index % 4],
   attempts: 0,
   processed_at: null,

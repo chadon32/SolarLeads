@@ -11,7 +11,7 @@ export default defineConfig({
   use: { baseURL, ignoreHTTPSErrors: true, screenshot: "only-on-failure", trace: "retain-on-failure" },
   projects: [
     { name: "operations-desktop", use: { browserName: "chromium", viewport: { width: 1440, height: 900 } } },
-    { name: "operations-mobile", testMatch: "contact-preferences.spec.ts", use: { browserName: "webkit", viewport: { width: 393, height: 852 }, isMobile: true, hasTouch: true } },
+    { name: "operations-mobile", testMatch: ["contact-preferences.spec.ts", "follow-up-queue.spec.ts"], use: { browserName: "webkit", viewport: { width: 393, height: 852 }, isMobile: true, hasTouch: true } },
   ],
   webServer: {
     command: "npm run preview:dashboard -- --qa-build",

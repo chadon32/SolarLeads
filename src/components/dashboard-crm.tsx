@@ -39,6 +39,7 @@ import {
 } from "@/lib/dashboard-data";
 import { getShortPanelBrand } from "@/lib/solarPanels";
 import { CONTACT_REQUEST_LABELS, type ContactRequest } from "@/lib/dashboard-contact";
+import { followUpExportRows, groupFollowUpQueue, type QueueFilter } from "@/lib/dashboard-follow-up-queue";
 import {
   LEAD_STATUS_OPTIONS,
   normalizeLeadStatus,
@@ -209,6 +210,7 @@ export function DashboardCrm({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [onlyStale, setOnlyStale] = useState(false);
   const [contactFilter, setContactFilter] = useState<ContactRequest | "all">("all");
+  const [queueFilter, setQueueFilter] = useState<QueueFilter>("all");
   const asOf = stats.loadedAt;
   const deferredSearch = useDeferredValue(search);
 
@@ -260,12 +262,8 @@ export function DashboardCrm({
   const scopedFollowUps = followUpItems.filter((item) =>
     scopedLeadIds.has(item.leadId),
   );
-  const failedFollowUpCount =
-    stats.queuedFollowUps === null
-      ? null
-      : scopedFollowUps.filter(
-          (item) => item.status === "failed" || item.status === "needs_review",
-        ).length;
+  const queue = groupFollowUpQueue(scopedFollowUps, asOf);
+  const queueAvailable = stats.queuedFollowUps !== null;
 
   const filteredLeads = useMemo(() => {
     const normalizedQuery = deferredSearch.trim().toLowerCase();
@@ -671,7 +669,9 @@ export function DashboardCrm({
   };
 
   const exportCsv = () => {
-    const rows = [
+    const isQueue = activeView === "follow-ups";
+    if (isQueue && !queueAvailable) return;
+    const rows = isQueue ? followUpExportRows(queue[queueFilter]) : [
       [
         "name",
         "email",
@@ -759,7 +759,8 @@ export function DashboardCrm({
     );
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `solartelligence-leads-${period === "all" ? "all-loaded" : `${period}-days`}.csv`;
+    const fileScope = isQueue ? `follow-ups-${queueFilter}` : "leads";
+    anchor.download = `solartelligence-${fileScope}-${period === "all" ? "all-loaded" : `${period}-days`}.csv`;
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();
@@ -781,6 +782,7 @@ export function DashboardCrm({
         setListPage(1);
       }}
       onExport={exportCsv}
+      exportDisabled={activeView === "follow-ups" && !queueAvailable}
       onRefresh={() => {
         setIsRefreshing(true);
         window.location.reload();
@@ -817,7 +819,8 @@ export function DashboardCrm({
         <DashboardOverview
           analytics={analytics}
           leads={scopedLeads}
-          failedCount={failedFollowUpCount}
+          failedCount={queueAvailable ? queue.attention.length : null}
+          onAttention={() => { setQueueFilter("attention"); navigateView("follow-ups"); }}
           onContact={(request) => {
             setOnlyStale(false);
             setStatusFilter("all");
@@ -838,8 +841,10 @@ export function DashboardCrm({
       {activeView === "follow-ups" ? (
         <DashboardFollowUps
           leads={scopedLeads}
-          followUps={scopedFollowUps}
-          available={stats.queuedFollowUps !== null}
+          queue={queue}
+          filter={queueFilter}
+          onFilter={setQueueFilter}
+          available={queueAvailable}
           totalCount={stats.totalFollowUps ?? null}
           onSelect={openLead}
           onSend={(followUp) => void handleSendFollowUpNow(followUp)}

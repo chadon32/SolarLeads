@@ -25,6 +25,7 @@ import type {
 } from "@/lib/dashboard-analytics";
 import { formatName } from "@/lib/name-format";
 import { CONTACT_REQUEST_LABELS, type ContactRequest } from "@/lib/dashboard-contact";
+import { QUEUE_LABELS, type QueueFilter } from "@/lib/dashboard-follow-up-queue";
 import { formatDisplayAddress } from "@/lib/address-format";
 import { LEAD_STATUS_OPTIONS, type LeadStatus } from "@/lib/lead-status";
 
@@ -62,6 +63,7 @@ export function DashboardWorkspace({
   includeTests,
   onIncludeTestsChange,
   onExport,
+  exportDisabled,
   onRefresh,
   onSignOut,
   isRefreshing,
@@ -77,6 +79,7 @@ export function DashboardWorkspace({
   includeTests: boolean;
   onIncludeTestsChange: (value: boolean) => void;
   onExport: () => void;
+  exportDisabled: boolean;
   onRefresh: () => void;
   onSignOut: () => void;
   isRefreshing: boolean;
@@ -190,6 +193,7 @@ export function DashboardWorkspace({
               type="button"
               className="crm-button crm-button-primary"
               onClick={onExport}
+              disabled={exportDisabled}
             >
               <ArrowDownToLine size={16} aria-hidden="true" />
               Export view
@@ -463,6 +467,7 @@ export function DashboardOverview({
   analytics,
   leads,
   failedCount,
+  onAttention,
   onContact,
   onNavigate,
   onSelect,
@@ -472,6 +477,7 @@ export function DashboardOverview({
   analytics: DashboardAnalytics;
   leads: DashboardCrmLead[];
   failedCount: number | null;
+  onAttention: () => void;
   onContact: (request: ContactRequest) => void;
   onNavigate: (view: DashboardView) => void;
   onSelect: (id: string) => void;
@@ -504,7 +510,7 @@ export function DashboardOverview({
           </span>
           <ArrowRight size={17} aria-hidden="true" />
         </button>
-        <button onClick={() => onNavigate("follow-ups")}>
+        <button onClick={onAttention}>
           <span className="crm-priority-count">{failedCount ?? "?"}</span>
           <span>
             <strong>Follow-ups needing attention</strong>
@@ -696,14 +702,18 @@ export function DashboardAnalyticsView({
 }
 
 export function DashboardFollowUps({
-  followUps,
+  queue,
+  filter,
+  onFilter,
   leads,
   available,
   totalCount,
   onSelect,
   onSend,
 }: {
-  followUps: DashboardCrmFollowUp[];
+  queue: Record<QueueFilter, DashboardCrmFollowUp[]>;
+  filter: QueueFilter;
+  onFilter: (filter: QueueFilter) => void;
   leads: DashboardCrmLead[];
   available: boolean;
   totalCount: number | null;
@@ -711,6 +721,7 @@ export function DashboardFollowUps({
   onSend: (followUp: DashboardCrmFollowUp) => void;
 }) {
   const leadMap = new Map(leads.map((lead) => [lead.id, lead]));
+  const followUps = queue[filter];
   return (
     <section className="crm-panel">
       <div className="crm-panel-heading">
@@ -721,9 +732,20 @@ export function DashboardFollowUps({
             sent automatically by this view.
           </p>
         </div>
-        <span className="crm-count-badge">{followUps.length}</span>
+        {available && <span className="crm-count-badge" aria-live="polite" aria-atomic="true">
+          {followUps.length} of {queue.all.length}
+        </span>}
       </div>
-      {available && totalCount !== null && totalCount > followUps.length ? (
+      {available && <div className="crm-scope-bar">
+        <label>Queue filter
+          <select value={filter} onChange={e => onFilter(e.target.value as QueueFilter)}>
+            {(Object.keys(QUEUE_LABELS) as QueueFilter[]).map(key =>
+              <option key={key} value={key}>{QUEUE_LABELS[key]} ({queue[key].length})</option>)}
+          </select>
+        </label>
+        <small>Due times are based on the last dashboard refresh.</small>
+      </div>}
+      {available && totalCount !== null && totalCount > queue.all.length ? (
         <p className="crm-method-note">
           There are {totalCount} saved follow-up records in total. This view
           shows only loaded entries matching your lead cohort.
@@ -739,10 +761,10 @@ export function DashboardFollowUps({
         </div>
       ) : !followUps.length ? (
         <div className="crm-empty">
-          <strong>No follow-ups in this view</strong>
-          <p>
+          <strong>{filter === "all" ? "No follow-ups in this view" : `No matches: ${QUEUE_LABELS[filter]}`}</strong>
+          {filter === "all" ? <p>
             No saved outreach matches the selected period and test-lead setting.
-          </p>
+          </p> : <button type="button" className="crm-text-button" onClick={() => onFilter("all")}>Show all follow-ups</button>}
         </div>
       ) : (
         <div className="crm-followup-list">
