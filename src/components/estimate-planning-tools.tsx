@@ -1,5 +1,5 @@
-import { useRef } from "react";
-import { buildInstallerMeetingBrief, compareInstallerQuote, type CashQuoteDraft } from "@/lib/installer-quote-comparison";
+import { useRef, type RefObject } from "react";
+import { buildInstallerMeetingBrief, compareCashOffers, compareInstallerQuote, readCashQuote, type CashQuoteDraft } from "@/lib/installer-quote-comparison";
 
 const dollars = new Intl.NumberFormat("en-US", {
   style: "currency", currency: "USD", maximumFractionDigits: 0,
@@ -77,14 +77,45 @@ export function ScenarioComparison({ current, baseline, onPin }: {
   );
 }
 
-export function InstallerQuoteComparison({ draft, modelRate, modeledWatts, onChange }: {
+function CashQuoteFields({ draft, onChange, prefix, priceRef }: {
   draft: CashQuoteDraft;
+  onChange: (value: CashQuoteDraft) => void;
+  prefix: string;
+  priceRef?: RefObject<HTMLInputElement | null>;
+}) {
+  const { invalidPrice, invalidSize } = readCashQuote(draft);
+  return (
+    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+      {([
+        ["price", "Quoted cash price ($)", "e.g. 24,000", invalidPrice, "Enter a price greater than zero, such as 24,000."],
+        ["size", "Quoted system size (kW DC)", "e.g. 8.4", invalidSize, "Enter a size greater than zero in kW, such as 8.4."],
+      ] as const).map(([key, label, placeholder, invalid, error]) => (
+        <div key={key} className="min-w-0">
+          <label className="field-label" htmlFor={`${prefix}-${key}`}>{label}</label>
+          <input id={`${prefix}-${key}`} type="text" inputMode="decimal" autoComplete="off" maxLength={24}
+            ref={key === "price" ? priceRef : undefined}
+            placeholder={placeholder} value={draft[key]} aria-invalid={invalid}
+            aria-describedby={invalid ? `${prefix}-${key}-error ${prefix}-help` : `${prefix}-help`}
+            className="field-input mt-1.5 min-h-11"
+            onChange={event => onChange({ ...draft, [key]: event.target.value })} />
+          {invalid && <p id={`${prefix}-${key}-error`} className="mt-1 text-sm text-amber-100">{error}</p>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function InstallerQuoteComparison({ draft, second, modelRate, modeledWatts, onChange, onSecondChange }: {
+  draft: CashQuoteDraft;
+  second: CashQuoteDraft | null;
+  onSecondChange: (value: CashQuoteDraft | null) => void;
   modelRate: number;
   modeledWatts: number;
   onChange: (value: CashQuoteDraft) => void;
 }) {
   const priceInput = useRef<HTMLInputElement>(null);
-  const { comparison, invalidPrice, invalidSize } = compareInstallerQuote(draft, modelRate);
+  const { comparison } = compareInstallerQuote(draft, modelRate);
+  const offers = second && compareCashOffers(draft, second);
   const brief = comparison ? buildInstallerMeetingBrief(comparison, modelRate, modeledWatts) : null;
   return (
     <section aria-labelledby="cash-quote-heading" className={`mt-4 ${card}`}>
@@ -93,23 +124,10 @@ export function InstallerQuoteComparison({ draft, modelRate, modeledWatts, onCha
         Use the solar-only price before incentives. Exclude batteries, roof work, and financing fees.
         These inputs stay in this estimate and are not sent with your report.
       </p>
-      <div className="mt-3 grid gap-3 sm:grid-cols-2">
-        {([
-          ["price", "Quoted cash price ($)", "e.g. 24,000", invalidPrice, "Enter a price greater than zero, such as 24,000."],
-          ["size", "Quoted system size (kW DC)", "e.g. 8.4", invalidSize, "Enter a size greater than zero in kW, such as 8.4."],
-        ] as const).map(([key, label, placeholder, invalid, error]) => (
-          <div key={key} className="min-w-0">
-            <label className="field-label" htmlFor={`cash-quote-${key}`}>{label}</label>
-            <input id={`cash-quote-${key}`} type="text" inputMode="decimal" autoComplete="off" maxLength={24}
-              ref={key === "price" ? priceInput : undefined}
-              placeholder={placeholder} value={draft[key]} aria-invalid={invalid}
-              aria-describedby={invalid ? `cash-quote-${key}-error cash-quote-help` : "cash-quote-help"}
-              className="field-input mt-1.5 min-h-11"
-              onChange={event => onChange({ ...draft, [key]: event.target.value })} />
-            {invalid && <p id={`cash-quote-${key}-error`} className="mt-1 text-sm text-amber-100">{error}</p>}
-          </div>
-        ))}
-      </div>
+      <fieldset className="mt-3 min-w-0">
+        <legend className={second ? "text-sm font-semibold text-ink" : "sr-only"}>Quote A</legend>
+        <CashQuoteFields draft={draft} onChange={onChange} prefix="cash-quote" priceRef={priceInput} />
+      </fieldset>
       <div className="mt-3 border-t border-ridge pt-3 text-sm leading-6">
         <p className="text-ink-muted">Modeled solar-only price: <strong className="text-ink">${modelRate.toFixed(2)}/W</strong></p>
         <p role="status" className="font-semibold text-sky-100">
@@ -131,7 +149,41 @@ export function InstallerQuoteComparison({ draft, modelRate, modeledWatts, onCha
       {(draft.price || draft.size) && <button type="button" className={`mt-3 ${action}`} onClick={() => {
         onChange({ price: "", size: "" });
         priceInput.current?.focus();
-      }}>Clear quote</button>}
+      }}>{second ? "Clear quote A" : "Clear quote"}</button>}
+      <div className="mt-4 border-t border-ridge pt-3">
+        <button type="button" className={action} aria-expanded={second !== null} aria-controls="second-offer"
+          onClick={() => onSecondChange(second ? null : { price: "", size: "" })}>
+          {second ? "Remove quote B" : "Compare a second cash quote"}
+        </button>
+        <div id="second-offer" hidden={!second}>
+          {second && <>
+            <fieldset className="mt-4 min-w-0">
+              <legend className="text-sm font-semibold text-ink">Quote B</legend>
+              <p id="cash-quote-b-help" className="mt-1 text-sm leading-6 text-ink-muted">
+                Use the same scope as quote A: solar only, before incentives. Leave out financing, batteries and roof work.
+              </p>
+              <CashQuoteFields draft={second} onChange={onSecondChange} prefix="cash-quote-b" />
+            </fieldset>
+            <p aria-live="polite" aria-atomic="true" className="mt-4 text-sm font-semibold text-sky-100">
+              {offers?.summary ?? "Enter a valid cash price and system size for both quotes to compare them."}
+            </p>
+            {offers && <>
+              <table className="mt-3 w-full table-fixed text-left text-sm text-ink">
+                <caption className="sr-only">Installer cash offers side by side</caption>
+                <thead><tr>{["Measure", "Quote A", "Quote B"].map(h => <th className="py-2" key={h} scope="col">{h}</th>)}</tr></thead>
+                <tbody>{offers.rows.map(([label, a, b]) => <tr key={label} className="border-t border-ridge">
+                  <th className="py-2 pr-1 font-medium" scope="row">{label}</th>
+                  <td className="break-words pr-1">{a}</td><td className="break-words">{b}</td>
+                </tr>)}</tbody>
+              </table>
+              <p className="mt-2 text-xs leading-5 text-ink-muted">{offers.note}</p>
+              <a download="SolarTelligence-cash-offers.txt" href={`data:text/plain;charset=utf-8,${encodeURIComponent(offers.text)}`}
+                className={`mt-3 inline-flex items-center ${action}`}>Download quote comparison</a>
+            </>}
+            <p className="mt-2 text-xs leading-5 text-ink-dim">Both quotes clear on refresh. The comparison download contains no address or contact details.</p>
+          </>}
+        </div>
+      </div>
     </section>
   );
 }

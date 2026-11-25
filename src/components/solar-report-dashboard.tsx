@@ -134,6 +134,7 @@ export function SolarReportDashboard({
   const [financingMode, setFinancingMode] = useState<FinancingMode>("loan");
   const [baseline, setBaseline] = useState<EstimateSnapshot | null>(null);
   const [cashQuote, setCashQuote] = useState<CashQuoteDraft>({ price: "", size: "" });
+  const [secondCashQuote, setSecondCashQuote] = useState<CashQuoteDraft | null>(null);
   const [visitTopics, setVisitTopics] = useState<VisitTopicId[]>([]);
   const [selectedAdvisorQuestion, setSelectedAdvisorQuestion] = useState(0);
   const selectedPanel = getPanelById(selectedPanelId);
@@ -310,7 +311,7 @@ export function SolarReportDashboard({
               onFinancingModeChange={setFinancingMode}
               values={values}
             >
-              <InstallerQuoteComparison draft={cashQuote} modelRate={values.costPerWatt}
+              <InstallerQuoteComparison draft={cashQuote} second={secondCashQuote} onSecondChange={setSecondCashQuote} modelRate={values.costPerWatt}
                 modeledWatts={values.panelCount * selectedPanel.watts} onChange={setCashQuote} />
             </FinancingTab>
           ) : null}

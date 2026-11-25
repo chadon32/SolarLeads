@@ -1,6 +1,29 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildInstallerMeetingBrief, compareInstallerQuote } from "../src/lib/installer-quote-comparison";
+import { buildInstallerMeetingBrief, compareCashOffers, compareInstallerQuote } from "../src/lib/installer-quote-comparison";
+
+test("two cash offers distinguish a larger total price from a lower unit price", () => {
+  const a = { price: "$24,000", size: "8" }, b = { price: "26000", size: "10" };
+  const pair = compareCashOffers(a, b)!;
+  assert.match(pair.summary, /costs \$2,000(?:\.00)? more in total\. Quote B is \$0\.40\/W lower/);
+  assert.deepEqual(pair.rows[2], ["Price per watt", "$3.00/W", "$2.60/W"]);
+  assert.match(pair.text, /System size: Quote A 8 kW DC \| Quote B 10 kW DC/);
+  assert.match(compareCashOffers(b, a)!.summary, /less in total\. Quote B is \$0\.40\/W higher/);
+});
+
+test("ties use displayed precision and total differences keep cents", () => {
+  const a = { price: "24000.01", size: "8" };
+  assert.match(compareCashOffers(a, a)!.summary, /cash prices are the same.*match to the nearest cent/);
+  assert.match(compareCashOffers(a, { ...a, price: "24000.02" })!.summary, /\$0\.01 more.*match to the nearest cent/);
+});
+
+test("an incomplete or malformed offer on either side suppresses the result", () => {
+  const valid = { price: "21599", size: "7.25" };
+  for (const bad of [{ price: "", size: "7" }, { price: "$1,00", size: "7" }, { price: "10", size: "0" }]) {
+    assert.equal(compareCashOffers(valid, bad), null);
+    assert.equal(compareCashOffers(bad, valid), null);
+  }
+});
 
 test("cash quotes compare DC watts, not whole-system prices or battery budgets", () => {
   const model = 2.55;

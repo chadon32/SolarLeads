@@ -10,26 +10,53 @@ function positiveDecimal(raw: string, kind: "price" | "size"): number | null {
   return number > 0 && number <= Number.MAX_SAFE_INTEGER / 1000 ? number : null;
 }
 
-/** Compare gross solar-only cash prices on a common DC watt basis. */
-export function compareInstallerQuote(draft: CashQuoteDraft, modelDollarsPerWatt: number) {
+export function readCashQuote(draft: CashQuoteDraft) {
   const price = positiveDecimal(draft.price, "price");
   const size = positiveDecimal(draft.size, "size");
-  const modelCents = Math.round(modelDollarsPerWatt * 100);
   const quoteCents = price !== null && size !== null
     ? Math.round((price / (size * 1000) + Number.EPSILON) * 100)
     : null;
   return {
     invalidPrice: draft.price.trim() !== "" && price === null,
     invalidSize: draft.size.trim() !== "" && size === null,
-    comparison: price !== null && size !== null && quoteCents !== null && Number.isSafeInteger(quoteCents) &&
-      Number.isSafeInteger(modelCents) && modelCents > 0
-      ? { price, size, quotePerWatt: quoteCents / 100, deltaPerWatt: (quoteCents - modelCents) / 100 }
+    quote: price !== null && size !== null && quoteCents !== null && Number.isSafeInteger(quoteCents)
+      ? { price, size, quotePerWatt: quoteCents / 100 }
       : null,
   };
 }
 
+/** Compare gross solar-only cash prices on a common DC watt basis. */
+export function compareInstallerQuote(draft: CashQuoteDraft, modelDollarsPerWatt: number) {
+  const { quote, invalidPrice, invalidSize } = readCashQuote(draft);
+  const modelCents = Math.round(modelDollarsPerWatt * 100);
+  return { invalidPrice, invalidSize, comparison: quote && Number.isSafeInteger(modelCents) && modelCents > 0
+    ? { ...quote, deltaPerWatt: (Math.round(quote.quotePerWatt * 100) - modelCents) / 100 } : null };
+}
+
 const cash = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 });
 const kw = new Intl.NumberFormat("en-US", { maximumFractionDigits: 3 });
+
+export function compareCashOffers(first: CashQuoteDraft, second: CashQuoteDraft) {
+  const a = readCashQuote(first).quote;
+  const b = readCashQuote(second).quote;
+  if (!a || !b) return null;
+  const totalDelta = (Math.round(b.price * 100) - Math.round(a.price * 100)) / 100;
+  const rateDelta = (Math.round(b.quotePerWatt * 100) - Math.round(a.quotePerWatt * 100)) / 100;
+  const total = totalDelta === 0 ? "The cash prices are the same."
+    : `Quote B costs ${cash.format(Math.abs(totalDelta))} ${totalDelta > 0 ? "more" : "less"} in total.`;
+  const rate = rateDelta === 0 ? "The prices per watt match to the nearest cent."
+    : `Quote B is $${Math.abs(rateDelta).toFixed(2)}/W ${rateDelta > 0 ? "higher" : "lower"}.`;
+  const rows = [
+    ["Cash price", cash.format(a.price), cash.format(b.price)],
+    ["System size", `${kw.format(a.size)} kW DC`, `${kw.format(b.size)} kW DC`],
+    ["Price per watt", `$${a.quotePerWatt.toFixed(2)}/W`, `$${b.quotePerWatt.toFixed(2)}/W`],
+  ];
+  const note = "Compare solar-only cash prices before incentives. Ask both installers about annual production, included equipment, warranties and exclusions before deciding.";
+  const summary = `${total} ${rate}`;
+  const text = ["SolarTelligence | Two installer quotes", "", ...rows.map(([label, x, y]) =>
+    `${label}: Quote A ${x} | Quote B ${y}`), "", summary, note].join("\n");
+  return { rows, summary, note, text };
+}
 
 /** The export is intentionally built from numbers only, not a roof or lead record. */
 export function buildInstallerMeetingBrief(
